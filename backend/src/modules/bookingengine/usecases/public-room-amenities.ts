@@ -19,6 +19,7 @@
 import type { RepositoryAdapter } from 'arckode-framework'
 import { isCustomAmenityKey } from '../../amenities/usecases/room-amenity-items'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingLogger } from './public-booking'
 
 /**
@@ -145,6 +146,8 @@ export async function loadRoomAmenitiesFor(orm: { findMany(model: string, filter
 export interface PublicRoomAmenitiesDeps {
   hotels: RepositoryAdapter<any>
   orm: { findMany(model: string, filter: any): Promise<any[]> }
+  /** #276 (MR-11) — toggle Activo/Inactivo del hotel (`booking_config.enabled`). Opcional (compat). */
+  bookingConfig?: RepositoryAdapter<any>
 }
 
 /**
@@ -162,10 +165,11 @@ export async function getPublicRoomAmenities(
 ): Promise<{ status: number; body: any }> {
   if (!slug) return { status: 404, body: { error: 'Hotel not found' } }
 
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const rooms = (((await deps.orm.findMany('Rooms', { hotelId: hotel.id })) as any[]) ?? [])
     .filter((r: any) => isRoomSellable(r.status) && r.onlineBookingEnabled !== false)

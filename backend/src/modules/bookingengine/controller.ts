@@ -373,8 +373,11 @@ export class BookingengineController {
     // Antes `req.body` iba crudo al usecase, que validaba a mano solo los required; campos
     // malformados (ej. `adults: "abc"`) llegaban al ORM y generaban 500 o datos corruptos.
     // Ahora `validateSchema(ExtendedPublicBookingSchema, ...)` valida tipos + required (incl.
-    // `roomId` nuevo en el schema). `upsells` (array) y `idempotencyKey` se leen crudo del
-    // body porque el framework no soporta `type:'json'` en validators (documentado en schema).
+    // `roomId` nuevo en el schema). `upsells` (array) se lee crudo del body porque el framework
+    // no soporta `type:'json'` en validators (documentado en schema).
+    // #266 — `idempotencyKey` (string opcional) también va crudo: el usecase la normaliza
+    // (`normalizeIdempotencyKey`: no vacía, máx. 128 chars) y la persiste en la reserva; la
+    // misma key en el mismo hotel devuelve la reserva ya creada con 200 en vez de duplicarla.
     const rawBody = (req.body || {}) as Record<string, unknown>
     const validated = validateSchema(ExtendedPublicBookingSchema, rawBody) as Record<string, unknown>
     // Reincorporar `upsells`/`idempotencyKey` crudos si vienen (no validados por el schema).
@@ -406,7 +409,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -450,6 +453,7 @@ export class BookingengineController {
       ...validated,
       ...(Array.isArray(rawBody.rooms) ? { rooms: rawBody.rooms } : {}),
       ...(Array.isArray(rawBody.upsells) ? { upsells: rawBody.upsells } : {}),
+      // #266 — misma idempotencia que el handler de 1 habitación; la key se guarda en la LÍDER.
       ...(typeof rawBody.idempotencyKey === 'string' ? { idempotencyKey: rawBody.idempotencyKey } : {}),
     } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
 
@@ -458,7 +462,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -582,7 +586,7 @@ export class BookingengineController {
     }
     const kind = (req.query?.kind as string | undefined) || undefined
     return getPublicUpsells(
-      { hotels: this.hotelsRepo, upsells: this.upsellRepo },
+      { hotels: this.hotelsRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
       kind,
     )
@@ -595,7 +599,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'meal-plans deps no cableados' } }
     }
     return getPublicMealPlans(
-      { hotels: this.hotelsRepo, mealPlans: this.mealPlanRepo },
+      { hotels: this.hotelsRepo, mealPlans: this.mealPlanRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }
@@ -607,7 +611,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'child-amenities deps no cableados' } }
     }
     return getPublicChildAmenities(
-      { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo },
+      { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }
@@ -619,7 +623,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'room-amenities deps no cableados' } }
     }
     return getPublicRoomAmenities(
-      { hotels: this.hotelsRepo, orm: this.orm },
+      { hotels: this.hotelsRepo, orm: this.orm, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }

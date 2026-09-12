@@ -4,7 +4,7 @@
 // vive en auto_messages; este archivo es el fallback. Versionado con git, testeable sin DB.
 // Las variables {key} se interpolan con renderTemplate() de email-service (6.1.2).
 
-export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_received_unpaid'
+export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
 
 export interface NotificationDefault {
@@ -423,6 +423,105 @@ const CHECKOUT_PT = `<!DOCTYPE html>
     <p>Esperamos que tenha desfrutado da sua estadia connosco. Obrigado por escolher {hotel_name}!</p>
     <p style="font-size:13px;color:#6b7280;">Reserva: {checkin_date} → {checkout_date} · Quarto {room_number}</p>
     <p style="font-size:14px;">Esperamos vê-lo de novo em breve!</p>
+  </div>
+</body></html>`
+
+// ─── reservation_approved / reservation_rejected (#271 MR-06 — aprobación manual) ─
+// El hotel con "Confirmación instantánea" apagada revisa cada reserva web: al aprobar se le
+// confirma al huésped; al rechazar se le explica el motivo y qué se le devolvió. Variables extra
+// del rechazo: {rejection_reason} y {refund_amount} (ej. "100.00 USD"; "0.00 USD" si pagó fuera
+// de Stripe — en ese caso el hotel se contacta).
+
+const APPROVED_ES = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva confirmada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
+    <p>El hotel confirmó su reserva del <strong>{checkin_date}</strong> al <strong>{checkout_date}</strong>.</p>
+    <p style="font-size:13px;color:#6b7280;">Ante cualquier consulta, contactanos al <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">¡Te esperamos!</p>
+  </div>
+</body></html>`
+
+const APPROVED_EN = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Booking confirmed</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hi <strong>{guest_name}</strong>,</p>
+    <p>The hotel has confirmed your booking from <strong>{checkin_date}</strong> to <strong>{checkout_date}</strong>.</p>
+    <p style="font-size:13px;color:#6b7280;">If you have any questions, please call <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">We look forward to welcoming you!</p>
+  </div>
+</body></html>`
+
+const APPROVED_PT = `<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva confirmada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
+    <p>O hotel confirmou a sua reserva de <strong>{checkin_date}</strong> a <strong>{checkout_date}</strong>.</p>
+    <p style="font-size:13px;color:#6b7280;">Para qualquer dúvida, ligue para <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">Esperamos por si!</p>
+  </div>
+</body></html>`
+
+const REJECTED_ES = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva no confirmada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
+    <p>Lamentablemente el hotel no pudo confirmar su reserva del <strong>{checkin_date}</strong> al <strong>{checkout_date}</strong>.</p>
+    <p><strong>Motivo:</strong> {rejection_reason}</p>
+    <p>Se reembolsó <strong>{refund_amount}</strong> al medio de pago original. Si el importe es 0, el hotel se pondrá en contacto para coordinar la devolución.</p>
+    <p style="font-size:13px;color:#6b7280;">Ante cualquier consulta, contactanos al <strong>{hotel_phone}</strong>.</p>
+  </div>
+</body></html>`
+
+const REJECTED_EN = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Booking not confirmed</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hi <strong>{guest_name}</strong>,</p>
+    <p>Unfortunately the hotel could not confirm your booking from <strong>{checkin_date}</strong> to <strong>{checkout_date}</strong>.</p>
+    <p><strong>Reason:</strong> {rejection_reason}</p>
+    <p><strong>{refund_amount}</strong> has been refunded to your original payment method. If the amount is 0, the hotel will contact you to arrange the refund.</p>
+    <p style="font-size:13px;color:#6b7280;">If you have any questions, please call <strong>{hotel_phone}</strong>.</p>
+  </div>
+</body></html>`
+
+const REJECTED_PT = `<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva não confirmada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
+    <p>Infelizmente o hotel não pôde confirmar a sua reserva de <strong>{checkin_date}</strong> a <strong>{checkout_date}</strong>.</p>
+    <p><strong>Motivo:</strong> {rejection_reason}</p>
+    <p>Foi reembolsado <strong>{refund_amount}</strong> para o meio de pagamento original. Se o valor for 0, o hotel entrará em contacto para combinar a devolução.</p>
+    <p style="font-size:13px;color:#6b7280;">Para qualquer dúvida, ligue para <strong>{hotel_phone}</strong>.</p>
   </div>
 </body></html>`
 
@@ -907,6 +1006,16 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<Not
     es: { subject: 'Recibimos tu pedido de reserva — {hotel_name}', body: RECEIVED_UNPAID_ES },
     en: { subject: 'We received your booking request — {hotel_name}', body: RECEIVED_UNPAID_EN },
     pt: { subject: 'Recebemos o seu pedido de reserva — {hotel_name}', body: RECEIVED_UNPAID_PT },
+  },
+  reservation_approved: {
+    es: { subject: 'El hotel confirmó su reserva — {hotel_name}', body: APPROVED_ES },
+    en: { subject: 'The hotel confirmed your booking — {hotel_name}', body: APPROVED_EN },
+    pt: { subject: 'O hotel confirmou a sua reserva — {hotel_name}', body: APPROVED_PT },
+  },
+  reservation_rejected: {
+    es: { subject: 'El hotel no pudo confirmar su reserva — {hotel_name}', body: REJECTED_ES },
+    en: { subject: 'The hotel could not confirm your booking — {hotel_name}', body: REJECTED_EN },
+    pt: { subject: 'O hotel não pôde confirmar a sua reserva — {hotel_name}', body: REJECTED_PT },
   },
 }
 

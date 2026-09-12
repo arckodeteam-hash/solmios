@@ -300,9 +300,13 @@ interface Announcement {
   html: string
   metadata: Record<string, unknown>
   relatedType: string
-  /** Texto del estado del pago que va en el correo al hotel (`{payment_status}`). */
-  paymentStatus: string
-  summary: ReservationSummary
+  /**
+   * Texto del estado del pago que va en el correo al hotel (`{payment_status}`). Junto con
+   * `summary` habilita la plantilla `reservation_new_staff` (#267); un aviso sin estos dos (el
+   * recordatorio de aprobación vencida, #271 MR-06) sale con el HTML crudo de `html`.
+   */
+  paymentStatus?: string
+  summary?: ReservationSummary
 }
 
 /** "Por aprobar: " adelante cuando la reserva espera el visto bueno del hotel. */
@@ -345,10 +349,11 @@ function resolveHotelRecipient(
 function templateVariables(
   ref: ReservationRef,
   a: Announcement,
+  s: ReservationSummary,
+  paymentStatus: string,
   hotelName: string,
   platformName: string,
 ): NotificationInput['variables'] {
-  const s = a.summary
   const row = s.row ?? {}
   const ages = Array.isArray(row.childrenAges) ? row.childrenAges.map((x: unknown) => String(x)).join(', ') : ''
   return {
@@ -367,7 +372,7 @@ function templateVariables(
     regime: row.regime ? String(row.regime) : '—',
     details: detailsFromNotes(row.notes),
     total_amount: s.total,
-    payment_status: a.paymentStatus,
+    payment_status: paymentStatus,
     panel_link: absolutePanelLink(ref.id),
     platform_name: platformName,
   }
@@ -412,23 +417,24 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
       const identity = await deps.platformIdentity().catch(() => null)
       const platformName = identity?.platformName?.trim() ?? ''
       try {
-        if (typeof deps.emailSender.enqueueNotification === 'function') {
+        if (a.summary && a.paymentStatus !== undefined && typeof deps.emailSender.enqueueNotification === 'function') {
           // Plantilla `reservation_new_staff` (editable por hotel en auto_messages, default en código).
           await deps.emailSender.enqueueNotification({
             to,
             hotelId: ref.hotelId,
             event: 'reservation_new_staff',
             language: 'es',
-            variables: templateVariables(ref, a, String(hotel?.name || '').trim(), platformName),
+            variables: templateVariables(ref, a, a.summary, a.paymentStatus, String(hotel?.name || '').trim(), platformName),
             relatedType: a.relatedType,
             relatedId: ref.id,
           })
         } else {
-          // Camino viejo: HTML crudo para inyectores que sólo exponen `enqueue`.
+          // HTML crudo: inyectores que sólo exponen `enqueue`, y los avisos sin `summary`/`paymentStatus`
+          // (aprobación vencida), que no llevan plantilla y salen como antes de #267.
           const html = [
             `<p><strong>${esc(a.title)}</strong></p>`,
             a.html,
-            `<p>Estado del pago: ${esc(a.paymentStatus)}</p>`,
+            a.paymentStatus !== undefined ? `<p>Estado del pago: ${esc(a.paymentStatus)}</p>` : '',
             `<p><a href="${esc(link)}">Abrir la reserva en el panel</a></p>`,
             platformName ? `<p style="color:#888;font-size:12px">Enviado por ${esc(platformName)}</p>` : '',
           ].filter(Boolean).join('\n')
@@ -565,6 +571,61 @@ export async function notifyReservationPaid(
     })
   } catch (e) {
     deps.logger?.warn('No se pudo avisar el pago confirmado', {
+      reservationId: reservation.id, hotelId: reservation.hotelId, error: (e as Error).message,
+    })
+    return { notified: 0, emailed: false }
+  }
+}
+
+export interface ApprovalOverdueInput {
+  /** Plazo del hotel (`booking_config.approvalDeadlineHours`), ya resuelto por el llamador. */
+  deadlineHours: number
+  /** ISO: desde cuándo la reserva espera respuesta (`createdAt`). */
+  pendingSince: string
+}
+
+/** Horas enteras transcurridas desde `since` (0 si no parsea o es futuro). */
+function wholeHoursSince(since: string, now: Date): number {
+  const t = new Date(since).getTime()
+  if (!Number.isFinite(t)) return 0
+  return Math.max(0, Math.floor((now.getTime() - t) / 3_600_000))
+}
+
+/**
+ * #271 MR-06 — Reserva pagada que sigue `approvalStatus: 'pending'` pasado el plazo del hotel:
+ * mismo reparto (campanita a quien ve reservas, correo al buzón del hotel, push), con las horas
+ * de espera en el título. Quién y cuándo se avisa lo decide `approval-reminder.ts` (una sola vez
+ * por reserva vía `reservations.approvalReminderAt`); acá sólo se arma y reparte el aviso.
+ */
+export async function notifyApprovalOverdue(
+  deps: ReservationNotifyDeps,
+  reservation: ReservationRef,
+  input: ApprovalOverdueInput,
+  now: Date = new Date(),
+): Promise<NotifyResult> {
+  try {
+    const s = await loadSummary(deps, reservation)
+    if (!s) return { notified: 0, emailed: false }
+
+    const hours = wholeHoursSince(input.pendingSince, now)
+    const deadlineHours = Number(input.deadlineHours)
+    const title = `Reserva por aprobar hace ${hours} h — ${s.guest}`
+    const advice = `El huésped ya pagó y espera respuesta. Plazo del hotel: ${deadlineHours} h. Aprobá o rechazá desde el panel.`
+    const message = `${summaryMessage(s)}. ${advice}`
+    const html = [
+      summaryHtml(s),
+      `<p>${esc(advice)}</p>`,
+    ].join('\n')
+
+    return await deliver(deps, reservation, {
+      title,
+      message,
+      html,
+      metadata: { link: reservationPanelLink(reservation.id), reservationId: reservation.id, kind: 'approval_overdue' },
+      relatedType: 'reservation:approval_overdue',
+    })
+  } catch (e) {
+    deps.logger?.warn('No se pudo avisar la aprobación vencida', {
       reservationId: reservation.id, hotelId: reservation.hotelId, error: (e as Error).message,
     })
     return { notified: 0, emailed: false }

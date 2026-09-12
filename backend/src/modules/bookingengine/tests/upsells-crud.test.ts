@@ -12,6 +12,7 @@
 //  (5) update inexistente → NotFoundError
 //  (6) delete exitoso + ownership
 //  (7) list ordena por sortOrder ASC
+//  (8) MR-10 (#275): create/update aceptan `per_night` y `per_person_per_night`
 import { describe, it, expect } from 'bun:test'
 import { ValidationError, NotFoundError } from 'arckode-framework'
 import {
@@ -84,6 +85,14 @@ describe('upsells-crud (F2 2.3)', () => {
     expect(up.kind).toBe('per_stay')
   })
 
+  it('create acepta los kinds de MR-10 (#275): per_night y per_person_per_night', async () => {
+    const { deps } = makeDeps()
+    const a = await create(deps, { name: 'Parking', price: 15, kind: 'per_night' }, adminUser)
+    expect(a.kind).toBe('per_night')
+    const b = await create(deps, { name: 'Desayuno', price: 10, kind: 'per_person_per_night' }, adminUser)
+    expect(b.kind).toBe('per_person_per_night')
+  })
+
   it('create con kind inválido → ValidationError', async () => {
     const { deps } = makeDeps()
     const dto = { name: 'X', price: 10, kind: 'por_dia' } as any
@@ -111,6 +120,13 @@ describe('upsells-crud (F2 2.3)', () => {
     const updated = await update(deps, 'up_1', dto, adminUser)
     expect(updated.name).toBe('New')
     expect(updated.price).toBe(25)
+  })
+
+  it('update a per_person_per_night persiste el kind (MR-10 #275)', async () => {
+    const existing = row({ id: 'up_1', kind: 'per_person' })
+    const { deps } = makeDeps([existing])
+    const updated = await update(deps, 'up_1', { kind: 'per_person_per_night' }, adminUser)
+    expect(updated.kind).toBe('per_person_per_night')
   })
 
   it('update con kind inválido → ValidationError', async () => {

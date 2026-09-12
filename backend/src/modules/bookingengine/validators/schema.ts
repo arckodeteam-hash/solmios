@@ -9,8 +9,9 @@ import type { BodyRule } from '../../../shared/validators/validate-body'
 
 // ─── Config (admin) ────────────────────────────────────
 
-// `BodyRule` (no `ValidationRule`): `pendingPaymentTtlHours` usa `integer` del shared, que
-// rechaza `7.5` y `"7"`. El controller valida este schema con el `validateSchema` del shared.
+// `BodyRule` (no `ValidationRule`): `pendingTtlMinutes` usa `integer` del shared, que
+// rechaza `7.5` y `"60"` y acota con min/max. El controller valida este schema con el
+// `validateSchema` del shared.
 export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   enabled: { type: 'boolean' as const },
   theme: { type: 'string' as const },
@@ -25,8 +26,10 @@ export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   whatsappConfirmation: { type: 'boolean' as const },
   instantConfirmation: { type: 'boolean' as const },
   stripeAccountId: { type: 'string' as const },
-  // #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence).
-  pendingPaymentTtlHours: { type: 'integer' as const, min: 0, message: 'pendingPaymentTtlHours debe ser un entero ≥ 0 (0 = nunca vence)' },
+  // #266 — Minutos para completar el pago de una reserva web (15–1440; default 60).
+  pendingTtlMinutes: { type: 'integer' as const, min: 15, max: 1440, message: 'pendingTtlMinutes debe ser un entero entre 15 y 1440' },
+  // #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168; default 24).
+  approvalDeadlineHours: { type: 'integer' as const, min: 1, max: 168, message: 'approvalDeadlineHours debe ser un entero entre 1 y 168' },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────

@@ -12,6 +12,7 @@ import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
+import { findOrCreateGuest } from '../../../shared/usecases/find-or-create-guest'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
 /**
@@ -150,6 +151,16 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     const guest = await guestRepo.findOne({ id: dto.guestId })
     if (!guest || guest.hotelId !== dto.hotelId) throw new ConflictError('El huésped no pertenece a este hotel')
   }
+  // MR-08 (#273): sin `guestId` pero con `guestEmail`, la ficha se resuelve (email/teléfono
+  // normalizados) o se crea con el helper compartido — un huésped = una ficha. Sin `lockTx`: el
+  // panel no corre en tx y es carga manual de staff, no concurrente consigo mismo.
+  if (guestRepo && !dto.guestId && dto.guestEmail) {
+    const { guest } = await findOrCreateGuest(
+      { guests: guestRepo },
+      { hotelId: dto.hotelId, name: dto.guestName ?? '', email: dto.guestEmail, phone: dto.guestPhone },
+    )
+    dto.guestId = String(guest.id)
+  }
   if (dto.checkIn >= dto.checkOut) throw new ConflictError('checkIn debe ser anterior a checkOut')
   // Estadía mínima por fecha (fila "Días Mínimos" del planning). Solo se persisten overrides (minStay>1);
   // sin fila para la fecha de entrada, el mínimo es 1 noche. Lee la tabla compartida DateRestrictions —
@@ -243,9 +254,11 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   if (dto.promoCode && promoCodes?.consumeUse) {
     await promoCodes.consumeUse(dto.hotelId, dto.promoCode)
   }
+  // MR-08 (#273): los datos del huésped viven en Guests, no en la fila de Reservations.
+  const { guestEmail: _guestEmail, guestName: _guestName, guestPhone: _guestPhone, ...row } = dto
   let item: ReservasDTO
   try {
-    item = await repo.create(dto as any)
+    item = await repo.create(row as any)
   } catch (e) {
     // Compensación: la reserva no existe, el uso no se consume.
     if (dto.promoCode && promoCodes?.releaseUse) {

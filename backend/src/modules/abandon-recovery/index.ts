@@ -19,26 +19,32 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { AbandonRecoveryService } from './service'
 import type { AbandonRecoveryDeps } from './service'
-import type { AbandonEmailSender, AbandonSweepResult, AbandonSweepConfig } from './types'
+import type { AbandonEmailSender, AbandonSweepResult, AbandonSweepConfig, GatewayConfiguredCheck } from './types'
 import {
   DEFAULT_ABANDON_MIN_AGE_MS,
   DEFAULT_ABANDON_MAX_AGE_MS,
+  DEFAULT_PENDING_TTL_MINUTES,
 } from './types'
-import { buildRecoveryLink, renderAbandonEmailHtml, emailSubject } from './usecases/template'
+import { buildRecoveryLink, renderAbandonEmailHtml, emailSubject, formatPendingTtl } from './usecases/template'
 import { registerAbandonRecoveryModels } from './model'
 
 export { AbandonRecoveryService }
-export { buildRecoveryLink, renderAbandonEmailHtml, emailSubject }
-export type { AbandonRecoveryDeps, AbandonSweepResult, AbandonSweepConfig, AbandonEmailSender }
+export { buildRecoveryLink, renderAbandonEmailHtml, emailSubject, formatPendingTtl }
+export type { AbandonRecoveryDeps, AbandonSweepResult, AbandonSweepConfig, AbandonEmailSender, GatewayConfiguredCheck }
 export {
   DEFAULT_ABANDON_MIN_AGE_MS,
   DEFAULT_ABANDON_MAX_AGE_MS,
+  DEFAULT_PENDING_TTL_MINUTES,
 }
 export { registerAbandonRecoveryModels }
 
 export interface AbandonRecoveryModuleOpts {
   /** EmailService (inyectado post-init desde email-bootstrap para evitar orden-de-carga). */
   email?: AbandonEmailSender
+  /** #266: check de pasarela del hotel. Normalmente se inyecta post-init con
+   *  `service.setGatewayCheck(fn)` desde composition-root (mismo patrón que `setEmail`):
+   *  el módulo de pagos se resuelve después de registrar éste. */
+  isGatewayConfigured?: GatewayConfiguredCheck
   /** Override de la ventana de abandono (tests). Default: 1h–4h. */
   sweepConfig?: Partial<AbandonSweepConfig>
 }
@@ -53,7 +59,7 @@ export function AbandonRecoveryModule(opts: AbandonRecoveryModuleOpts = {}) {
       name: 'abandon-recovery',
       version: '1.0.0',
       description: 'Sweep periódico de reservas pending → email con link al widget',
-      actions: ['runSweep', 'setEmail', 'setSweepConfig'],
+      actions: ['runSweep', 'setEmail', 'setGatewayCheck', 'setSweepConfig'],
       events: [],
       // NO tiene tabla propia: es dueño del FLAG `abandonEmailSent` en reservations.
       tables: [],
@@ -64,7 +70,9 @@ export function AbandonRecoveryModule(opts: AbandonRecoveryModuleOpts = {}) {
         'Idempotente: marca abandonEmailSent=true solo si el email se encoló con éxito',
         'NO marca flag para reservas sin accessToken (creadas desde panel, no son abandono público)',
         'Ventana 1h–4h: antes molesta al cliente que está decidiendo; después es pérdida',
-        'No manda el correo si la reserva ya pasó el TTL de pago del hotel (booking_config.pendingPaymentTtlHours, #248)',
+        'No manda el correo si la reserva ya venció (reservations.paymentDeadlineAt < now; sin deadline → createdAt + booking_config.pendingTtlMinutes, #266)',
+        'No manda el correo si el hotel no tiene pasarela de pago (dep isGatewayConfigured, inyectado post-init vía setGatewayCheck, #266)',
+        'El texto del correo usa el TTL real del hotel ("vence ... en N minutos"), no un valor fijo (#266)',
       ],
     },
 
@@ -83,8 +91,9 @@ export function AbandonRecoveryModule(opts: AbandonRecoveryModuleOpts = {}) {
         guests: guestsRepo,
         hotels: hotelsRepo,
         email: opts.email ?? null as AbandonEmailSender | null,
-        // #248: tabla compartida (registrada por bookingengine/model.ts) — sólo lectura del TTL.
+        // #266: tabla compartida (registrada por bookingengine/model.ts) — sólo lectura del TTL.
         bookingConfig: new OrmRepository<any>(orm, 'BookingConfig'),
+        isGatewayConfigured: opts.isGatewayConfigured ?? null,
       }
       const sweepConfig: AbandonSweepConfig = {
         minAgeMs: opts.sweepConfig?.minAgeMs ?? DEFAULT_ABANDON_MIN_AGE_MS,

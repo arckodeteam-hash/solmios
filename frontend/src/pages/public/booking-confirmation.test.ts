@@ -52,12 +52,16 @@ const RESERVATION = {
 
 let wrapper: VueWrapper | null = null
 
-async function render(hotel: Record<string, unknown> | null = HOTEL, locale: 'es' | 'en' | 'pt' = 'es') {
+async function render(
+  hotel: Record<string, unknown> | null = HOTEL,
+  locale: 'es' | 'en' | 'pt' = 'es',
+  reservation: Record<string, unknown> = RESERVATION,
+) {
   setActivePinia(createPinia())
   useBookingI18nStore().setLocale(locale)
   if (hotel) getBySlug.mockResolvedValue(hotel)
   else getBySlug.mockRejectedValue(new Error('404'))
-  getReservation.mockResolvedValue(RESERVATION)
+  getReservation.mockResolvedValue(reservation)
   wrapper = mount(BookingConfirmation, {
     global: { stubs: { 'router-link': { props: ['to'], template: '<a :href="to"><slot /></a>' }, Teleport: true } },
   })
@@ -227,6 +231,143 @@ describe('acciones', () => {
   })
 })
 
+// #266 (MR-01) — el cron / checkout.session.expired cancelan la reserva `pending` sin pago con
+// cancellationReason='payment_timeout'. Al huésped se le dice que venció y se le ofrece reservar
+// de nuevo; cualquier otra cancelación sigue siendo el error genérico de pago.
+describe('reserva vencida por falta de pago (#266)', () => {
+  const EXPIRED = {
+    ...RESERVATION,
+    reservation: {
+      ...RESERVATION.reservation, status: 'cancelled', paymentStatus: 'unpaid',
+      cancellationReason: 'payment_timeout', amountPaid: 0, pendingAmount: 200.6,
+    },
+    paymentStatus: 'unpaid',
+  }
+
+  it('cancelled + payment_timeout → bloque "venció" con texto y CTA a volver a reservar, sin error genérico', async () => {
+    const w = await render(HOTEL, 'es', EXPIRED)
+    const block = w.find('[data-testid="booking-expired"]')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('Tu reserva venció porque no se completó el pago')
+    expect(block.text()).toContain('La habitación volvió a estar disponible. Podés hacer una nueva reserva.')
+    const cta = w.find('[data-testid="booking-expired-cta"]')
+    expect(cta.exists()).toBe(true)
+    expect(cta.text()).toBe('Volver a reservar')
+    expect(cta.attributes('href')).toBe('/book/hotel-boutique-palma')
+    expect(w.text()).not.toContain('No pudimos confirmar')
+    expect(w.text()).not.toContain('El pago fue rechazado o cancelado')
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(false)
+  })
+
+  it('en inglés el bloque se traduce', async () => {
+    const w = await render(HOTEL, 'en', EXPIRED)
+    expect(w.find('[data-testid="booking-expired"]').text()).toContain('Your booking expired because the payment was not completed')
+    expect(w.find('[data-testid="booking-expired-cta"]').text()).toBe('Book again')
+  })
+
+  it('cancelled sin motivo de vencimiento → error genérico como antes', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...EXPIRED,
+      reservation: { ...EXPIRED.reservation, cancellationReason: null },
+    })
+    expect(w.find('[data-testid="booking-expired"]').exists()).toBe(false)
+    expect(w.text()).toContain('No pudimos confirmar')
+    expect(w.text()).toContain('El pago fue rechazado o cancelado')
+  })
+
+  it('cancelled por otro motivo (p. ej. el huésped) → error genérico, no "venció"', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...EXPIRED,
+      reservation: { ...EXPIRED.reservation, cancellationReason: 'guest_request' },
+    })
+    expect(w.find('[data-testid="booking-expired"]').exists()).toBe(false)
+    expect(w.text()).toContain('No pudimos confirmar')
+  })
+})
+
+// #271 (MR-06) — aprobación manual: bajo el aviso de "pendiente de aprobación" se muestra el plazo
+// (`approvalDeadlineHours`, 24 si no vino) y, si el hotel rechaza, una rama propia con motivo y
+// reembolso en vez del error genérico de pago o del bloque "venció".
+describe('aprobación manual: plazo y rechazo del hotel (#271)', () => {
+  const REJECTED = {
+    ...RESERVATION,
+    reservation: {
+      ...RESERVATION.reservation, status: 'cancelled', approvalStatus: 'rejected',
+      refundAmount: 150, rejectionReason: 'Sin disponibilidad real', cancellationReason: null,
+    },
+  }
+
+  it('pendiente de aprobación con approvalDeadlineHours: 48 → muestra el plazo con "48"', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: { ...RESERVATION.reservation, approvalStatus: 'pending', approvalDeadlineHours: 48 },
+    })
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(true)
+    const deadline = w.find('[data-testid="confirm-approval-deadline"]')
+    expect(deadline.exists()).toBe(true)
+    expect(deadline.text()).toContain('48')
+    expect(deadline.text()).toBe('El hotel revisará su reserva en las próximas 48 h')
+  })
+
+  it('sin approvalDeadlineHours el plazo cae a 24 h; sin aprobación pendiente no aparece', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: { ...RESERVATION.reservation, approvalStatus: 'pending' },
+    })
+    expect(w.find('[data-testid="confirm-approval-deadline"]').text()).toContain('24')
+    const w2 = await render()
+    expect(w2.find('[data-testid="confirm-approval-deadline"]').exists()).toBe(false)
+  })
+
+  it('rechazada con reembolso y motivo → bloque de rechazo con importe y motivo, sin éxito ni "venció"', async () => {
+    const w = await render(HOTEL, 'es', REJECTED)
+    const block = w.find('[data-testid="confirm-rejected"]')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('El hotel no pudo confirmar su reserva')
+    expect(block.find('[data-testid="confirm-rejected-refund"]').text()).toBe('Se reembolsó 150.00 USD al medio de pago original')
+    expect(block.text()).not.toContain('se pondrá en contacto')
+    const reason = w.find('[data-testid="confirm-rejected-reason"]')
+    expect(reason.exists()).toBe(true)
+    expect(reason.text()).toContain('Sin disponibilidad real')
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(false)
+    expect(w.find('[data-testid="booking-expired"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('No pudimos confirmar')
+    expect(w.text()).not.toContain('El pago fue rechazado o cancelado')
+  })
+
+  it('rechazada con refundAmount 0 → "se pondrá en contacto" y sin importe', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...REJECTED,
+      reservation: { ...REJECTED.reservation, refundAmount: 0 },
+    })
+    const block = w.find('[data-testid="confirm-rejected"]')
+    expect(block.exists()).toBe(true)
+    expect(block.find('[data-testid="confirm-rejected-refund"]').exists()).toBe(false)
+    expect(block.find('[data-testid="confirm-rejected-no-refund"]').text()).toBe('El hotel se pondrá en contacto por la devolución')
+    expect(block.text()).not.toContain('Se reembolsó')
+    expect(block.text()).not.toContain('USD')
+  })
+
+  it('rechazada con refundAmount null → también "se pondrá en contacto"', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...REJECTED,
+      reservation: { ...REJECTED.reservation, refundAmount: null },
+    })
+    expect(w.find('[data-testid="confirm-rejected-no-refund"]').exists()).toBe(true)
+    expect(w.find('[data-testid="confirm-rejected-refund"]').exists()).toBe(false)
+  })
+
+  it('rechazada sin rejectionReason → no se dibuja el bloque del motivo', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...REJECTED,
+      reservation: { ...REJECTED.reservation, rejectionReason: null },
+    })
+    expect(w.find('[data-testid="confirm-rejected"]').exists()).toBe(true)
+    expect(w.find('[data-testid="confirm-rejected-reason"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Motivo:')
+  })
+})
+
 // `messages` no se exporta del composable: se verifica sobre el fuente que cada clave nueva
 // exista en es/en/pt (mismo criterio que booking-confirmation-payment.test.ts).
 import i18nSrc from '@/composables/useBookingI18n.ts?raw'
@@ -242,6 +383,9 @@ describe('textos nuevos en los 3 idiomas y sin strings sueltos', () => {
     'confirm.cancelErrorIds', 'confirm.cancelErrorDefault', 'confirm.cancelledTitle', 'confirm.cancelledBody',
     'confirm.refund', 'confirm.cancellationFee', 'confirm.noRefund', 'confirm.alreadyCancelled',
     'confirm.backToStart', 'confirm.walletTitle',
+    'confirm.expiredTitle', 'confirm.expiredBody', 'confirm.expiredCta',
+    'confirm.approvalDeadline', 'confirm.rejectedTitle', 'confirm.rejectedRefund',
+    'confirm.rejectedNoRefund', 'confirm.rejectedReason',
   ]
   it.each(KEYS)('%s está en es/en/pt', (key) => {
     expect(i18nSrc.split(`'${key}':`).length - 1).toBe(3)

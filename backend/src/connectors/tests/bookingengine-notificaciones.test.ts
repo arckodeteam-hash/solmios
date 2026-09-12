@@ -1,7 +1,7 @@
 // connectors/tests/bookingengine-notificaciones.test.ts — Wiring del aviso al hotel (#246).
 //
 // El motor tiene TRES suscriptos a sus sockets (reservas, payments y notificaciones; el push a
-// Channex lo hace el propio usecase del motor vía `pushAvailability`, no un connector).
+// Channex lo hace el propio usecase del motor vía `pushAvailability`, no un connector — #276).
 // `setSockets` acumula, así que acá se registran todos sobre un stub que usa la MISMA
 // `accumulateSockets` del proyecto y se verifica que un evento los corre a TODOS — un aviso que
 // falla no puede dejar sin correr al que asienta la plata.

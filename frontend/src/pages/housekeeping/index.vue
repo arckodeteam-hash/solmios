@@ -145,6 +145,10 @@
               </span>
             </div>
             <div class="text-[11px] text-text-secondary mb-3">{{ task.type }}</div>
+            <!-- Qué dejar listo para la llegada (#274): cuna, amenidades, régimen. -->
+            <div v-if="task.setupItems?.length" class="flex flex-wrap gap-1 -mt-2 mb-3" data-testid="setup-chips">
+              <span v-for="(it, i) in task.setupItems" :key="i" class="inline-flex items-center px-2 py-0.5 rounded-full bg-warning/10 text-warning text-[10px] font-bold">{{ setupItemLabel(it) }}</span>
+            </div>
             <div v-if="taskTime(task)" class="flex items-center gap-1 text-[10px] text-cyan font-bold mb-2">
               <span class="w-3 h-3 shrink-0" v-html="ICON_CLOCK"></span>
               {{ taskTime(task) }}
@@ -455,6 +459,14 @@
             </div>
           </div>
 
+          <!-- Preparación para la llegada (#274): lo que pide la reserva. -->
+          <div v-if="selectedTask?.setupItems?.length" class="rounded-2xl border border-border p-4" data-testid="setup-chips-detail">
+            <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-2">Preparar para la llegada</div>
+            <div class="flex flex-wrap gap-1.5">
+              <span v-for="(it, i) in selectedTask.setupItems" :key="i" class="inline-flex items-center px-2.5 py-1 rounded-full bg-warning/10 text-warning text-[11px] font-bold">{{ setupItemLabel(it) }}</span>
+            </div>
+          </div>
+
           <!-- Notas -->
           <div v-if="selectedTask.notes" class="rounded-2xl border border-border p-4">
             <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-2">Notas / comentarios</div>
@@ -608,7 +620,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
-import { useHousekeepingStore, humanizeMs, type HousekeepingViewTask } from '@/stores/housekeeping.store'
+import { useHousekeepingStore, humanizeMs, setupItemLabel, type HousekeepingViewTask } from '@/stores/housekeeping.store'
 import { HousekeepingService, type PhotoRequirement } from '@/services/Housekeeping.service'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -799,11 +811,11 @@ const kanbanColumns = [
   { id: 'inspected', title: 'Inspeccionada', dotColor: 'bg-purple', icon: ICON_SEARCH, emptyHint: 'Tareas verificadas por supervisión' },
 ]
 
-const TYPE_ICONS: Record<string, string> = { full_cleaning: ICON_SPARKLE, quick_cleaning: ICON_BOLT, deep_cleaning: ICON_DROPLET, inspection: ICON_SEARCH, maintenance: ICON_WRENCH }
-const TYPE_COLORS: Record<string, string> = { full_cleaning: 'border-l-4 border-l-cyan-500', quick_cleaning: 'border-l-4 border-l-teal-500', deep_cleaning: 'border-l-4 border-l-blue-600', inspection: 'border-l-4 border-l-purple-500', maintenance: 'border-l-4 border-l-amber-500' }
+const TYPE_ICONS: Record<string, string> = { full_cleaning: ICON_SPARKLE, quick_cleaning: ICON_BOLT, deep_cleaning: ICON_DROPLET, inspection: ICON_SEARCH, maintenance: ICON_WRENCH, arrival_setup: ICON_SPARKLE }
+const TYPE_COLORS: Record<string, string> = { full_cleaning: 'border-l-4 border-l-cyan-500', quick_cleaning: 'border-l-4 border-l-teal-500', deep_cleaning: 'border-l-4 border-l-blue-600', inspection: 'border-l-4 border-l-purple-500', maintenance: 'border-l-4 border-l-amber-500', arrival_setup: 'border-l-4 border-l-pink-500' }
 
 function blankTask(): HousekeepingViewTask {
-  return { id: '', roomNumber: '', type: '', floor: '', status: 'pending', priority: 'Normal', priorityRaw: 'medium', assignedTo: 'Sin asignar', staffId: '', time: '', notes: '', items: [], photos: [], rating: null, video: null, supervisorName: '', supervisorNote: '', supOnSiteTime: '' }
+  return { id: '', roomNumber: '', type: '', floor: '', status: 'pending', priority: 'Normal', priorityRaw: 'medium', assignedTo: 'Sin asignar', staffId: '', time: '', notes: '', items: [], photos: [], rating: null, video: null, supervisorName: '', supervisorNote: '', supOnSiteTime: '', setupItems: [] }
 }
 
 // Fuentes numéricas separadas de `stats` para poder animarlas con useCountUp

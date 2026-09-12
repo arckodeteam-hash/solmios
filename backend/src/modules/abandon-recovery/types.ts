@@ -19,11 +19,12 @@ export interface AbandonSweepResult {
 /** Interface del EmailService que el módulo necesita (subset de EmailService real). */
 export interface AbandonEmailSender {
   /**
-   * Encola un email para envío async por el worker. Mismo método que usan reservas/payroll/
-   * opiniones. Devuelve `sent` (bool) — si el encolado falla, el cron NO marca el flag y
-   * reintenta en el próximo tick.
+   * Encola un email para envío async por el worker. Subset estructural de
+   * `EmailService.enqueue` (services/email-service.ts): recibe un objeto con `hotelId`
+   * obligatorio (multi-tenancy) y devuelve el id de la fila encolada. Si el encolado
+   * lanza, el cron NO marca el flag y reintenta en el próximo tick.
    */
-  enqueue?(to: string, subject: string, html: string, opts?: Record<string, unknown>): Promise<{ sent: boolean }>
+  enqueue?(input: { to: string; subject: string; html: string; hotelId: string; relatedType?: string; relatedId?: string }): Promise<string>
   send?(to: string, subject: string, html: string, opts?: Record<string, unknown>): Promise<{ sent: boolean }>
 }
 
@@ -46,7 +47,13 @@ const MS_PER_HOUR = 60 * MS_PER_MINUTE
 export const DEFAULT_ABANDON_MIN_AGE_MS = MS_PER_HOUR          // 1h
 export const DEFAULT_ABANDON_MAX_AGE_MS = 4 * MS_PER_HOUR      // 4h
 
-/** TTL de pago por defecto (horas) cuando el hotel no tiene fila en booking_config o la
- *  columna `pendingPaymentTtlHours` es null (filas previas a #248). Mismo valor que
- *  `bookingengine/usecases/config.ts` — se duplica a propósito: no se importa entre módulos. */
-export const DEFAULT_PENDING_PAYMENT_TTL_HOURS = 24
+/** TTL de pago por defecto (minutos) cuando el hotel no tiene fila en booking_config o la
+ *  columna `pendingTtlMinutes` es null (filas previas a #266). Mismo valor que
+ *  `DEFAULT_PENDING_TTL_MINUTES` de `bookingengine/usecases/config.ts` — se duplica a
+ *  propósito: no se importa entre módulos. Rango válido del admin: 15–1440. */
+export const DEFAULT_PENDING_TTL_MINUTES = 60
+
+/** Check de pasarela de pago del hotel (#266). Inyectado post-init desde composition-root
+ *  (mismo patrón que el EmailService): si devuelve false, el hotel no puede cobrar online y
+ *  el link "completá tu reserva" no lleva a ningún checkout → el sweep no encola el correo. */
+export type GatewayConfiguredCheck = (hotelId: string) => Promise<boolean>

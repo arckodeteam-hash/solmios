@@ -1,7 +1,7 @@
 import { http } from './http'
 import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
-  ReservationApiRecord as RawReservation,
+  ReservationApiRecord as RawReservation, ChildAmenitySnapshot,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
   CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
 } from '@/types'
@@ -46,6 +46,37 @@ const SOURCE_MAP: Record<string, ReservationSource> = {
   other: 'other',
 }
 
+/** #274 — `Reservations.childAmenities` es un snapshot json; según el driver llega como array o
+ *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`. */
+export function parseChildAmenities(value: unknown): ChildAmenitySnapshot[] | null {
+  let list: unknown = value
+  if (typeof value === 'string') {
+    if (!value.trim()) return null
+    try { list = JSON.parse(value) } catch { return null }
+  }
+  if (!Array.isArray(list)) return null
+  return list
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && typeof (a as any).name === 'string' && String((a as any).name).trim() !== '')
+    .map((a) => ({
+      id: typeof a.id === 'string' ? a.id : undefined,
+      name: String(a.name).trim(),
+      price: typeof a.price === 'number' ? a.price : undefined,
+      quantity: Math.max(1, Number(a.quantity) || 1),
+      total: typeof a.total === 'number' ? a.total : undefined,
+    }))
+}
+
+/** #274 — Texto del tooltip del badge de cuna (dashboard y listado de reservas): `Cuna ×N` si la
+ *  reserva pidió cuna y cada amenidad infantil como `nombre ×cantidad`, unidos con ' · '.
+ *  Misma lectura que `housekeeping/usecases/arrival-setup.ts` (`buildSetupItems`). '' = nada que
+ *  preparar (el badge no se muestra). */
+export function childSetupSummary(r: { needsCrib?: boolean | null; cribCount?: number | null; childAmenities?: unknown }): string {
+  const parts: string[] = []
+  if (r.needsCrib) parts.push(`Cuna ×${Math.max(1, Number(r.cribCount) || 1)}`)
+  for (const a of parseChildAmenities(r.childAmenities) ?? []) parts.push(`${a.name} ×${a.quantity}`)
+  return parts.join(' · ')
+}
+
 export function mapReservation(r: RawReservation): Reservation {
   const status = STATUS_MAP[r.status?.toLowerCase()] ?? 'pending'
   return {
@@ -83,12 +114,31 @@ export function mapReservation(r: RawReservation): Reservation {
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
+    // #271 MR-06 — misma convención que checkIn/checkOut (ISO tal cual, tipado como Date): el
+    // listado lo usa para "Más antigua: hace N h" en el KPI "Por aprobar".
+    createdAt: r.createdAt as unknown as Date,
+    // #274 — cuna y amenidades infantiles: badge con tooltip en dashboard y listado (`childSetupSummary`).
+    needsCrib: r.needsCrib ?? false,
+    cribCount: r.cribCount ?? 0,
+    childAmenities: parseChildAmenities(r.childAmenities),
   } as Reservation
 }
 
 interface ReservationsResponse {
   data: RawReservation[]
   total: number
+}
+
+/** Resultado de `POST /api/reservas/:id/invoice` (REQ-FDR-02, #253). Espejo del backend
+ *  `reservas/usecases/issue-invoice.ts`: el servidor emite la factura (con o sin folio) y
+ *  vincula los pagos que ya existían; no crea pagos. */
+export interface IssueInvoiceResult {
+  invoiceId: string
+  invoiceNumber?: string
+  source: 'folio' | 'reservation'
+  folioId?: string
+  linkedPayments?: number
+  amountPaid?: number
 }
 
 export const ReservationService = {
@@ -252,6 +302,20 @@ export const ReservationService = {
   },
 
   /**
+   * #271 MR-06 — rechaza una reserva pendiente de revisión: el backend la cancela
+   * (`approvalStatus: 'rejected'`, `status: 'cancelled'`), reembolsa el 100% de lo cobrado por
+   * Stripe (el grupo entero si tiene `groupId`), libera la habitación y le manda el motivo al
+   * huésped por email. El motivo es obligatorio (≥ 10 caracteres; 400 si no) porque es lo que
+   * el huésped va a leer. 409 si la reserva ya no está `pending`. Además de la reserva, la
+   * respuesta trae `refundedAmount` (lo devuelto por Stripe; 0 si pagó por otro medio) y
+   * `rejectedCount` (cuántas reservas cayeron: 1 sin grupo).
+   */
+  async reject(id: string, reason: string): Promise<Reservation & { refundedAmount?: number; rejectedCount?: number }> {
+    const data = await http.post<RawReservation & { refundedAmount?: number; rejectedCount?: number }>(`/reservas/${id}/reject`, { reason })
+    return { ...mapReservation(data), refundedAmount: data.refundedAmount, rejectedCount: data.rejectedCount }
+  },
+
+  /**
    * REQ-RWP-06 (#249) — registra un cobro MANUAL recibido fuera de Stripe (efectivo, transferencia,
    * tarjeta en el mostrador, otro). Antes la recepción "confirmaba" la reserva cambiando el status
    * a mano y la plata no quedaba en ningún lado: ni en el historial de cobros ni en la caja.
@@ -263,6 +327,17 @@ export const ReservationService = {
   async markPaid(id: string, body: MarkPaidInput): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/mark-paid`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * REQ-FDR-02 (#253) — emite la factura de la reserva desde el modal: `POST /reservas/:id/invoice`.
+   * El backend decide si sale por el folio abierto (`source: 'folio'`) o directo desde la reserva
+   * (`source: 'reservation'`) y vincula los pagos que ya existían; NO crea pagos. Si la reserva ya
+   * tiene factura responde 409 con `invoiceId` (idempotente). El body se devuelve tal cual: `http.post`
+   * ya desenvuelve `{ success, data }` y el controller manda el resultado directo.
+   */
+  async issueInvoice(id: string, notes?: string): Promise<IssueInvoiceResult> {
+    return http.post<IssueInvoiceResult>(`/reservas/${id}/invoice`, notes ? { notes } : {})
   },
 
   /** Elimina una reserva (la UI lo limita a pendientes/canceladas). */

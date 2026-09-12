@@ -10,11 +10,13 @@
 //     ocurre DENTRO de `orm.transaction`, después de crear la reserva, re-leyendo el promo
 //     para detectar una race concurrente. Si la tx falla, NO se incrementa (rollback).
 //   - `upsells`: se validan ids contra `Upsells` (deben pertenecer al hotel + estar activos).
-//     El total se calcula como Σ price × quantity (kind es solo un hint de UI para el
-//     frontend; la matemática es price × qty para los tres kinds).
-//   - `totalBreakdown`: { subtotal, promoDiscount, upsellsTotal, childAmenitiesTotal, taxes,
-//     total } se devuelve en la respuesta para que el widget muestre el detalle y Stripe cobre
-//     el `total`.
+//     MR-10 (#275): la matemática vive en `upsell-pricing.ts#resolveUpsellLines` y SÍ mira el
+//     `kind` (per_room/per_person/per_stay/per_night/per_person_per_night) con tope de cantidad
+//     por kind → 400 `upsell_quantity_out_of_range` (antes era price × qty para todo y cualquier
+//     qty ≥ 1 pasaba).
+//   - `totalBreakdown`: { subtotal, promoDiscount, upsellsTotal, upsells[], childAmenitiesTotal,
+//     taxes, total } se devuelve en la respuesta para que el widget muestre el detalle y Stripe
+//     cobre el `total`.
 //   - `childAmenities` (REQ-01 #233): ids del catálogo `child_amenities` elegidos para ESTA
 //     habitación. Se gatean por composición (al menos un menor declarado + acceptChildren), se
 //     validan contra el catálogo activo del hotel, se suman al subtotal y se persisten como
@@ -52,15 +54,20 @@
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
+import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
+import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
 const MS_PER_DAY = 86_400_000
 
@@ -152,6 +159,10 @@ export interface PublicBookingExtraDeps {
    *  `/rates` bloquea por `enabled=false` un guest normal nunca llega acá, pero un caller
    *  directo del POST sí podría — mismo gate acá. Opcional (compat callers/tests viejos). */
   bookingConfig?: RepositoryAdapter<any>
+  /** #276 (MR-11) — Repo de `hotels`. Con él el POST pasa por el MISMO `isEngineOpen` que los
+   *  GET (`hotels.onlineBookingStatus` + `booking_config.enabled`). Opcional (compat callers/
+   *  tests viejos): sin él, sólo se mira `booking_config.enabled`, como antes. */
+  hotels?: RepositoryAdapter<any>
 }
 
 /**
@@ -163,8 +174,14 @@ export interface TotalBreakdown {
   subtotal: number
   /** Descuento del promo (0 si no hay promo). Siempre >= 0. */
   promoDiscount: number
-  /** Σ upsell.price × quantity (extras genéricos). */
+  /** Σ `upsells[].total` (extras genéricos, cotizados por `kind` — ver `upsell-pricing.ts`). */
   upsellsTotal: number
+  /** MR-10 (#275) — cada upsell por línea: `kind`, `unitPrice`, `quantity`, `nights`, `persons`
+   *  (solo ppn) y `total`, para que la confirmación pública y el modal del panel puedan mostrar
+   *  "Desayuno × 2 personas × 3 noches = 60" y no solo un `upsellsTotal` opaco. Opcional porque
+   *  `priceBreakdown` de reservas anteriores a esta feature no lo trae (y `/booking/group` lo
+   *  incorpora en su propia subtarea). */
+  upsells?: UpsellPricedLine[]
   /** REQ-01 (#233) — Σ amenidad.price × unidades (amenidades para niños/bebés, por habitación).
    *  0 si no se pidió ninguna o si la reserva no tiene menores. Ya incluido en `subtotal`. */
   childAmenitiesTotal: number
@@ -294,9 +311,9 @@ export async function createPublicBookingDirect(
   const {
     hotelId, roomId, roomType, guestName, guestEmail, guestPhone,
     checkIn, checkOut, adults, children: kids,
-    // Feature adultos+niños+edades (2026-09-02). Solo lo manda el widget nuevo — un caller viejo
-    // (BookingModal.vue de la landing, integradores) que solo manda `children` como contador NO
-    // pasa por el motor nuevo: cero cambio de comportamiento para quien no lo usa (ver más abajo).
+    // Feature adultos+niños+edades (2026-09-02). Lo manda el widget nuevo. MR-10 (#275): un
+    // caller que solo manda `children` como contador plano YA NO se queda afuera del motor de
+    // niños — se le sintetizan edades a `maxChildAge` (Opción A, ver más abajo).
     childrenAges: rawChildrenAges,
     // F2 2.5 — promoCode + upsells ahora se PROCESAN (F0 0.16 solo los persistía).
     promoCode,
@@ -316,12 +333,26 @@ export async function createPublicBookingDirect(
     // validateSchema los descartaba en el controller en silencio.
     estimatedArrival,
     specialRequests,
+    // #266 — clave de idempotencia del widget (opcional). Ver `normalizeIdempotencyKey`.
+    idempotencyKey: rawIdempotencyKey,
   } = body
 
   if (!hotelId || (!roomId && !roomType) || !guestName || !guestEmail || !checkIn || !checkOut) {
     return { status: 400, body: { error: 'Campos requeridos: hotelId, guestName, guestEmail, checkIn, checkOut, y roomId o roomType' } }
   }
   if (checkIn >= checkOut) return { status: 400, body: { error: 'checkIn debe ser anterior a checkOut' } }
+
+  // ─── #266 — Idempotencia: la MISMA key en el MISMO hotel devuelve la reserva ya creada ─────
+  // Un reintento del widget (doble click, red que cortó la respuesta, F5 sobre el POST) no puede
+  // crear dos reservas pending sobre dos habitaciones. Se busca ANTES de cualquier lectura
+  // pesada y de la tx: si ya existe, no se crea nada y se responde 200 con la misma
+  // reservationId/accessToken (ver `replayPublicBooking`). La carrera entre dos POST simultáneos
+  // con la misma key la cierra el índice único (hotelId, idempotencyKey) — ver el catch de la tx.
+  const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey)
+  if (idempotencyKey) {
+    const existing = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+    if (existing) return replayPublicBooking(orm, existing, stripe, logger, stripeUrls)
+  }
 
   // Techo DURO de noches, igual que `/rates` (ver `MAX_STAY_NIGHTS`). Va acá arriba, ANTES de
   // `stayNights` y de las tres lecturas de abajo: todo lo que sigue —bloqueos por noche,
@@ -341,9 +372,15 @@ export async function createPublicBookingDirect(
   let bookingConfig: any = null
   if (extraDeps?.bookingConfig) {
     bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
-    if (bookingConfig && bookingConfig.enabled === false) {
-      return { status: 404, body: { error: 'Hotel no encontrado' } }
-    }
+  }
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // el POST recibe `hotelId` (no slug), así que el hotel se carga por id vía `extraDeps.hotels` y
+  // se pasa por el MISMO `isEngineOpen` que los GET (plataforma + hotel) con el MISMO 404 body.
+  // Compat: sin `hotels` cableado (callers/tests viejos con orm fake sin `Hotels`) se conserva
+  // el chequeo sólo por `booking_config.enabled`, que era el comportamiento anterior.
+  const hotel = extraDeps?.hotels ? await extraDeps.hotels.findOne({ id: hotelId }) : null
+  if (extraDeps?.hotels ? !isEngineOpen(hotel, bookingConfig) : bookingConfig?.enabled === false) {
+    return engineClosed()
   }
 
   // ─── FIX (room_blocks + stop-sell) — paridad con AvailabilityUseCase y /calendar ──────
@@ -363,56 +400,65 @@ export async function createPublicBookingDirect(
     // Catálogo de temporadas: su RANGO también asigna temporada, no solo los días pintados.
     orm.findMany('Seasons', { hotelId }) as Promise<any[]>,
   ])
-  // Feature adultos+niños+edades (2026-09-02): SOLO se activa si el caller mandó `childrenAges`
-  // (el widget nuevo). Un caller viejo (BookingModal.vue, integradores) que manda `children` como
-  // contador plano sigue exactamente igual que antes — `childComposition` degrada a
-  // {effectiveAdults: adults, payingChildren: kids, freeChildren: 0}, MISMA fórmula que ya usaban
-  // `totalGuests` (adults+kids, para capacidad) y `occupancy` (solo adults, para precio) antes de
-  // este feature — pero unificadas en un solo número acá, lo cual SÍ es un cambio deliberado: el
-  // pedido pide que un niño que consume plaza cotice como un ocupante normal, cosa que el sistema
-  // viejo nunca hacía (el precio siempre ignoraba a los niños). Ese cambio de precio solo alcanza
-  // a quien manda `childrenAges` — el caller legacy sigue cotizando por adultos únicamente.
-  const childrenAgesInput: unknown[] = Array.isArray(rawChildrenAges) ? rawChildrenAges : []
-  const hasChildrenAges = childrenAgesInput.length > 0
-  const childPolicy = hasChildrenAges ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
-  if (hasChildrenAges && childPolicy && !childPolicy.acceptChildren) {
+  // Feature adultos+niños+edades (2026-09-02) + MR-10 (#275, Opción A): el motor de niños se
+  // activa con CUALQUIER niño declarado, venga como `childrenAges` (widget nuevo) o como `children`
+  // contador plano (BookingModal.vue viejo, integradores, API pública). Hasta MR-10 el caller
+  // plano cotizaba por adultos únicamente (los niños nunca movían el precio) y el mismo pedido daba
+  // dos totales según la puerta de entrada. Ahora, sin edades, cada niño se SINTETIZA a
+  // `childPolicy.maxChildAge` — el caso más caro de la política: es "niño con plaza" (cuenta para
+  // precio y capacidad, nunca bebé ni libre), así que quien no declara edades no obtiene ningún
+  // descuento por edad; SÍ obtiene el % de niños con plaza (`childrenRatePercent`) si el hotel lo
+  // habilitó, porque esa regla no depende de la edad sino de que el niño consuma plaza. Con eso el
+  // resto del flujo (composición, `maxFreeChildrenPerRoom`, capacidad/`maxChildren`, % niños,
+  // persistencia de `childrenAges`/`childrenAgesAsOf`) es EXACTAMENTE el mismo que para un caller
+  // con edades — una sola regla de precio para todos los puntos de entrada. Sin niños (children 0
+  // y sin edades) nada de esto corre.
+  //
+  // Nota: si `maxFreeAge === maxChildAge` (el hotel decidió que TODO niño viaja sin plaza), la
+  // edad sintetizada cae en "libre" — correcto, es la política del hotel, no una decisión nuestra.
+  const declaredChildrenAges: unknown[] = Array.isArray(rawChildrenAges) ? rawChildrenAges : []
+  const plainChildrenCount = Math.max(0, Math.floor(Number(kids)) || 0)
+  const hasAnyChildren = declaredChildrenAges.length > 0 || plainChildrenCount > 0
+  const childPolicy = hasAnyChildren ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
+  // Con Opción A un caller con `children` plano en un hotel que no acepta niños también recibe
+  // este 400 — antes pasaba en silencio cotizando por adultos.
+  if (hasAnyChildren && childPolicy && !childPolicy.acceptChildren) {
     return { status: 400, body: { error: 'Este hotel no acepta niños en la reserva' } }
   }
+  const childrenAgesInput: unknown[] = declaredChildrenAges.length > 0
+    ? declaredChildrenAges
+    : (childPolicy ? Array.from({ length: plainChildrenCount }, () => childPolicy.maxChildAge) : [])
+  const hasChildrenAges = childrenAgesInput.length > 0
   // FIX (encontrado en revisión Requerimiento 2, 2026-09-03): un caller legacy (sin
   // `childrenAges`) armaba acá `chargeableOccupancy: adultos únicamente`, y ESE número es el que
   // `fitsRoomCapacity` compara contra `capacity` más abajo — los niños del contador plano
   // (`children`) quedaban afuera del chequeo de capacidad por completo (una reserva de 2 adultos
-  // + 3 niños pasaba contra una habitación de capacity=2). Antes de este feature el chequeo era
-  // `totalGuests (adults+kids) >= room.capacity`, así que esto SÍ era una regresión respecto al
-  // comportamiento previo. `payingChildren: kids` también hace que `maxChildren` (si el hotel lo
-  // configuró) aplique aunque el caller no mande edades — correcto: es una restricción nueva de
-  // la habitación, no algo de lo que un caller viejo pudiera depender.
+  // + 3 niños pasaba contra una habitación de capacity=2). Con MR-10 ese caller ya entra por
+  // `resolveChildComposition` con las edades sintetizadas; el `else` de abajo queda solo para
+  // `children: 0` sin edades (composición trivial de adultos).
   const childComposition = hasChildrenAges && childPolicy
     ? resolveChildComposition(adults, childrenAgesInput, childPolicy)
     : {
         effectiveAdults: Math.max(1, Number(adults) || 1),
-        payingChildren: Math.max(0, Number(kids) || 0),
+        payingChildren: 0,
         freeChildren: 0,
         babies: 0,
-        chargeableOccupancy: Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0),
+        chargeableOccupancy: Math.max(1, Number(adults) || 1),
       }
   // REQ-03 (#235) — tope de niños que NO consumen plaza por habitación (`maxFreeChildrenPerRoom`,
   // null = sin límite). Es una regla del HOTEL, no de la unidad física: se decide acá, ANTES de
-  // resolver habitación/capacidad, y solo con edades reales (`hasChildrenAges`) — un caller
-  // legacy con contador plano no tiene niños "libres" que contar. No toca `fitsRoomCapacity`.
+  // resolver habitación/capacidad. No toca `fitsRoomCapacity`. (Con edades sintetizadas a
+  // `maxChildAge` solo puede disparar si la política deja a ese tope como "libre".)
   if (hasChildrenAges && childPolicy) {
     const freeLimitError = freeChildrenLimitError(childPolicy, childComposition)
     if (freeLimitError) return { status: 409, body: { error: freeLimitError } }
   }
   // Ocupación para CAPACIDAD (cuántas plazas físicas ocupa): adultos + niños con plaza + niños
   // sin plaza — un niño "libre" no cuenta para el precio pero sigue siendo una persona física en
-  // el cuarto. Legacy (sin edades): adults+kids, igual que el `totalGuests` de siempre.
-  const capacityGuests = hasChildrenAges
-    ? childComposition.effectiveAdults + childComposition.payingChildren + childComposition.freeChildren
-    : Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0)
-  // Ocupación para PRECIO: adultos + niños que consumen plaza (el niño libre no cotiza). Legacy:
-  // solo adultos, igual que el `occupancy` de siempre — el niño nunca movió el precio.
-  const pricingOccupancy = hasChildrenAges ? childComposition.chargeableOccupancy : childComposition.effectiveAdults
+  // el cuarto.
+  const capacityGuests = childComposition.effectiveAdults + childComposition.payingChildren + childComposition.freeChildren
+  // Ocupación para PRECIO: adultos + niños que consumen plaza (el niño libre no cotiza).
+  const pricingOccupancy = childComposition.chargeableOccupancy
 
   // ─── Cuna (Tarea 22, simplificada 2026-09-09) — gateo por bebé Y por config del hotel ───────
   // El composer del frontend ya oculta "¿Necesita cuna?" sin un bebé en la composición o sin que
@@ -570,12 +616,12 @@ export async function createPublicBookingDirect(
   // misma que se le cotizó al huésped: `/rates` publica el `min(basePrice)` del tipo.
   const baseRates = baseRatesOnly(rawRates ?? [])
   const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
-  // Misma ocupación que el `closedRoomTypes` de arriba (`pricingOccupancy` — adultos solo si es
-  // un caller legacy sin `childrenAges`, o adultos+niños-con-plaza si mandó edades).
+  // Misma ocupación que el `closedRoomTypes` de arriba (`pricingOccupancy` — adultos + niños con
+  // plaza, sean edades declaradas o sintetizadas por MR-10).
   const fallbackNightly = Number(room.basePrice) || 0
-  // Tarea "Cobro % niños" (2026-09-09) — solo aplica con edades reales declaradas (un caller
-  // legacy sin `childrenAges` no tiene forma de saber si su `children` plano son de verdad niños
-  // según la política de edades del hotel, así que sigue cotizando exactamente como siempre).
+  // Tarea "Cobro % niños" (2026-09-09) — aplica a todo niño con plaza. MR-10 (#275): también al
+  // caller con `children` plano, porque sus niños ya se sintetizaron a `maxChildAge` (con plaza)
+  // y el % no depende de la edad exacta sino de consumir plaza.
   const childrenDiscountEnabled = hasChildrenAges && childPolicy?.childrenDiscountEnabled === true
   // Auditoría (AC "el porcentaje utilizado debe conservarse... para mantener consistencia con el
   // precio calculado"): el % vigente en `configuration` puede cambiar después — sin anclar el que
@@ -605,19 +651,52 @@ export async function createPublicBookingDirect(
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // MR-10 (#275) — líneas cotizadas por `kind` (van tal cual a `priceBreakdown.upsells[]`).
+  let upsellPricedLines: UpsellPricedLine[] = []
+  // #269 — líneas resueltas (nombre, qty, unitario del catálogo) para materializarlas como
+  // `ReservationAddons` en la tx de abajo.
+  const upsellLines: BookingEngineUpsellInput[] = []
   if (upsellItems.length > 0 && extraDeps?.upsells) {
     const hotelUpsells = await extraDeps.upsells.findMany({ hotelId })
-    const byId = new Map(hotelUpsells.map((u: any) => [u.id, u]))
-    for (const item of upsellItems as UpsellItem[]) {
-      const found = byId.get(item.id)
-      // Solo se suman upsells activos del hotel. Si el cliente manda un id inexistente,
-      // inactivo, o de otro hotel, se ignora (no fail-fast: el huésped no tiene la culpa
-      // de un id stale en el frontend; mejor crear la reserva sin ese extra).
-      if (!found || !found.active || found.hotelId !== hotelId) continue
-      const qty = Math.max(1, Math.floor(Number(item.quantity) || 1))
-      const lineTotal = Number(found.price) * qty
-      upsellsTotal += lineTotal
-      upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
+    // MR-10 (#275) — la matemática y los topes por `kind` viven en `resolveUpsellLines` (mismo
+    // helper que `/booking/group`). Ids inexistentes/inactivos/de otro hotel se siguen ignorando
+    // ahí adentro (no fail-fast). `persons` = quienes consumen el extra: adultos + niños con plaza
+    // + niños libres, SIN bebés (un bebé no desayuna ni ocupa asiento en el transfer).
+    const persons = childComposition.effectiveAdults + childComposition.payingChildren
+      + (childComposition.freeChildren - childComposition.babies)
+    const resolved = resolveUpsellLines(hotelUpsells, upsellItems as UpsellItem[], hotelId, { nights, rooms: 1, persons })
+    if (!resolved.ok) {
+      // Cantidad fuera del tope del kind → 400 tipado (mismo molde que `promo_invalid`): es
+      // dinero que el huésped vio en pantalla, no se silencia clampeando. `max` le dice al widget
+      // hasta cuánto puede pedir.
+      return {
+        status: 400,
+        body: {
+          error: resolved.error, upsellId: resolved.upsellId, name: resolved.name, kind: resolved.kind,
+          quantity: resolved.quantity, max: resolved.max,
+          message: `La cantidad de "${resolved.name}" (${resolved.quantity}) supera el máximo permitido (${resolved.max})`,
+        },
+      }
+    }
+    upsellPricedLines = resolved.lines
+    upsellsTotal = resolved.total
+    for (const line of upsellPricedLines) {
+      // Texto para `notes`: "Desayuno×2p×3n=60.00" (ppn), "Parking×3n=45.00" (per_night),
+      // "Transfer×2=30.00" (el resto) — el detalle estructurado va en `priceBreakdown.upsells`.
+      const factor = line.persons !== undefined
+        ? `×${line.persons}p×${line.nights}n`
+        : line.kind === 'per_night' ? `×${line.nights}n` : `×${line.quantity}`
+      upsellSummary.push(`${line.name}${factor}=${line.total.toFixed(2)}`)
+      // #269 — `BookingEngineUpsellInput` solo conoce `{name, quantity, unitPrice}` y el folio
+      // asienta `quantity × unitPrice`. Para que el cargo cuadre con lo cobrado SIN tocar
+      // `booking-engine-addons.ts`, `quantity` lleva el multiplicador completo del kind
+      // (cantidad × noches × personas) y `unitPrice` sigue siendo el unitario del catálogo:
+      // desayuno ppn 10 × 2 personas × 3 noches → quantity 6, unitPrice 10, cargo 60.
+      upsellLines.push({
+        name: line.name,
+        quantity: line.quantity * line.nights * (line.persons ?? 1),
+        unitPrice: line.unitPrice,
+      })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     // F0 0.16 — Sin repo de upsells, dejamos el resumen crudo (id×qty) para que el recepcionista
@@ -692,6 +771,8 @@ export async function createPublicBookingDirect(
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
+    // MR-10 (#275) — por línea; se persiste en `priceBreakdown` y sale en la confirmación pública.
+    upsells: upsellPricedLines,
     childAmenitiesTotal: round2(childAmenitiesTotal),
     roomAmenitiesTotal: round2(roomAmenitiesTotal),
     taxes,
@@ -766,10 +847,14 @@ export async function createPublicBookingDirect(
         r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn)
       if (takenNow) throw new RoomTakenConcurrentlyError()
 
-      guest = await tx.create('Guests', {
-        id: crypto.randomUUID(), hotelId, name: guestName, email: guestEmail, phone: guestPhone || '',
-        documentType: 'passport', documentNumber: '', nationality: '', address: '',
-      })
+      // MR-08 (#273) — un huésped = una ficha: se busca por email/teléfono normalizados y solo se
+      // crea si no existe. El lock de fila `Hotels` que toma el helper y la búsqueda van DENTRO de
+      // esta misma tx. Orden de locks: siempre Rooms (arriba) → Hotels (acá); nadie hace el inverso.
+      const guestMatch = await findOrCreateGuest(
+        { guests: guestsOnTx(tx), lockTx: tx },
+        { hotelId, name: guestName, email: guestEmail, phone: guestPhone },
+      )
+      guest = guestMatch.guest
       // F0 0.13 — AccessToken público (UUID). Solo el flujo público lo setea; las reservas
       // creadas desde `/api/panel/reservas` NO lo reciben → `accessToken=null` → 404 en el
       // endpoint público (anti-enumeración IDOR, spec booking-unification D4).
@@ -781,6 +866,10 @@ export async function createPublicBookingDirect(
         checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
         adults: childComposition.effectiveAdults,
         children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),
+        // MR-10 (#275): con `children` plano acá van las edades SINTETIZADAS a `maxChildAge` — se
+        // persisten a propósito, porque son la base del precio que el huésped pagó: sin ellas un
+        // reagendado/repricing (`composeFromPersistedReservation`) volvería a cotizar por adultos y
+        // reabriría la diferencia de totales que MR-10 cierra.
         childrenAges: hasChildrenAges ? childrenAgesInput : [],
         // Requerimiento 12 (edad de referencia, 2026-09-03) — ancla temporal de `childrenAges`:
         // el check-in VIGENTE al declarar las edades. Sin esto no hay forma de proyectar la edad
@@ -818,7 +907,22 @@ export async function createPublicBookingDirect(
         // públicas — una reserva cargada a mano por el hotel no necesita que el hotel se
         // apruebe a sí mismo (ver `reservas/usecases/create.ts`, sin tocar).
         approvalStatus: bookingConfig?.instantConfirmation === false ? 'pending' : undefined,
+        // #266 — Límite para pagar: ahora + booking_config.pendingTtlMinutes (default 60). El cron
+        // `shared/usecases/pending-payment-expiry.ts` cancela con `payment_timeout` lo que siga
+        // pending pasado este instante; `null` (reservas del panel) nunca vence.
+        paymentDeadlineAt: resolvePaymentDeadlineAt(bookingConfig),
+        // #266 — Clave de idempotencia del widget (única por hotel, ver migrate-db.ts).
+        idempotencyKey: idempotencyKey ?? undefined,
       })
+
+      // #269 — Cada extra pagado online queda como fila `ReservationAddons` (source
+      // booking_engine, fuera del total cobrable: su importe YA está en `totalAmount`). Misma tx
+      // que la reserva: o se crean todas o ninguna. `notes`/`priceBreakdown` no cambian.
+      const addonRows = buildBookingEngineAddons({
+        reservationId: reservation.id, hotelId, taxRate: totalTaxRateOf(hotelTaxes),
+        upsells: upsellLines, childAmenities: childAmenityLines, roomAmenities: roomAmenityLines,
+      })
+      for (const row of addonRows) await tx.create('ReservationAddons', row)
 
       // F2 2.5 — Incremento atómico de promo.uses DENTRO de la tx. Re-lectura para detectar
       // races concurrentes. Si se agotó entre validate y commit, aborta (rollback de guest +
@@ -857,6 +961,16 @@ export async function createPublicBookingDirect(
       logger?.warn(`Promo ${promoCode} agotado concurrentemente para hotel ${hotelId}`, { reservationId: reservation?.id })
       return { status: 409, body: { error: 'promo_invalid', promoReason: 'max_uses_reached' } }
     }
+    // #266 — Dos POST simultáneos con la misma key: el primero commiteó entre nuestra búsqueda
+    // inicial y este insert, y el índice único (hotelId, idempotencyKey) rechazó al segundo.
+    // No es un error del huésped: se relee la fila ganadora y se responde el mismo replay 200.
+    if (idempotencyKey && isUniqueViolation(e)) {
+      const existing = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+      if (existing) {
+        logger?.warn('Reserva pública duplicada por idempotencyKey concurrente — replay', { hotelId, reservationId: existing.id })
+        return replayPublicBooking(orm, existing, stripe, logger, stripeUrls)
+      }
+    }
     // Otros errores de la tx: relanzar como antes (el controller pasa a 500 si no se atrapa).
     throw e
   }
@@ -866,27 +980,82 @@ export async function createPublicBookingDirect(
   // F0 0.16 — Cableo del checkoutUrl. ROBUSTEZ: si Stripe falla (no configurado, gateway
   // caído), la reserva SE CREÓ igual. Devolvemos 201 con checkoutUrl:null + paymentError.
   // El huésped al menos tiene su reserva; el panel la ve como "pending".
-  let checkoutUrl: string | null = null
-  let paymentError: string | null = null
-  if (stripe && stripeUrls) {
-    try {
-      const session = await stripe.createReservationCheckout(
-        reservation.id, totalAmount, stripeUrls.successUrl, stripeUrls.cancelUrl,
-      )
-      checkoutUrl = session.url || null
-    } catch (e: any) {
-      // NO relanzar — robustez F0. La reserva ya está creada; lo peor que podemos hacer es
-      // tirar 500 y que el huésped crea que la reserva no se hizo (cuando sí se hizo).
-      paymentError = e?.message || 'payment_gateway_unavailable'
-      logger?.warn(
-        `Reserva ${reservation.id} creada pero Stripe falló — checkoutUrl null, paymentError="${paymentError}"`,
-        { hotelId, reservationId: reservation.id },
-      )
-    }
-  }
+  const { checkoutUrl, paymentError } = await createCheckoutSafely(
+    stripe, stripeUrls, reservation.id, totalAmount, hotelId, logger,
+  )
 
+  return publicBookingResponse(201, reservation, guest, checkoutUrl, totalBreakdown, paymentError)
+}
+
+/**
+ * F0 0.16 — Crea la Checkout Session sin dejar que un fallo de Stripe tumbe la respuesta: la
+ * reserva YA existe; lo peor que podemos hacer es tirar 500 y que el huésped crea que no se hizo.
+ * Devuelve `checkoutUrl: null` + `paymentError` cuando la pasarela falla o no está cableada.
+ */
+async function createCheckoutSafely(
+  stripe: PublicBookingStripeDeps | undefined,
+  stripeUrls: { successUrl: string; cancelUrl: string } | undefined,
+  reservationId: string,
+  amount: number,
+  hotelId: string,
+  logger?: PublicBookingLogger,
+): Promise<{ checkoutUrl: string | null; paymentError: string | null }> {
+  if (!stripe || !stripeUrls) return { checkoutUrl: null, paymentError: null }
+  try {
+    const session = await stripe.createReservationCheckout(reservationId, amount, stripeUrls.successUrl, stripeUrls.cancelUrl)
+    return { checkoutUrl: session.url || null, paymentError: null }
+  } catch (e: any) {
+    // NO relanzar — robustez F0.
+    const paymentError: string = e?.message || 'payment_gateway_unavailable'
+    logger?.warn(
+      `Reserva ${reservationId} creada pero Stripe falló — checkoutUrl null, paymentError="${paymentError}"`,
+      { hotelId, reservationId },
+    )
+    return { checkoutUrl: null, paymentError }
+  }
+}
+
+/**
+ * #266 — Replay idempotente: la reserva ya existe para esta (hotelId, idempotencyKey). No se crea
+ * nada; se devuelve la MISMA forma que el 201 con `status: 200` y `replayed: true`, para que el
+ * widget siga su flujo normal (guardar reservationId/accessToken y redirigir a `checkoutUrl`).
+ *
+ * `checkoutUrl` se vuelve a pedir a Stripe con el mismo reservationId: `createReservationCheckout`
+ * manda `Idempotency-Key: reservationId`, así que Stripe devuelve la MISMA sesión del primer POST
+ * (no cobra dos veces). Si esa sesión ya expiró en Stripe, no hay forma de forzar una nueva sin
+ * variar la key (el service no lo admite hoy): el cron vence la reserva por `paymentDeadlineAt`
+ * y el huésped vuelve a reservar. Una reserva ya `cancelled` (vencida por el cron o por
+ * `checkout.session.expired`) no se "revive": 409 `reservation_expired`.
+ */
+async function replayPublicBooking(
+  orm: any,
+  existing: any,
+  stripe?: PublicBookingStripeDeps,
+  logger?: PublicBookingLogger,
+  stripeUrls?: { successUrl: string; cancelUrl: string },
+): Promise<any> {
+  if (existing.status === 'cancelled') return { status: 409, body: { error: 'reservation_expired' } }
+  const guest = existing.guestId
+    ? await Promise.resolve(orm.findById?.('Guests', existing.guestId)).catch(() => null) ?? null
+    : null
+  const { checkoutUrl, paymentError } = await createCheckoutSafely(
+    stripe, stripeUrls, existing.id, Number(existing.totalAmount) || 0, String(existing.hotelId ?? ''), logger,
+  )
+  const totalBreakdown = safeParse(existing.priceBreakdown) ?? null
+  return publicBookingResponse(200, existing, guest, checkoutUrl, totalBreakdown, paymentError, true)
+}
+
+function publicBookingResponse(
+  status: 200 | 201,
+  reservation: any,
+  guest: any,
+  checkoutUrl: string | null,
+  totalBreakdown: TotalBreakdown | null,
+  paymentError: string | null,
+  replayed = false,
+): any {
   return {
-    status: 201,
+    status,
     body: {
       // B-6/H-4 (auditoría 2026-08-19): allow-list estricta — las filas crudas arrastraban
       // campos internos (ownerNotes, otaNotes, card*, snapshot financiero, document del
@@ -919,6 +1088,9 @@ export async function createPublicBookingDirect(
       // en 0) para que el frontend tenga un contrato estable.
       totalBreakdown,
       ...(paymentError !== null ? { paymentError } : {}),
+      // #266 — solo en el replay idempotente (misma key, mismo hotel): el widget puede distinguir
+      // "te devolví la que ya tenías" de "creé una nueva" sin cambiar el resto del contrato.
+      ...(replayed ? { replayed: true } : {}),
     },
   }
 }
@@ -927,4 +1099,43 @@ export async function createPublicBookingDirect(
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+/** #266 — Tope de la clave de idempotencia (columna TEXT; el índice único la indexa entera). */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 128
+
+/**
+ * #266 — Normaliza `body.idempotencyKey`: string no vacía, recortada a 128 chars. Cualquier otra
+ * cosa (número, objeto, vacío) se ignora → `null` = la reserva se crea sin key (comportamiento
+ * previo: cada POST crea una reserva nueva).
+ */
+export function normalizeIdempotencyKey(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return trimmed.slice(0, IDEMPOTENCY_KEY_MAX_LENGTH)
+}
+
+/**
+ * #266 — `paymentDeadlineAt` (ISO) = ahora + `booking_config.pendingTtlMinutes`. Config ausente,
+ * `null` o inválida (filas previas a #266, mocks de tests) → `DEFAULT_PENDING_TTL_MINUTES`.
+ */
+export function resolvePaymentDeadlineAt(bookingConfig: any, now: Date = new Date()): string {
+  const raw = Number(bookingConfig?.pendingTtlMinutes)
+  const ttl = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PENDING_TTL_MINUTES
+  return new Date(now.getTime() + ttl * 60_000).toISOString()
+}
+
+/**
+ * #266 — Violación del índice único (hotelId, idempotencyKey) en SQLite ("UNIQUE constraint
+ * failed") o Postgres (código 23505 / "duplicate key"). Mismo criterio que
+ * `folios/usecases/folio-entries.ts#isDuplicateError`.
+ */
+export function isUniqueViolation(e: unknown): boolean {
+  const code = String((e as any)?.code ?? '')
+  const msg = String((e as any)?.message ?? e).toLowerCase()
+  return code === '23505'
+    || msg.includes('unique constraint')
+    || msg.includes('duplicate key')
+    || msg.includes('idx_reservations_hotel_idempotency')
 }

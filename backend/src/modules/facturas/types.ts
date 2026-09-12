@@ -42,6 +42,7 @@ export interface FacturasDTO {
   paymentMethod?: string | null
   amountPaid?: number
   notes?: string | null
+  issuedBy?: string | null    // id del usuario que emitió la factura (CA 24 de #298)
   createdAt: string
   updatedAt: string
 
@@ -77,6 +78,8 @@ export interface CreateFacturasDTO {
    * (lo que registraría el mismo dinero dos veces).
    */
   amountPaid?: number
+  /** Id del usuario que emitió la factura (CA 24 de #298). Lo setea el service/usecase, no el cliente. */
+  issuedBy?: string | null
 }
 
 export interface UpdateFacturasDTO {

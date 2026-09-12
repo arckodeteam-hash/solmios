@@ -11,8 +11,11 @@ export interface BookingConfig {
   language: string
   minNights: number
   maxNights: number
-  /** Horas que tiene el huésped para pagar una reserva web antes de que venza sola (0 = nunca vence). */
-  pendingPaymentTtlHours: number
+  /** Minutos que tiene el huésped para completar el pago de una reserva web antes de que se cancele sola (15–1440). */
+  pendingTtlMinutes: number
+  /** #271 MR-06 — horas que tiene el hotel (con confirmación manual) para aprobar o rechazar una
+   *  reserva pagada antes de que el cron le mande un recordatorio (1–168, default 24). */
+  approvalDeadlineHours: number
   cancellationPolicy: string
   showComparison: boolean
   googleAdsEnabled: boolean

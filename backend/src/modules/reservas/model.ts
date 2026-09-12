@@ -118,6 +118,12 @@ export const ReservasModel: ModelDefinition = {
     // Las reservas creadas desde el panel NO lo setean → queda null → 404 en el endpoint público
     // (anti-IDOR: no revela existencia). Anti-patrón ORM D5: declarado acá, case-sensitive.
     accessToken: { type: 'string' },
+    // #266 — Límite (ISO) para pagar una reserva web pending: createdAt + booking_config.pendingTtlMinutes.
+    // null = no vence (reservas del panel o previas a #266). Case-sensitive (anti-patrón ORM D5).
+    paymentDeadlineAt: { type: 'string' },
+    // #266 — Clave de idempotencia que manda el widget en POST /api/public/booking. Única por hotel
+    // (idx_reservations_hotel_idempotency en migrate-db.ts); null en reservas del panel.
+    idempotencyKey: { type: 'string' },
     // F3 3.14 — Abandon recovery: marca que ya se envió el email de recuperación a esta
     // reserva. Lo setea el cron `abandon-recovery-cron` (cada 30 min) cuando encuentra una
     // reserva `pending` con `createdAt` entre 1h y 4h atrás. Idempotente por diseño: el flag
@@ -147,7 +153,12 @@ export const ReservasModel: ModelDefinition = {
     // revisión humana antes de darla por buena, no un segundo estado de disponibilidad. Solo
     // lo setean los usecases públicos de bookingengine; una reserva cargada a mano desde el
     // panel no pasa por acá. Anti-patrón ORM: declarado acá o se descarta al persistir.
+    // #271 MR-06: 'rejected' = el hotel la rechazó (`POST /api/reservas/:id/reject`); en ese
+    // caso `status` también pasa a 'cancelled' y el cobro web se devolvió por Stripe.
     approvalStatus: { type: 'string' },
+    // #271 MR-06 — ISO del último recordatorio "reserva pendiente de aprobación" enviado al
+    // hotel; el cron lo usa para no repetir el aviso (dedup). NULL = nunca se recordó.
+    approvalReminderAt: { type: 'string' },
   },
   timestamps: true,
 }

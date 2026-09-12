@@ -1,4 +1,40 @@
 import { roomChargeRate } from '../../../shared/usecases/room-charge-rate'
+import { buildAddonFolioCharges, ADDON_CHARGE_REFERENCE_PREFIX } from '../../../shared/usecases/addon-folio-charges'
+
+/**
+ * #269 — Extras pagados online (`reservation_addons` source booking_engine) que todavía no
+ * tienen su cargo en el folio. Cubre a las reservas que ya estaban `checked_in` cuando se
+ * desplegó el posteo del check-in: el night audit hace el MISMO posteo, idempotente por
+ * `reference: 'addon:<id>'` contra los cargos que ya tiene el folio (dedup en memoria, igual
+ * que la noche).
+ *
+ * El helper decide QUÉ falta (source, kind, dedup, descripción, cantidad); el importe se postea
+ * vía `postCharge` del módulo, que aplica el impuesto del hotel (`configuration('taxes')` con
+ * fallback a `hotels.taxRate`) y persiste `reference`. Por eso el `taxRate` del helper va en 0:
+ * sus `taxes`/`total` no se usan acá.
+ */
+async function postMissingAddonCharges(
+  orm: any, postCharge: any, folio: any, reservationId: string, hotelId: string,
+  folioCharges: any[], user: any,
+): Promise<number> {
+  const addons = await orm.findMany('ReservationAddons', { reservationId, hotelId }) as any[]
+  if (!addons?.length) return 0
+  const unitById = new Map(addons.map((a: any) => [String(a?.id ?? ''), Number(a?.amount) || 0]))
+  const rows = buildAddonFolioCharges({
+    folioId: folio.id, hotelId, addons, taxRate: 0, existingCharges: folioCharges,
+    source: 'night_audit', postedAt: new Date().toISOString(),
+  })
+  for (const row of rows) {
+    // `postCharge` recibe el importe UNITARIO y multiplica por `quantity` (base = amount × qty).
+    const unit = unitById.get(row.reference.slice(ADDON_CHARGE_REFERENCE_PREFIX.length)) ?? row.amount / row.quantity
+    await postCharge(folio.id, {
+      description: row.description, category: 'extra', amount: unit, quantity: row.quantity,
+      source: 'night_audit', reference: row.reference,
+    }, user)
+  }
+  return rows.length
+}
+
 export async function postNightAuditRoomCharges(orm: any, listFolios: any, openFolio: any, postCharge: any, user: any, query?: any): Promise<any> {
   if (!orm) return { posted: 0, error: 'ORM no disponible' }
   // Multi-tenant: solo super_admin puede targetear otro hotel vía ?hotelId=.
@@ -17,6 +53,7 @@ export async function postNightAuditRoomCharges(orm: any, listFolios: any, openF
   const inHouse = reservations.filter((r: any) => r.status === 'checked_in' && r.checkIn && r.checkOut && String(r.checkIn).slice(0, 10) <= t && t <= String(r.checkOut).slice(0, 10))
   let posted = 0
   let skipped = 0
+  let extrasPosted = 0
   const mockUser = { id: 'system', role: 'super_admin', hotelId }
   for (const res of inHouse) {
     const room = roomById.get(res.roomId); if (!room) continue
@@ -33,6 +70,9 @@ export async function postNightAuditRoomCharges(orm: any, listFolios: any, openF
     // night audit ("Habitación 101 — 2026-08-05"): así una noche ya cobrada al registrarse no se
     // vuelve a cobrar acá.
     const folioCharges = await orm.findMany('FolioCharges', { folioId: folio.id }) as any[]
+    // Extras pagados online ANTES del dedup de la noche: una reserva con la noche ya cobrada
+    // (por el check-in o una pasada anterior) igual recibe los addons que le falten.
+    extrasPosted += await postMissingAddonCharges(orm, postCharge, folio, res.id, hotelId, folioCharges ?? [], mockUser)
     const alreadyPosted = (folioCharges ?? []).some((c: any) => String(c?.description ?? '').includes(t))
     if (alreadyPosted) {
       skipped++
@@ -47,5 +87,5 @@ export async function postNightAuditRoomCharges(orm: any, listFolios: any, openF
     await postCharge(folio.id, { description: `Habitación ${room.number} — ${t}`, category: 'room', amount: nightRate, quantity: 1, source: 'night_audit' }, mockUser as any)
     posted++
   }
-  return { posted, skipped, date: t }
+  return { posted, skipped, extrasPosted, date: t }
 }

@@ -13,6 +13,8 @@ export const GruposModel: ModelDefinition = {
     checkOut: { type: 'string' },
     status: { type: 'string', default: "pending" },
     totalAmount: { type: 'number', default: 0 },
+    /** #276 (MR-11) — lo cobrado online por el grupo entero (lo asienta `settle()` del motor). */
+    paidAmount: { type: 'number', default: 0 },
     notes: { type: 'text' },
     createdAt: { type: 'string' },
   },

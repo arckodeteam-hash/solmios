@@ -2,31 +2,17 @@
 //
 // Una reserva del motor web (`onBookingCreated`) o un pago confirmado por la pasarela
 // (`onBookingPaid`) tienen que enterarle al hotel: campanita a quien puede ver reservas, correo al
-// buzón del hotel y push. Solo delega: la lógica vive en `shared/usecases/notify-reservation-received`.
-//
-// Todo se resuelve EN CADA aviso, no al cablear (mismo criterio que canales-notificaciones): si un
-// módulo opcional no está, el aviso sale igual con lo que haya. Y los deps se arman con MÓDULOS, no
-// con el orm — un connector no lee tablas ajenas (ver reservas-money.ts).
-//
-// El correo no se resuelve acá: el EmailService nace DESPUÉS de `system.start()` y lo inyecta
-// `email-bootstrap` en `notificaciones.setHotelEmailDeps` (post-init). Hasta entonces,
-// `hotelEmailDeps()` es null y el aviso va sin correo.
+// buzón del hotel y push. Solo delega: la lógica vive en `shared/usecases/notify-reservation-received`
+// y los deps los arma `reservation-notify-deps.ts` (compartido con el cron de recordatorio de
+// aprobación, #271 MR-06) — con MÓDULOS, no con el orm, y resueltos EN CADA aviso.
 
 import type { ConnectorContext, Logger } from 'arckode-framework'
 import {
   notifyReservationPaid,
   notifyReservationReceived,
-  type ReservationEmailSender,
   type ReservationNotifyDeps,
 } from '../shared/usecases/notify-reservation-received'
-import type { NotificacionesPort, PushPort, RoomsPort } from '../shared/usecases/notify-task-assigned'
-import { DEFAULT_PLATFORM_IDENTITY, type PlatformIdentity } from '../shared/utils/platform-identity'
-
-interface SystemActor { id: string; role: string; hotelId?: string }
-
-interface NotificacionesModule extends NotificacionesPort {
-  hotelEmailDeps?: () => { emailSender: ReservationEmailSender; platformIdentity: () => Promise<PlatformIdentity> } | null
-}
+import { reservationNotifyDepsFactory } from './reservation-notify-deps'
 
 /**
  * Lo que trae el socket del motor: `id` ES el reservationId (ver bookingengine/service.ts).
@@ -47,50 +33,11 @@ interface BookingEvent {
   hasCheckout?: boolean
 }
 
-const SYSTEM: SystemActor = { id: 'system', role: 'super_admin' }
-
 export function bookingengineNotificacionesConnector(logger: Logger): (ctx: ConnectorContext) => void {
   const log = logger.child('bookingengine-notificaciones')
   return (ctx: ConnectorContext) => {
     const bookingengine = ctx.resolveModule<{ setSockets: (s: any) => void }>('bookingengine')
-
-    /**
-     * Lo que puede faltar sin frenar el aviso: un módulo opcional no registrado en este despliegue
-     * (habitaciones, pushtokens, huespedes) o un `getById` que tira NotFound/Auth — para el aviso
-     * eso es "no hay dato", no un error.
-     */
-    const quiet = async <T>(run: () => T | Promise<T>): Promise<T | null> => {
-      try { return await run() } catch { return null }
-    }
-
-    const deps = async (hotelId: string): Promise<ReservationNotifyDeps> => {
-      const actor: SystemActor = { ...SYSTEM, hotelId }
-      const notificaciones = ctx.resolveModule<NotificacionesModule>('notificaciones')
-      const reservas = ctx.resolveModule<{
-        getById(id: string, user: SystemActor): Promise<any>
-        list(query: Record<string, unknown>, user: SystemActor): Promise<{ data: any[] }>
-      }>('reservas')
-      const hoteles = ctx.resolveModule<{ getById(id: string, user: SystemActor): Promise<any> }>('hoteles')
-      const huespedes = await quiet(() => ctx.resolveModule<{ getById(id: string, user: SystemActor): Promise<any> }>('huespedes'))
-      const email = typeof notificaciones.hotelEmailDeps === 'function' ? notificaciones.hotelEmailDeps() : null
-
-      return {
-        notificaciones,
-        users: ctx.resolveModule<{ list(hotelId?: string): Promise<any[]> }>('usuarios'),
-        roles: ctx.resolveModule<ReservationNotifyDeps['roles']>('roles'),
-        reservations: {
-          findById: (id) => quiet(() => reservas.getById(id, actor)),
-          findMany: async (where) => (await reservas.list({ ...where, limit: 100 }, actor)).data,
-        },
-        hotels: { findById: (id) => quiet(() => hoteles.getById(id, actor)) },
-        guests: huespedes ? { findById: (id) => quiet(() => huespedes.getById(id, actor)) } : null,
-        rooms: await quiet(() => ctx.resolveModule<RoomsPort>('habitaciones')),
-        push: await quiet(() => ctx.resolveModule<PushPort>('pushtokens')),
-        emailSender: email?.emailSender ?? null,
-        platformIdentity: email?.platformIdentity ?? (async () => ({ ...DEFAULT_PLATFORM_IDENTITY })),
-        logger: log,
-      }
-    }
+    const deps = reservationNotifyDepsFactory((n) => ctx.resolveModule(n), log)
 
     /**
      * El usecase ya no tira, pero armar los deps sí puede (un módulo núcleo ausente). Un fallo del
