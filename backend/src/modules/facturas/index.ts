@@ -15,20 +15,26 @@ export type { FacturasDTO, CreateFacturasDTO, UpdateFacturasDTO, FacturasQuery, 
 export type { FacturasSockets } from './sockets'
 export { FacturasValidator, CreateFacturasSchema, UpdateFacturasSchema, PayFacturasSchema, CreditNoteSchema } from './validators/schema'
 export type { AuditPort, AuditEntry, AuditAction } from './usecases/audit'
-export type { PaymentPort, RecordPaymentInput, RecordedPayment, CanonicalMethod } from './usecases/payment-port'
+export type { PaymentPort, RecordPaymentInput, RecordedPayment, CanonicalMethod, ReservationPaymentRow } from './usecases/payment-port'
 export { normalizePaymentMethod } from './usecases/payment-port'
+export type { InvoiceFromReservationInput, InvoiceFromReservationResult } from './usecases/invoice-from-reservation'
+export { ReservationAlreadyInvoicedError } from './usecases/invoice-from-reservation'
 
 export function FacturasModule() {
   return createModule({
     name: 'facturas',
-    version: '2.1.0', // STR-D: invoicesOfReservation/reservationIdOfInvoice entran al contract (GH-0.2)
+    // 2.1.0 — STR-D: invoicesOfReservation/reservationIdOfInvoice entran al contract (GH-0.2)
+    // 2.2.0 — #253: `invoiceFromReservation` (factura desde la reserva sin folio: importe por
+    //         chargeableTotal, impuestos de config, VINCULA pagos existentes). Lo consume
+    //         `connectors/reservas-facturas`.
+    version: '2.2.0',
     description: 'Facturas con ownership, paginacion y validacion',
 
     contract: {
       name: 'facturas',
-      version: '2.1.0',
+      version: '2.2.0',
       description: 'Facturas con ownership, paginacion y validacion',
-      actions: ["list","getById","create","pay","update","delete","email","invoicesOfReservation","reservationIdOfInvoice"],
+      actions: ["list","getById","create","pay","update","delete","email","invoicesOfReservation","reservationIdOfInvoice","invoiceFromReservation"],
       events: ["onFacturasCreated","onFacturasUpdated","onFacturasDeleted"],
       tables: ['invoices', 'invoice_items'],
       dependencies: [],
@@ -48,8 +54,9 @@ export function FacturasModule() {
       const userRepo = new OrmRepository<any>(orm, 'Users')
       const hotelRepo = new OrmRepository<any>(orm, 'Hotels')
       const itemRepo = new OrmRepository<any>(orm, 'InvoiceItem')
+      const addonsRepo = new OrmRepository<any>(orm, 'ReservationAddons')
       const log = logger.child('facturas')
-      const service = new FacturasService(repo, configRepo, { guest: guestRepo, reservation: reservationRepo, room: roomRepo }, userRepo, log, cache, auth!, itemRepo, hotelRepo)
+      const service = new FacturasService(repo, configRepo, { guest: guestRepo, reservation: reservationRepo, room: roomRepo }, userRepo, log, cache, auth!, itemRepo, hotelRepo, addonsRepo)
       const controller = new FacturasController(service, log, hotelRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
