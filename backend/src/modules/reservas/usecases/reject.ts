@@ -96,7 +96,13 @@ export async function rejectReservation(
   if (!item) throw new NotFoundError('Reserva no encontrada')
   // assertOwnership recibe (dueño, solicitante, rol, rolAdmin) — todos strings (mem
   // ownership-bug). Post-findById obligatorio (regla CLAUDE.md + analyzer).
-  auth.assertOwnership(item.hotelId, currentUser.hotelId ?? '', currentUser.role, 'super_admin')
+  // Criterio del issue: de otro hotel → 404, no 403. Ownership post-findById (regla CLAUDE.md +
+  // analyzer), y el Forbidden se traduce a "no existe": no se confirma a un tercero que el id es real.
+  try {
+    auth.assertOwnership(item.hotelId, currentUser.hotelId ?? '', currentUser.role, 'super_admin')
+  } catch {
+    throw new NotFoundError('Reserva no encontrada')
+  }
 
   if (item.approvalStatus !== 'pending') {
     throw new ConflictError('Esta reserva no tiene una aprobación pendiente')

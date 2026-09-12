@@ -171,7 +171,8 @@ describe('rejectReservation — validaciones y estados', () => {
 
   it('bloquea al usuario de otro hotel (no super_admin) — Auth real', async () => {
     const h = harness([pendingItem()], { r1: [webCharge('p1', 'r1', 100)] })
-    await expect(rejectReservation(h.deps, 'r1', { reason: REASON }, { id: 'u2', role: 'hotel_admin', hotelId: OTRO_HOTEL }, realAuth)).rejects.toThrow()
+    // Criterio del issue: de otro hotel → 404 (NotFoundError), no 403: no se revela que el id existe.
+    await expect(rejectReservation(h.deps, 'r1', { reason: REASON }, { id: 'u2', role: 'hotel_admin', hotelId: OTRO_HOTEL }, realAuth)).rejects.toThrow(NotFoundError)
     expect(h.refunds).toHaveLength(0)
     expect(h.repo.store.get('r1').status).toBe('confirmed')
   })
