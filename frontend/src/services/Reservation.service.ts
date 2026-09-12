@@ -1,7 +1,7 @@
 import { http } from './http'
 import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
-  ReservationApiRecord as RawReservation, ChildAmenitySnapshot,
+  ReservationApiRecord as RawReservation, AssignableRoom, ChildAmenitySnapshot,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
   CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
 } from '@/types'
@@ -112,11 +112,26 @@ export function mapReservation(r: RawReservation): Reservation {
     // realmente aplicó (el del preview es una cotización anterior).
     cancellationFee: r.cancellationFee,
     refundAmount: r.refundAmount,
+    // #272 (MR-07) — estado real del reembolso en la pasarela (ausente en respuestas viejas).
+    refundStatus: r.refundStatus ?? undefined,
+    refundedAt: r.refundedAt ?? undefined,
+    refundPaymentId: r.refundPaymentId ?? undefined,
     // Tarea 3.4 (corrección 2026-08-25) — bug real de QA: este allow-list no lo declaraba y
     // `pages/reservations/index.vue:load()` lee `r.approvalStatus` del objeto YA mapeado acá,
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
+    // MR-03 (#268) — régimen: `regime` (manual del panel) y el snapshot `mealPlan*` de la reserva
+    // web. Mismo bug histórico que `approvalStatus`: sin declararlos acá, el filtro "Régimen" y el
+    // badge del listado (`pages/reservations/index.vue`) leen `undefined` aunque el backend los mande.
+    regime: r.regime,
+    mealPlan: r.mealPlan ?? null,
+    mealPlanPriceMode: r.mealPlanPriceMode ?? null,
+    mealPlanUnitPrice: r.mealPlanUnitPrice ?? 0,
+    mealPlanTotal: r.mealPlanTotal ?? 0,
+    // REQ-HAC-03/06 — auditoría de la asignación de unidad; `roomId` queda '' cuando viene null.
+    roomAssignedAt: r.roomAssignedAt ?? null,
+    roomAssignedBy: r.roomAssignedBy ?? null,
     // #271 MR-06 — misma convención que checkIn/checkOut (ISO tal cual, tipado como Date): el
     // listado lo usa para "Más antigua: hace N h" en el KPI "Por aprobar".
     createdAt: r.createdAt as unknown as Date,
@@ -125,6 +140,14 @@ export function mapReservation(r: RawReservation): Reservation {
     cribCount: r.cribCount ?? 0,
     childAmenities: parseChildAmenities(r.childAmenities),
   } as Reservation
+}
+
+/** #272 — resultado de `POST /api/reservas/:id/retry-refund` (espejo de `reservas/usecases/retry-refund.ts`). */
+export interface RetryRefundResult {
+  reservationId: string
+  refundStatus: string
+  refundPaymentId?: string
+  refundedAt?: string
 }
 
 interface ReservationsResponse {
@@ -142,6 +165,16 @@ export interface IssueInvoiceResult {
   folioId?: string
   linkedPayments?: number
   amountPaid?: number
+}
+
+/**
+ * Los tres endpoints de asignación (#258) devuelven `{ success, data }` DENTRO del envelope del
+ * framework, así que `http` deja `{ success, data }` en vez del payload. Se desenvuelve acá para no
+ * depender de que el backend lo corrija (y seguir andando si lo hace).
+ */
+function unwrapAssign<T>(raw: T | { data?: T }): T | undefined {
+  if (raw && typeof raw === 'object' && 'data' in (raw as object) && 'success' in (raw as object)) return (raw as { data?: T }).data
+  return raw as T
 }
 
 export const ReservationService = {
@@ -274,6 +307,33 @@ export const ReservationService = {
   },
 
   /**
+   * REQ-HAC-06 (#261) — habitaciones LIBRES para las noches de la reserva. Sin `allTypes` el backend
+   * devuelve sólo las del tipo vendido (`roomType`); con `allTypes` también las de otros tipos, que
+   * vienen con `typeMismatch: true` y exigen `allowTypeChange` al asignar.
+   */
+  async assignableRooms(id: string, allTypes = false): Promise<AssignableRoom[]> {
+    const data = await http.get<AssignableRoom[] | { data?: AssignableRoom[] }>(`/reservas/${id}/assignable-rooms${allTypes ? '?allTypes=1' : ''}`)
+    return Array.isArray(data) ? data : unwrapAssign(data) ?? []
+  },
+
+  /**
+   * REQ-HAC-03 (#258) — asigna (o reasigna) la unidad concreta a la reserva. Es el ÚNICO camino que
+   * escribe `roomId` sobre una reserva existente: valida solape, bloqueo, tipo y estado en el backend.
+   * 409 con `ApiError.details.reason` (room_overlap / type_mismatch / room_not_sellable /
+   * invalid_status) — `utils/room-assign.ts` `assignErrorMessage` lo traduce para el toast.
+   */
+  async assignRoom(id: string, roomId: string, allowTypeChange = false): Promise<Reservation> {
+    const data = await http.post<RawReservation | { data?: RawReservation }>(`/reservas/${id}/assign-room`, allowTypeChange ? { roomId, allowTypeChange: true } : { roomId })
+    return mapReservation(unwrapAssign(data) as RawReservation)
+  },
+
+  /** Suelta la unidad asignada (sólo pending/confirmed): la reserva vuelve a "Sin asignar". */
+  async unassignRoom(id: string): Promise<Reservation> {
+    const data = await http.delete<RawReservation | { data?: RawReservation }>(`/reservas/${id}/assign-room`)
+    return mapReservation(unwrapAssign(data) as RawReservation)
+  },
+
+  /**
    * Cancela la reserva aplicando la POLÍTICA de cancelación del hotel: calcula penalidad y
    * reembolso, guarda el motivo y libera/devuelve los depósitos retenidos.
    *
@@ -283,6 +343,15 @@ export const ReservationService = {
   async cancel(id: string, body: CancelReservationInput = {}): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/cancel`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * #272 (MR-07) — reintenta el reembolso en Stripe de una reserva cancelada desde la web cuyo
+   * refund quedó `failed` (o `pending` colgado). Idempotente: si ya está `done` el backend
+   * devuelve el estado sin volver a cobrar. Permiso `reservations:edit`.
+   */
+  async retryRefund(id: string): Promise<RetryRefundResult> {
+    return http.post<RetryRefundResult>(`/reservas/${id}/retry-refund`, {})
   },
 
   /**

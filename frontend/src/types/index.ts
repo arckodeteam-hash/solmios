@@ -147,6 +147,14 @@ export interface Reservation {
   paidAmount?: number
   promoCode?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. null/ausente en reservas
+   *  viejas y en las cargadas a mano (que solo tienen `regime`). */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (persistido; null en reservas anteriores). */
+  mealPlanPersons?: number | null
   createdAt: Date
   roomNumber?: string
   roomType?: string
@@ -156,12 +164,20 @@ export interface Reservation {
    *  que es una cotización: entre abrir el modal y confirmar puede cruzarse un borde de tier. */
   cancellationFee?: number
   refundAmount?: number
+  /** #272 (MR-07) — estado real del reembolso en la pasarela (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
    *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
    *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** REQ-HAC-03/06 (#258/#261) — quién y cuándo asignó la unidad (`roomId`). null/ausente =
+   *  sin asignar. `roomId` sigue siendo '' cuando el backend manda null (ver `mapReservation`). */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
    *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
   needsCrib?: boolean
@@ -223,16 +239,35 @@ export interface ReservationApiRecord {
   cancellationFee?: number
   refundAmount?: number
   cancellationReason?: string
+  /** REQ-HAC-03 (#258) — auditoría de la asignación de unidad (users.id + ISO). null = sin asignar. */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   cancelledAt?: string
+  /** #272 (MR-07) — reembolso real al cancelar desde la web (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
   /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
   createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  mealPlanPersons?: number | null
   /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
   needsCrib?: boolean | null
   cribCount?: number | null
   childAmenities?: ChildAmenitySnapshot[] | string | null
 }
+
+/** #272 (MR-07) — `reservations.refundStatus`: 'none' = nada que devolver (o reserva anterior a la
+ *  feature), 'pending' = en curso, 'done' = Stripe lo aceptó, 'failed' = falló y se puede
+ *  reintentar desde el panel (`POST /reservas/:id/retry-refund`). */
+export type RefundStatus = 'none' | 'pending' | 'done' | 'failed'
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
 // Espejo de `backend/src/modules/reservas/usecases/reschedule.ts`.
@@ -642,11 +677,32 @@ export interface PaymentAttemptView {
   occurredAt: string
 }
 
+/**
+ * REQ-HAC-06 (#261) — fila de `GET /api/reservas/:id/assignable-rooms`: habitación libre esas
+ * noches. `typeMismatch` = no es del tipo vendido (sólo aparece con `allTypes`); `suggested` = la
+ * que el backend propone primero (misma tipología, limpia). Espejo de
+ * `backend/src/modules/reservas/usecases/assign-room.ts` `AssignableRoom`.
+ */
+export interface AssignableRoom {
+  id: string
+  number: string
+  floor?: number | string | null
+  status: string
+  cleaningStatus: 'clean' | 'dirty'
+  typeMismatch: boolean
+  suggested: boolean
+}
+
 export interface ReservationDetail {
   id: string
   hotelId: string
   guestId: string | null
   roomId: string
+  /** REQ-HAC-03 (#258) — tipo vendido (`rooms.type`); la unidad (`roomId`) puede venir null hasta
+   *  que recepción la asigne. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen quién y cuándo. */
+  roomType?: string
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   checkIn: string
   checkOut: string
   status: string
@@ -684,6 +740,18 @@ export interface ReservationDetail {
   depositPercentage?: number
   depositStatus?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web (`Reservations.mealPlan*`).
+   *  En una reserva suelta `mealPlanTotal` está DENTRO de `totalAmount`; en una de grupo
+   *  (`groupId`) NO: cada fila persiste el unitario pero su `totalAmount` es solo la habitación y
+   *  el régimen se cobró con el total del grupo. null/ausente en reservas viejas o del panel.
+   *  El régimen que se MUESTRA es `regime ?? mealPlan` (`utils/meal-plans.ts`). */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (adultos + niños con plaza). null = reserva
+   *  anterior a la columna: la UI no muestra personas (no las deriva de las fechas). */
+  mealPlanPersons?: number | null
   notes?: string | null
   otaNotes?: string | null
   ownerNotes?: string | null
@@ -725,6 +793,18 @@ export interface ReservationDetail {
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
+  /** #272 (MR-07) — snapshot de la cancelación y estado real del reembolso (`GET /reservas/:id`).
+   *  El modal muestra el badge y ofrece "Reintentar reembolso" cuando quedó 'failed'. */
+  cancelledAt?: string | null
+  cancellationReason?: string | null
+  cancellationFee?: number
+  refundAmount?: number
+  refundStatus?: RefundStatus
+  refundedAt?: string | null
+  refundPaymentId?: string | null
+  /** ISO. #272 — un `refundStatus: 'pending'` escrito hace más de 10 min se puede reintentar
+   *  (`utils/refund-state.ts`, mismo umbral que el backend, que lo mide sobre este campo). */
+  updatedAt?: string
   /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el horario del hotel.
    *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
   checkInTime?: string | null
@@ -915,6 +995,14 @@ export interface CheckinGuest {
   /** `Reservations.notes` crudo (pedido especial, llegada estimada, etc. — mismo campo que
    *  `ReservationModal.vue` muestra como "Notas"). Null si la reserva no tiene nada cargado. */
   notes: string | null
+  /** MR-03 (#268) — etiqueta del régimen ("Desayuno incluido", "Media pensión"…) para que
+   *  recepción lo vea en la fila de llegadas. Null si es solo alojamiento o no hay régimen. */
+  mealPlanLabel: string | null
+  /** MR-03 (#268) — importe del régimen reservado en la web (0 si incluido en tarifa o cargado
+   *  a mano). En una reserva de grupo (`groupId`) NO está dentro de `totalAmount`. */
+  mealPlanTotal: number
+  /** `Reservations.groupId`: la reserva es una habitación de una reserva de varias. */
+  groupId: string | null
 }
 
 // === FEEDBACK ===

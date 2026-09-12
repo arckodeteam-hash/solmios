@@ -113,3 +113,22 @@ export function hotelTimeOrEmpty(v: unknown): string {
   const s = String(v ?? '').trim()
   return /^\d{1,2}:\d{2}$/.test(s) ? s : ''
 }
+
+/** URL pública del recibo de pago en PDF (#270): mismo id+token HMAC que el polling de la
+ *  confirmación; el backend responde 404 si el token no valida. '' si falta id o token. */
+export function receiptPdfUrl(id: string | null | undefined, token: string | null | undefined): string {
+  if (!id || !token) return ''
+  const query = new URLSearchParams({ token }).toString()
+  return `/api/public/reservations/${encodeURIComponent(id)}/receipt.pdf?${query}`
+}
+
+/**
+ * ¿Hay un recibo de pago que ofrecer? Sólo cuando hubo un cobro: `paymentStatus` `paid` o
+ * `partial` con importe cobrado. Con la reserva sin pagar (pendiente, vencida, cancelada antes de
+ * pagar) el backend responde 409 `not_paid`, así que el botón no se muestra.
+ */
+export function receiptAvailable(paymentStatus: unknown, amountPaid: unknown): boolean {
+  const status = String(paymentStatus ?? '').toLowerCase()
+  const paid = Number(amountPaid ?? 0)
+  return (status === 'paid' || status === 'partial') && Number.isFinite(paid) && paid > 0
+}

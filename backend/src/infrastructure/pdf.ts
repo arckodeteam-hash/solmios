@@ -1,5 +1,10 @@
-// facturas/usecases/pdf.ts — Generación de PDF desde HTML vía Puppeteer (Chromium headless).
-// Reutiliza el template A4 existente (invoice-template.ts) → 0 rework del diseño.
+// infrastructure/pdf.ts — Generación de PDF desde HTML vía Puppeteer (Chromium headless).
+//
+// Vive en infraestructura (no en un módulo) porque es un adaptador a un proceso externo (el
+// navegador headless) que consumen varios módulos: facturas (A4 de la factura) y bookingengine
+// (recibo de pago del huésped, #270) — antes bookingengine lo importaba de facturas/usecases,
+// un import módulo→módulo. El worker de la cola de correo también lo usa para el recibo adjunto.
+//
 // Hardening producción: timeouts en cada paso (un chromium colgado no cuelga el request) +
 // rate limit por IP (puppeteer es caro → prevenir abuso/DoS).
 import puppeteer from 'puppeteer'

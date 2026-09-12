@@ -23,6 +23,8 @@ vi.mock('@/services/Reservation.service', () => ({
     list: vi.fn(),
     // REQ-FDR-02 (#254) — POST /reservas/:id/invoice desde el botón Facturar.
     issueInvoice: vi.fn(),
+    // #272 (MR-07) — POST /reservas/:id/retry-refund cuando el reembolso web quedó `failed`.
+    retryRefund: vi.fn(),
   },
 }))
 // REQ-FDR-03 (#254) — Imprimir / PDF / Email de la tarjeta "Facturas" (vía useInvoiceActions).
@@ -267,6 +269,75 @@ describe('ReservationModal', () => {
       expect(text).toContain('Habitación 102')
       expect(text).toContain('2 pax')
       expect(text).not.toContain('Habitación 101') // res-1 es LA PROPIA reserva, no debe listarse de nuevo
+    })
+  })
+
+  // ── MR-03 (#268) — régimen reservado desde la web ─────────────────────────────────────────
+  // El backend persiste el snapshot (`mealPlan`, `mealPlanUnitPrice`, `mealPlanTotal`,
+  // `mealPlanPersons`) y el modal lo explica sin re-cotizar ni derivar nada de las fechas.
+  describe('régimen (MR-03)', () => {
+    const mealPlanRow = () => document.body.querySelector('[data-testid="reservation-meal-plan"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+    const totalRow = () => document.body.querySelector('[data-testid="reservation-meal-plan-total"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+
+    it('reserva web con media pensión cobrada por persona y noche: etiqueta + detalle + fila en el importe', async () => {
+      // 3 noches (01→04), 2 personas × 3 noches × 15 = 90 — las personas vienen PERSISTIDAS.
+      await open(detailFixture({ mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: 2, regime: 'half_board' }))
+      expect(mealPlanRow()).toContain('Régimen: Media pensión (2 pers × 3 noches · US$90,00)')
+      expect(totalRow()).toContain('US$90,00')
+    })
+
+    it('las personas NO se derivan de las fechas: sin `mealPlanPersons` (reserva anterior a la columna) solo se muestra el importe', async () => {
+      // Antes: persons = round(90 / (15 × 3)) = 2 "inventado" desde las fechas actuales; al
+      // reagendar a 2 noches daba 3 personas. Ahora sin el campo persistido no hay personas.
+      await open(detailFixture({ checkIn: '2026-09-01', checkOut: '2026-09-03', mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: null, regime: 'half_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Media pensión (US$90,00)')
+      expect(mealPlanRow()).not.toContain('pers')
+    })
+
+    it('reagendada: las personas persistidas se mantienen aunque las noches cambien', async () => {
+      // 2 personas reservaron 3 noches; reagendada a 2 noches → "2 pers × 2 noches", no 3 pers.
+      await open(detailFixture({ checkIn: '2026-09-01', checkOut: '2026-09-03', mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: 2, regime: 'half_board' }))
+      expect(mealPlanRow()).toContain('(2 pers × 2 noches · US$90,00)')
+    })
+
+    it('`regime` (editable en el panel) manda sobre el snapshot web `mealPlan`', async () => {
+      // Reservó desayuno en la web; recepción lo cambió a media pensión desde el wizard.
+      await open(detailFixture({ mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'half_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Media pensión')
+      // El importe congelado es del desayuno reservado: la fila lo dice con SU código.
+      expect(totalRow()).toContain('Régimen · Desayuno incluido')
+      expect(totalRow()).toContain('US$60,00')
+    })
+
+    it('reserva suelta: la fila del importe no afirma que esté "incluido"/"sumado" en el total', async () => {
+      await open(detailFixture({ groupId: null, mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'breakfast' }))
+      expect(totalRow()).toBe('Régimen · Desayuno incluidoUS$60,00') // dos <span> pegados, sin blanco entre medio
+      expect(totalRow()).not.toMatch(/sumado|en el total|en el importe|grupo/)
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-group-note"]')).toBeNull()
+    })
+
+    it('reserva de grupo (groupId): cada fila persiste el régimen unitario pero NO está en su `totalAmount` → leyenda "cobrado con el total del grupo"', async () => {
+      await open(detailFixture({ groupId: 'grp-1', totalAmount: 300, mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'breakfast' }))
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-group-note"]')?.textContent).toContain('cobrado con el total del grupo')
+      expect(totalRow()).toContain('US$60,00')
+    })
+
+    it('régimen incluido en la tarifa: "(incluido)" y sin fila de importe', async () => {
+      await open(detailFixture({ mealPlan: 'breakfast', mealPlanPriceMode: 'included', mealPlanUnitPrice: 0, mealPlanTotal: 0 }))
+      expect(mealPlanRow()).toContain('Régimen: Desayuno incluido (incluido)')
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')).toBeNull()
+    })
+
+    it('reserva vieja / del panel: `regime` manual (incluido full_board, que la web no ofrece), y sin nada muestra "—"', async () => {
+      await open(detailFixture({ mealPlan: null, regime: 'all_inclusive' }))
+      expect(mealPlanRow()).toBe('Régimen: Todo incluido')
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ mealPlan: null, regime: 'full_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Pensión completa')
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ mealPlan: null, regime: undefined }))
+      expect(mealPlanRow()).toBe('Régimen: —')
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')).toBeNull()
     })
   })
 
@@ -537,6 +608,110 @@ describe('ReservationModal', () => {
   })
 
   // ── 2. Permisos ────────────────────────────────────────────────────────────────────────────
+  // ── #272 (MR-07) — reembolso web: estado real y reintento ────────────────────────────────
+  // Al cancelar desde la web el backend reembolsa en Stripe y persiste `refundStatus`. Si la
+  // pasarela falló, el hotel lo reintenta desde el modal; con 'done' no hay nada que reintentar.
+  describe('reembolso web (#272)', () => {
+    const retryButton = () => document.body.querySelector<HTMLButtonElement>('[data-testid="retry-refund"]')
+    const cancelledFixture = (over: Partial<ReservationDetail> = {}) => detailFixture({
+      status: 'cancelled', cancelledAt: '2026-09-12T09:00:00Z', cancellationReason: 'guest_request',
+      refundAmount: 100, cancellationFee: 400, ...over,
+    })
+
+    it('reembolso fallido: muestra el badge y ofrece "Reintentar reembolso"', async () => {
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso fallido')
+      expect(document.body.querySelector('[data-testid="refund-row"]')?.textContent).toContain('100')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.textContent?.trim()).toBe('Reintentar reembolso')
+    })
+
+    it('al clic llama a ReservationService.retryRefund(id) y recarga el detalle', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'done', refundPaymentId: 'pay-9', refundedAt: '2026-09-12T10:00:00Z' })
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(1)
+
+      vi.mocked(ReservationService.getById).mockResolvedValue(cancelledFixture({ refundStatus: 'done', refundedAt: '2026-09-12T10:00:00Z' }))
+      retryButton()!.click()
+      await flushPromises()
+      await flushPromises()
+
+      expect(vi.mocked(ReservationService.retryRefund)).toHaveBeenCalledWith('res-1')
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(toastSuccess).toHaveBeenCalledWith('Reembolso procesado')
+      expect(wrapper!.emitted('changed')).toBeTruthy()
+      // Tras recargar, ya está 'done': badge nuevo y sin botón.
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolsado')
+      expect(retryButton()).toBeNull()
+    })
+
+    it('si el reintento vuelve a fallar en la pasarela: avisa y recarga (el botón sigue)', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'failed' })
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      retryButton()!.click()
+      await flushPromises()
+      await flushPromises()
+      expect(toastWarning).toHaveBeenCalled()
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(retryButton()).not.toBeNull()
+    })
+
+    it('si el POST falla: toast de error y no se rompe el modal', async () => {
+      vi.mocked(ReservationService.retryRefund).mockRejectedValue(new ApiError(502, 'Stripe no responde'))
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      retryButton()!.click()
+      await flushPromises()
+      expect(toastError).toHaveBeenCalledWith('Stripe no responde')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.disabled).toBe(false)
+    })
+
+    it('reembolso hecho ("done"): badge "Reembolsado" y SIN botón de reintento', async () => {
+      await open(cancelledFixture({ refundStatus: 'done', refundedAt: '2026-09-12T10:00:00Z' }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolsado')
+      expect(retryButton()).toBeNull()
+    })
+
+    it('reembolso en proceso ("pending" FRESCO, < 10 min): badge "Reembolso en proceso" y sin botón', async () => {
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: new Date(Date.now() - 60_000).toISOString() }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso en proceso')
+      expect(retryButton()).toBeNull()
+    })
+
+    // El backend acepta reintentar un `pending` VIEJO (`retry-refund.ts` → `isRefundInFlight`, 10 min):
+    // el proceso murió después de reclamar y nadie lo va a terminar. El botón tiene que aparecer.
+    it('"pending" VIEJO (updatedAt hace 15 min): ofrece "Reintentar reembolso" y al clic llama al servicio', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'done', refundPaymentId: 'pay-9', refundedAt: '2026-09-12T10:00:00Z' })
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: new Date(Date.now() - 15 * 60_000).toISOString() }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso en proceso')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.title).toContain('más de 10 minutos')
+      await retryButton()!.click()
+      await flushPromises()
+      expect(vi.mocked(ReservationService.retryRefund)).toHaveBeenCalledWith('res-1')
+    })
+
+    it('"pending" sin updatedAt válido: cuenta como viejo (igual que el backend) y ofrece el reintento', async () => {
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: undefined }))
+      expect(retryButton()).not.toBeNull()
+    })
+
+    it('sin reembolso que procesar ("none") o reserva activa: ni badge ni botón', async () => {
+      await open(cancelledFixture({ refundStatus: 'none', refundAmount: 0 }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')).toBeNull()
+      expect(retryButton()).toBeNull()
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ status: 'confirmed', refundStatus: 'failed' }))
+      expect(retryButton()).toBeNull()
+    })
+
+    it('solo lectura: no ofrece el reintento aunque el reembolso haya fallado', async () => {
+      await open(cancelledFixture({ refundStatus: 'failed' }), READ_ONLY)
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso fallido')
+      expect(retryButton()).toBeNull()
+    })
+  })
+
   describe('permisos', () => {
     it('con permisos completos ofrece las acciones de escritura', async () => {
       await open()

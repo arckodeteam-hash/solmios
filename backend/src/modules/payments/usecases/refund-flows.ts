@@ -28,8 +28,8 @@ async function settle(deps: RefundFlowDeps, refund: PaymentDTO, amount: number |
 }
 
 /** Tarjeta: reembolso real por Stripe (total o parcial). */
-export async function refundStripe(deps: RefundFlowDeps, paymentId: string, amount: number | undefined, user: Actor): Promise<PaymentDTO> {
-  return settle(deps, await refundViaStripe(deps, paymentId, amount, user), amount, user)
+export async function refundStripe(deps: RefundFlowDeps, paymentId: string, amount: number | undefined, user: Actor, reason?: string, idempotencyKey?: string): Promise<PaymentDTO> {
+  return settle(deps, await refundViaStripe(deps, paymentId, amount, user, reason, idempotencyKey), amount, user)
 }
 
 /** #214 (COR-5): efectivo/transferencia — asiento `refund` sin pasarela, el cobro pasa a `refunded`. */

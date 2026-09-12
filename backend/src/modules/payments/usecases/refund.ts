@@ -20,6 +20,17 @@ export async function refundPayment(
   paymentId: string,
   amount?: number,
   user?: { id?: string; role?: string },
+  /** #272: motivo de la devolución (p. ej. `guest_cancellation`); va a la descripción y a `metadata.reason`. */
+  reason?: string,
+  /**
+   * #272: clave de idempotencia para la PASARELA. La devolución sale en Stripe ANTES de asentarse acá
+   * abajo (`createPayment`); si el asiento falla, el que reintenta con la MISMA clave recibe el refund
+   * original en vez de sacar plata otra vez. La pone el llamador que sabe qué identifica "este
+   * reembolso" (la cancelación web: `web-booking-refund.ts`). No se deriva de `paymentId + monto`
+   * a propósito: dos devoluciones parciales legítimas del mismo importe sobre el mismo cobro
+   * colisionarían y la segunda quedaría asentada sin haber salido.
+   */
+  idempotencyKey?: string,
 ): Promise<PaymentDTO> {
   const payment = await deps.crud.getById(paymentId, user?.id, user?.role)
   if (payment.status !== 'completed') throw new ValidationError('Payment not completed')
@@ -55,6 +66,7 @@ export async function refundPayment(
     hotelId: payment.hotelId,
     paymentId: providerRef,
     amount,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
 
   // El reembolso ya está confirmado por Stripe síncronamente (deps.stripe.refund retornó con
@@ -70,7 +82,7 @@ export async function refundPayment(
     status: 'completed',
     amount: amount ?? payment.amount,
     currency: payment.currency,
-    description: `Refund for payment ${paymentId}`,
+    description: `Refund for payment ${paymentId}` + (reason ? ` (${reason})` : ''),
     reference: refund.id,
     // COR-2: la devolución hereda LOS TRES vínculos del cobro original, no sólo `folioId`.
     // `shared/usecases/reservation-paid` llega a `payments` por `folioId`, por `invoiceId` Y por
@@ -89,7 +101,7 @@ export async function refundPayment(
     // —que no toca la comanda— era invisible para el cierre del día del restaurante y las ventas por
     // tarjeta quedaban infladas. Los listeners de onPaymentCompleted que reaccionan por `source` deben
     // mirar además `type` (restaurante-payments.ts lo hace).
-    metadata: { ...(payment.metadata ?? {}), refundOf: paymentId },
+    metadata: { ...(payment.metadata ?? {}), refundOf: paymentId, ...(reason ? { reason } : {}) },
     // Quién ordenó la devolución. En el historial de la reserva importa más que en el cobro:
     // un reembolso siempre lo decide una persona.
     createdBy: user?.id ?? '',

@@ -19,16 +19,18 @@
 // cobrable (`shared/utils/reservation-balance.ts`).
 //
 // Helper PURO: sin I/O. Quien lo llama (public-booking / public-booking-group) inserta las filas
-// dentro de la MISMA transacción que crea la reserva. El régimen (meal plan) queda para MR-03
-// (#268): se agrega como un `kind` más, sin tocar el resto.
+// dentro de la MISMA transacción que crea la reserva. El régimen (meal plan, MR-03 #268) es un
+// `kind` más (`meal_plan`): sin su fila el folio nacía sin el régimen que Stripe SÍ cobró y al
+// checkout aparecía un saldo a favor inexistente — el mismo bug que #269 corrigió para el resto.
 
 import { round2 } from '../utils/money'
 
-/** `kind` de cada extra del motor. El régimen (#268) se suma acá cuando llegue. */
+/** `kind` de cada extra del motor. */
 export const BOOKING_ENGINE_ADDON_KINDS = {
   upsell: 'upsell',
   childAmenity: 'child_amenity',
   roomAmenity: 'room_amenity',
+  mealPlan: 'meal_plan',
 } as const
 
 export type BookingEngineAddonKind = (typeof BOOKING_ENGINE_ADDON_KINDS)[keyof typeof BOOKING_ENGINE_ADDON_KINDS]
@@ -68,6 +70,25 @@ export interface BookingEngineAmenityInput {
   quantity: number
 }
 
+/**
+ * MR-03 (#268) — Régimen ya resuelto contra `meal_plans` (precio del catálogo, nunca del body).
+ * Mismo criterio que los upsells `per_person_per_night`: `unitPrice` es el unitario por persona y
+ * noche y la `quantity` de la fila lleva el multiplicador completo (`persons × nights × units`),
+ * así el folio asienta `amount × quantity` = exactamente lo que se cobró. Un régimen `included`
+ * (unitario 0) también se materializa: recepción tiene que verlo aunque no genere cargo.
+ */
+export interface BookingEngineMealPlanInput {
+  /** Etiqueta ya resuelta (p. ej. "Desayuno"); cae al código si no hay etiqueta. */
+  label: string
+  /** Precio por persona y noche (0 si `included`). */
+  unitPrice: number
+  /** Personas que pagan el régimen (adultos + niños con plaza). */
+  persons: number
+  nights: number
+  /** Unidades físicas con este régimen (grupo: `quantity` de la línea). Default 1. */
+  units?: number
+}
+
 export interface BuildBookingEngineAddonsInput {
   reservationId: string
   hotelId: string
@@ -75,7 +96,11 @@ export interface BuildBookingEngineAddonsInput {
   upsells?: BookingEngineUpsellInput[]
   childAmenities?: BookingEngineAmenityInput[]
   roomAmenities?: BookingEngineAmenityInput[]
+  mealPlans?: BookingEngineMealPlanInput[]
 }
+
+/** Prefijo de `description` de las filas `meal_plan` (lo que ve recepción y el folio). */
+export const MEAL_PLAN_ADDON_DESCRIPTION_PREFIX = 'Régimen: '
 
 function normalizeQuantity(q: unknown): number {
   const n = Math.floor(Number(q) || 0)
@@ -111,8 +136,8 @@ function buildRow(
 
 /**
  * Una fila por extra pagado online. Orden estable: upsells, amenidades infantiles, amenidades de
- * habitación (el mismo en que se listan en `notes`). Un extra con precio 0 también se materializa:
- * el huésped lo pidió y recepción tiene que verlo, aunque no genere cargo.
+ * habitación, régimen (el mismo en que se listan en `notes`). Un extra con precio 0 también se
+ * materializa: el huésped lo pidió y recepción tiene que verlo, aunque no genere cargo.
  */
 export function buildBookingEngineAddons(input: BuildBookingEngineAddonsInput): BookingEngineAddonRow[] {
   const base = { reservationId: input.reservationId, hotelId: input.hotelId, taxRate: input.taxRate }
@@ -125,6 +150,19 @@ export function buildBookingEngineAddons(input: BuildBookingEngineAddonsInput): 
   }
   for (const a of input.roomAmenities ?? []) {
     rows.push(buildRow(base, BOOKING_ENGINE_ADDON_KINDS.roomAmenity, a.name, a.quantity, a.price))
+  }
+  for (const m of input.mealPlans ?? []) {
+    const persons = Math.max(0, Math.floor(Number(m.persons) || 0))
+    const nights = Math.max(0, Math.floor(Number(m.nights) || 0))
+    const units = Math.max(1, Math.floor(Number(m.units) || 1))
+    // Multiplicador 0 (sin personas o sin noches) → la línea vale 0: `quantity` cae a 1 por la
+    // normalización, así que el unitario se anula para no asentar un cargo que no se cobró.
+    const multiplier = persons * nights * units
+    rows.push(buildRow(
+      base, BOOKING_ENGINE_ADDON_KINDS.mealPlan,
+      `${MEAL_PLAN_ADDON_DESCRIPTION_PREFIX}${String(m.label ?? '').trim() || 'régimen'}`,
+      Math.max(1, multiplier), multiplier > 0 ? m.unitPrice : 0,
+    ))
   }
   return rows
 }

@@ -3,7 +3,7 @@
 import { ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { ReservasDTO, UpdateReservasDTO } from '../types'
-import { assertRoomAvailable } from './availability'
+import { assertNoRoomConflict } from './assign-room'
 import { assertValidTransition } from './state-machine'
 
 /** Valida transición de estado + coherencia de fechas + disponibilidad al editar una reserva. */
@@ -50,7 +50,7 @@ export async function assertUpdateValidations(
   // IDOR #668: si el patch trae un roomId nuevo, tiene que pertenecer al MISMO hotel que la
   // reserva (existing.hotelId — no currentUser.hotelId, que es undefined para super_admin).
   // Sin esto, un hotel_admin podía mover su propia reserva a una habitación de OTRO hotel:
-  // `updateReservation` nunca recibía `roomRepo` y `assertRoomAvailable` no hace ownership check,
+  // `updateReservation` nunca recibía `roomRepo` y el chequeo de solape no hace ownership check,
   // solo mira solapamiento de fechas contra ese roomId. Mismo patrón que `createReservation`
   // (crud.ts) — se lee por `findOne({id})`, no se filtra que la room "existe en otro hotel".
   //
@@ -80,8 +80,15 @@ export async function assertUpdateValidations(
     const group = await groupRepo.findOne({ id: dto.groupId })
     if (!group || group.hotelId !== existing.hotelId) throw new ConflictError('El grupo no pertenece a este hotel')
   }
-  // Disponibilidad si cambia habitación o fechas.
-  if (dto.roomId || dto.checkIn || dto.checkOut) {
-    await assertRoomAvailable(repo, dto.roomId || existing.roomId, newCheckIn, newCheckOut, id)
+  // Disponibilidad (REQ-HAC-03, #258): un solo camino.
+  //   · Si el patch CAMBIA la habitación, el solape/bloqueo/tipo lo valida `validateRoomAssignment`
+  //     (assign-room.ts) desde `updateReservation` — acá NO se duplica (el IDOR de hotel de arriba se
+  //     mantiene: es el mismo 409 fail-closed de siempre y no molesta).
+  //   · Si NO cambia la habitación pero sí las fechas, la unidad que ya tiene se re-chequea con el
+  //     mismo criterio (`assertNoRoomConflict`, excluyendo la propia reserva). `existing.roomId`
+  //     puede ser null (reserva sin asignar): sin unidad no hay solape que mirar.
+  const changesRoom = dto.roomId !== undefined && dto.roomId !== existing.roomId
+  if (!changesRoom && (dto.checkIn || dto.checkOut) && existing.roomId) {
+    await assertNoRoomConflict({ repo }, existing.hotelId, existing.roomId, newCheckIn, newCheckOut, id)
   }
 }

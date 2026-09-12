@@ -63,6 +63,20 @@
           :breakdown="reservation.reservation.totalBreakdown" :total="reservation.reservation.totalAmount" :format="fmtMoney" />
       </div>
 
+      <!-- #270 (MR-05): recibo de pago en PDF (no es factura fiscal). Mismo HMAC que el
+           polling: si el token no valida el backend responde 404. Se abre inline en otra pestaña.
+           Sólo con un cobro hecho (`hasReceipt`): sin pago no hay recibo que emitir. -->
+      <a
+        v-if="receiptUrl"
+        :href="receiptUrl"
+        target="_blank"
+        rel="noopener"
+        :aria-label="t('confirm.downloadReceipt')"
+        class="inline-block mt-5 rounded-xl border-2 border-cyan px-6 py-3 text-sm font-bold text-cyan hover:bg-cyan hover:text-white"
+      >
+        {{ t('confirm.downloadReceipt') }}
+      </a>
+
       <p class="text-[11px] text-text-muted mt-4">
         {{ t('confirm.keepNumber') }}
         <span class="font-mono font-bold">{{ reservation?.reservation.id?.slice(0, 8) }}</span>
@@ -97,6 +111,7 @@
 </template>
 
 <script setup lang="ts">
+import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookingStore, readStoredReservation, clearStoredReservation } from '@/composables/useBooking'
@@ -112,6 +127,15 @@ type PollingState = 'loading' | 'success' | 'pending' | 'error'
 const pollingState = ref<PollingState>('loading')
 const reservation = ref<PublicReservationResponse | null>(null)
 const errorMessage = ref(t('confirm.errorDefault'))
+/** (id, token) resueltos en el último tick — el botón de recibo se arma con ellos. */
+const resolvedIds = ref<{ id: string; token: string } | null>(null)
+/** Sólo con un cobro hecho (`paid`/`partial` con importe): sin pago el backend responde 409 y no hay recibo. */
+const hasReceipt = computed(() =>
+  receiptAvailable(reservation.value?.paymentStatus, reservation.value?.reservation?.amountPaid),
+)
+const receiptUrl = computed(() =>
+  resolvedIds.value && hasReceipt.value ? receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token) : '',
+)
 
 /** Importe con la moneda de la reserva — mismo formato que booking-confirmation.vue. */
 function fmtMoney(amount: unknown): string {
@@ -160,6 +184,7 @@ function resolveIds(): { id: string; token: string } | null {
 
 async function tick() {
   const ids = resolveIds()
+  resolvedIds.value = ids
   if (!ids) {
     pollingState.value = 'error'
     errorMessage.value = t('confirm.errorNotFound')

@@ -285,6 +285,133 @@ describe('reserva vencida por falta de pago (#266)', () => {
   })
 })
 
+// #272 (MR-07) — cancelación web completa: reserva de varias habitaciones (grupo con token
+// compartido), botón que dice cuántas se cancelan, y el estado REAL del reembolso en Stripe —
+// tanto al volver del POST /cancel como al abrir el link de una reserva ya cancelada.
+describe('reserva de varias habitaciones y reembolso real (#272)', () => {
+  const GROUP = {
+    id: 'grp-1',
+    rooms: [
+      { id: 'r1', roomType: 'Suite Deluxe', adults: 2, children: 1, status: 'confirmed' },
+      { id: 'r2', roomType: 'Doble Estándar', adults: 2, children: 0, status: 'confirmed' },
+      { id: 'r3', roomType: '', adults: 1, children: 0, status: 'confirmed' },
+    ],
+  }
+  const cancelled = (over: Record<string, unknown>) => ({
+    reservationId: 'r1', status: 'cancelled', cancellationFee: 0, policyApplied: null, ...over,
+  })
+
+  it('con 3 habitaciones se listan las 3 y el botón dice cuántas se cancelan', async () => {
+    const w = await render(HOTEL, 'es', { ...RESERVATION, group: GROUP })
+    const list = w.find('[data-testid="confirm-group-rooms"]')
+    expect(list.exists()).toBe(true)
+    const rows = list.findAll('[data-testid="confirm-group-room"]')
+    expect(rows.length).toBe(3)
+    expect(rows[0].text()).toContain('Suite Deluxe')
+    expect(rows[0].text()).toContain('2 adultos · 1 niño')
+    expect(rows[2].text()).toContain('Habitación 3')
+    expect(w.find('[data-testid="confirm-cancel-link"]').text()).toBe('Cancelar la reserva (3 habitaciones)')
+    // El modal aclara que caen las 3.
+    await w.find('[data-testid="confirm-cancel-link"]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Se cancelarán las 3 habitaciones')
+  })
+
+  it('con una sola habitación el botón y la tarjeta quedan como siempre', async () => {
+    const w = await render(HOTEL, 'es', { ...RESERVATION, group: { id: 'grp-1', rooms: [GROUP.rooms[0]] } })
+    expect(w.find('[data-testid="confirm-group-rooms"]').exists()).toBe(false)
+    expect(w.find('[data-testid="confirm-cancel-link"]').text()).toBe('¿Necesitás cancelar esta reserva?')
+    const w2 = await render(HOTEL, 'es', { ...RESERVATION, group: null })
+    expect(w2.find('[data-testid="confirm-group-rooms"]').exists()).toBe(false)
+  })
+
+  it('en inglés el botón del grupo se traduce', async () => {
+    const w = await render(HOTEL, 'en', { ...RESERVATION, group: GROUP })
+    expect(w.find('[data-testid="confirm-cancel-link"]').text()).toBe('Cancel the booking (3 rooms)')
+  })
+
+  async function cancelFromPage(w: VueWrapper) {
+    await w.find('[data-testid="confirm-cancel-link"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="confirm-cancel-yes"]').trigger('click')
+    await flushPromises()
+  }
+
+  it('reembolso procesado (refundStatus done): lo dice con el monto y el plazo en la tarjeta', async () => {
+    cancelReservation.mockResolvedValue(cancelled({ refundAmount: 100, refundStatus: 'done', refundedAt: '2026-09-12T10:00:00Z', reservationIds: ['r1'], roomsCount: 1 }))
+    const w = await cancelFromPage(await render()).then(() => wrapper!)
+    const state = w.find('[data-testid="confirm-refund-state"]')
+    expect(state.text()).toBe('Reembolso de 100.00 USD procesado: lo verás en tu tarjeta en 5-10 días hábiles.')
+    expect(state.text()).toContain('5-10 días hábiles')
+    expect(w.find('[data-testid="confirm-cancelled"]').text()).toContain('100.00 USD')
+  })
+
+  it('reembolso fallido (refundStatus failed): al huésped se le dice que el hotel lo gestiona', async () => {
+    cancelReservation.mockResolvedValue(cancelled({ refundAmount: 100, refundStatus: 'failed' }))
+    const w = await cancelFromPage(await render()).then(() => wrapper!)
+    const state = w.find('[data-testid="confirm-refund-state"]')
+    expect(state.text()).toBe('Reembolso de 100.00 USD: el hotel lo está gestionando.')
+    expect(state.text()).toContain('el hotel lo está gestionando')
+    expect(state.text()).not.toContain('5-10')
+  })
+
+  it('reembolso en curso (pending) también es "lo está gestionando"; sin monto, la política', async () => {
+    cancelReservation.mockResolvedValue(cancelled({ refundAmount: 50, refundStatus: 'pending' }))
+    const w = await cancelFromPage(await render()).then(() => wrapper!)
+    expect(w.find('[data-testid="confirm-refund-state"]').text()).toContain('el hotel lo está gestionando')
+
+    cancelReservation.mockResolvedValue(cancelled({ refundAmount: 0, cancellationFee: 200.6, refundStatus: 'none' }))
+    const w2 = await cancelFromPage(await render()).then(() => wrapper!)
+    expect(w2.find('[data-testid="confirm-refund-state"]').text()).toBe('No hay reembolso según la política de cancelación aplicada.')
+  })
+
+  it('abrir el link de una reserva YA cancelada por el huésped muestra la vista cancelada con el reembolso, no el error', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: {
+        ...RESERVATION.reservation, status: 'cancelled', cancellationReason: 'guest_request',
+        cancelledAt: '2026-09-12T09:00:00Z', refundAmount: 100, cancellationFee: 100.6,
+        refundStatus: 'done', refundedAt: '2026-09-12T09:00:05Z',
+      },
+      group: null,
+    })
+    const block = w.find('[data-testid="confirm-cancelled"]')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('Reserva cancelada')
+    expect(block.text()).toContain('100.00 USD')
+    expect(block.text()).toContain('100.60 USD')
+    expect(w.find('[data-testid="confirm-refund-state"]').text()).toContain('5-10 días hábiles')
+    expect(w.text()).not.toContain('No pudimos confirmar')
+    expect(w.text()).not.toContain('El pago fue rechazado o cancelado')
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(false)
+    expect(w.find('[data-testid="confirm-cancel-link"]').exists()).toBe(false)
+    expect(cancelReservation).not.toHaveBeenCalled()
+  })
+
+  it('vencida por falta de pago (#266) con refundStatus none sigue siendo "venció", no "cancelada"', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: {
+        ...RESERVATION.reservation, status: 'cancelled', paymentStatus: 'unpaid', cancellationReason: 'payment_timeout',
+        cancelledAt: '2026-09-12T09:00:00Z', refundStatus: 'none', refundAmount: 0, amountPaid: 0,
+      },
+      paymentStatus: 'unpaid',
+    })
+    expect(w.find('[data-testid="booking-expired"]').exists()).toBe(true)
+    expect(w.find('[data-testid="confirm-cancelled"]').exists()).toBe(false)
+  })
+
+  it('reserva ya cancelada con reembolso fallido: "lo está gestionando", sin exponer el fallo', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: { ...RESERVATION.reservation, status: 'cancelled', cancelledAt: '2026-09-12T09:00:00Z', refundAmount: 100, refundStatus: 'failed' },
+    })
+    expect(w.find('[data-testid="confirm-cancelled"]').exists()).toBe(true)
+    expect(w.find('[data-testid="confirm-refund-state"]').text()).toContain('el hotel lo está gestionando')
+    expect(w.text()).not.toContain('fall')
+  })
+})
+
 // #271 (MR-06) — aprobación manual: bajo el aviso de "pendiente de aprobación" se muestra el plazo
 // (`approvalDeadlineHours`, 24 si no vino) y, si el hotel rechaza, una rama propia con motivo y
 // reembolso en vez del error genérico de pago o del bloque "venció".
@@ -384,6 +511,10 @@ describe('textos nuevos en los 3 idiomas y sin strings sueltos', () => {
     'confirm.refund', 'confirm.cancellationFee', 'confirm.noRefund', 'confirm.alreadyCancelled',
     'confirm.backToStart', 'confirm.walletTitle',
     'confirm.expiredTitle', 'confirm.expiredBody', 'confirm.expiredCta',
+    // #272 (MR-07)
+    'confirm.groupRooms', 'confirm.roomFallback', 'confirm.roomGuests', 'confirm.cancelLinkGroup',
+    'confirm.cancelBodyGroup', 'confirm.refundDone', 'confirm.refundPending',
+    // #271 (MR-06)
     'confirm.approvalDeadline', 'confirm.rejectedTitle', 'confirm.rejectedRefund',
     'confirm.rejectedNoRefund', 'confirm.rejectedReason',
   ]

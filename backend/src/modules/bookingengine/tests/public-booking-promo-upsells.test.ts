@@ -18,6 +18,8 @@
 //  (7) Upsell inactivo/inexistente → se ignora (no rompe).
 //  (8) Promo inválido (expired, etc.) → 400 + reason, no crea reserva.
 //  (9) Atomicidad: si tx.update del promo falla (lanza), la reserva NO se persiste.
+// (10) #270: priceBreakdown.upsells[] (snapshot por línea, precio congelado del catálogo) se
+//      persiste en la reserva, y esta guarda estimatedArrival/specialRequests estructurados.
 //
 // MR-10 (#275) — bloque `describe` aparte al final:
 //  - `children` plano sin edades cotiza IGUAL que `childrenAges:[maxChildAge, ...]` (Opción A).
@@ -166,7 +168,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     const b = res.body.totalBreakdown
     // 100 × 2 noches = 200 subtotal, 0 descuento, 0 upsells, 18% tax sobre 200 = 36, total 236.
-    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
+    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
   })
 
   it('#88: dos impuestos → una línea por impuesto (nombre, %, importe), taxes = suma exacta, y la reserva guarda el desglose', async () => {
@@ -209,7 +211,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 10% = 20, taxable 180, tax 18% × 180 = 32.4, total 212.4.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
+      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
     })
     // B2 fix — uses fue incrementado atómicamente vía updateMany (optimistic lock).
     const promoUpdate = updateManyCalls.find((u) => u.model === 'PromoCodes')
@@ -237,7 +239,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 50, taxable 150, tax 0%, total 150.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
+      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
     })
     expect(updateManyCalls.find((u) => u.model === 'PromoCodes')?.changes.uses).toBe(1)
   })
@@ -315,8 +317,49 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
         { id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 15, quantity: 2, nights: 1, total: 30 },
         { id: 'u2', name: 'Transfer', kind: 'per_stay', unitPrice: 30, quantity: 1, nights: 1, total: 30 },
       ],
-      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
+      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
     })
+  })
+
+  it('#270: priceBreakdown.upsells lleva el snapshot por línea y la reserva guarda estimatedArrival/specialRequests', async () => {
+    const state: any = {
+      upsells: [
+        { id: 'u1', hotelId: 'h1', name: 'Desayuno', price: 15, kind: 'per_person', active: true },
+      ],
+      taxesConfig: [{ value: [{ activo: true, tasa: 0, nombre: 'NONE' }] }],
+    }
+    const { orm, created } = makeOrm(state)
+    const res = await createPublicBookingDirect(orm, {
+      ...baseBody,
+      upsells: [{ id: 'u1', quantity: 2 }],
+      estimatedArrival: ' 18:30 ',
+      specialRequests: '  Cama extra y piso alto  ',
+    }, undefined, undefined, undefined, undefined, undefined, makeDeps(state))
+    expect(res.status).toBe(201)
+    const b = res.body.totalBreakdown
+    // Una línea por upsell válido, precio congelado del catálogo (no del body), total = unitPrice × qty.
+    expect(b.upsells).toEqual([{ id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 15, quantity: 2, nights: 1, total: 30 }])
+    expect(b.upsells[0].total).toBe(b.upsells[0].unitPrice * b.upsells[0].quantity)
+    expect(b.upsellsTotal).toBe(30)
+    const reservation = created.find((c: any) => c.model === 'Reservations')?.row
+    // La reserva guarda el mismo desglose (con las líneas) que el huésped vio.
+    expect(reservation.priceBreakdown.upsells).toEqual(b.upsells)
+    // Estructurados (trim) además del texto que ya iba en `notes`, que no cambia.
+    expect(reservation.estimatedArrival).toBe('18:30')
+    expect(reservation.specialRequests).toBe('Cama extra y piso alto')
+    expect(reservation.notes).toContain('Llegada estimada: 18:30')
+    expect(reservation.notes).toContain('Pedido especial: Cama extra y piso alto')
+  })
+
+  it('#270: sin estimatedArrival/specialRequests en el body → columnas undefined (no string vacío)', async () => {
+    const state: any = { taxesConfig: [{ value: [{ activo: true, tasa: 0, nombre: 'NONE' }] }] }
+    const { orm, created } = makeOrm(state)
+    const res = await createPublicBookingDirect(orm, { ...baseBody, estimatedArrival: '   ' }, undefined, undefined, undefined, undefined, undefined, makeDeps(state))
+    expect(res.status).toBe(201)
+    const reservation = created.find((c: any) => c.model === 'Reservations')?.row
+    expect(reservation.estimatedArrival).toBeUndefined()
+    expect(reservation.specialRequests).toBeUndefined()
+    expect(reservation.priceBreakdown.upsells).toEqual([])
   })
 
   it('upsell inactivo/inexistente → se ignora (no rompe el flujo)', async () => {
@@ -341,7 +384,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.body.totalBreakdown).toEqual({
       subtotal: 215, promoDiscount: 0, upsellsTotal: 15,
       upsells: [{ id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 15, quantity: 1, nights: 1, total: 15 }],
-      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
+      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
     })
   })
 
@@ -427,7 +470,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(reservation.row.promoCode).toBe('ANYTHING')
     // No se aplica descuento (no se procesó) → total = subtotal + tax sobre subtotal.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
+      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
     })
   })
 })

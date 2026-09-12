@@ -12,7 +12,9 @@
 // pasar al usecase. Antes `req.body` iba crudo → 500 o datos corruptos en tipos malformados.
 import { describe, it, expect } from 'bun:test'
 import { validateSchema } from 'arckode-framework'
-import { ExtendedPublicBookingSchema, CreatePublicBookingGroupSchema } from '../validators/schema'
+import { ExtendedPublicBookingSchema, CreatePublicBookingGroupSchema, UpsertMealPlanSchema } from '../validators/schema'
+// El mismo `validateSchema` que usa el controller para los `BodyRule` (superconjunto del del framework).
+import { validateSchema as validateBodySchema } from '../../../shared/validators/validate-body'
 
 describe('B5 — ExtendedPublicBookingSchema validate (POST /api/public/booking)', () => {
   const validPayload = {
@@ -144,5 +146,18 @@ describe('Tarea 3.1 (solmi-direct-booking-qa-fixes) — estimatedArrival + speci
       notes: 'esto se debería perder',
     }) as Record<string, unknown>
     expect(withNotes.notes).toBeUndefined()
+  })
+})
+
+// MR-03 (#268) — PUT /api/meal-plans/:code: el precio por persona y noche no puede ser negativo.
+// El usecase lo vuelve a chequear, pero el 400 tiene que salir del borde (`validateSchema`).
+describe('UpsertMealPlanSchema validate (PUT /api/meal-plans/:code)', () => {
+  it('rechaza price negativo → lanza ValidationError', () => {
+    expect(() => validateBodySchema(UpsertMealPlanSchema, { priceMode: 'per_person_per_night', price: -5 })).toThrow()
+  })
+
+  it('acepta price 0 y price positivo', () => {
+    expect((validateBodySchema(UpsertMealPlanSchema, { price: 0 }) as Record<string, unknown>).price).toBe(0)
+    expect((validateBodySchema(UpsertMealPlanSchema, { price: 12.5 }) as Record<string, unknown>).price).toBe(12.5)
   })
 })

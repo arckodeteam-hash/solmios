@@ -17,6 +17,8 @@ import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-p
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
 import { backfillCribRoomAmenity } from './scripts/backfill-crib-room-amenity'
 import { backfillReservationSourceWeb } from './scripts/backfill-reservation-source-web'
+import { relaxReservationsRoomId } from './scripts/relax-reservations-roomid'
+import { backfillReservationRoomType } from './scripts/backfill-reservation-room-type'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
@@ -241,11 +243,15 @@ async function createTablesBlock1(): Promise<void> {
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_source ON expenses(hotelId, source, sourceId)`)
   } catch { /* duplicados legacy o tabla ausente: se aplica en la próxima corrida tras reconciliar */ }
 
+  // #270: `attachments` (json nullable, columna TEXT) es la misma que declara el modelo ORM
+  // `EmailQueue` (shared/models.ts) — las dos fuentes del schema tienen que coincidir. En una base
+  // creada antes de la columna, la agrega el addColumnIfMissing de abajo (ormMigrate también).
   await exec(`CREATE TABLE IF NOT EXISTS email_queue (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT NOT NULL,
     html TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
     maxAttempts INTEGER NOT NULL DEFAULT 3, lastError TEXT, nextRetryAt TEXT, provider TEXT,
-    relatedType TEXT, relatedId TEXT, createdAt TEXT, updatedAt TEXT)`)
+    relatedType TEXT, relatedId TEXT, attachments TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await addColumnIfMissing('email_queue', 'attachments', 'TEXT')
   await exec(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_retry ON email_queue (status, nextRetryAt)`)
 
   // Estadía mínima por FECHA (fila "Días Mínimos" del planning). Solo overrides (minStay>1);
@@ -1527,6 +1533,23 @@ async function main(): Promise<void> {
     console.log(`reservations.source web: ${n} fila(s) actualizada(s)`)
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'reservations.source=web', missingTable: 'reservations', consequence: 'Sin este backfill las reservas web viejas siguen mostrándose como "Directa" en el listado.' })
+  }
+
+  // REQ-HAC-01 (#256/#258) — La habitación se asigna al check-in: `roomId` pasa a nullable (las bases
+  // viejas tienen `roomId TEXT NOT NULL` del CREATE original y el ORM no hace ALTER COLUMN), lo
+  // vendido es `roomType` (= rooms.type) y `roomAssignedAt`/`roomAssignedBy` registran la asignación.
+  // Orden: columnas → relax NOT NULL → backfill de roomType desde la habitación ya asignada. Los
+  // tres pasos son idempotentes (segunda corrida: changed:false y 0 filas).
+  try {
+    await addColumnIfMissing('reservations', 'roomType', 'TEXT')
+    await addColumnIfMissing('reservations', 'roomAssignedAt', 'TEXT')
+    await addColumnIfMissing('reservations', 'roomAssignedBy', 'TEXT')
+    const { changed } = await relaxReservationsRoomId(db)
+    console.log(`reservations.roomId NOT NULL: ${changed ? 'quitado' : 'ya estaba relajado'}`)
+    const typed = await backfillReservationRoomType(db)
+    console.log(`reservations.roomType: ${typed} fila(s) rellenada(s) desde rooms.type`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'reservations.roomId nullable + roomType', missingTable: 'reservations', consequence: 'Sin esto una reserva sin habitación asignada (HAC-01) revienta con NOT NULL y las reservas viejas quedan sin tipo vendido (roomType).' })
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.
