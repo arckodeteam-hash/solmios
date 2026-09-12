@@ -91,6 +91,8 @@ describe('ningún archivo del camino de venta define su propio criterio', () => 
   })
 
   it.each(FILES)('%s usa la fuente única', (rel) => {
-    expect(readFileSync(join(ROOT, rel), 'utf-8')).toContain('isRoomSellable')
+    // REQ-HAC-02 (#257): `shared/usecases/type-availability.ts` filtra las unidades con
+    // `isRoomSellable` — quien delega ahí también usa la fuente única.
+    expect(readFileSync(join(ROOT, rel), 'utf-8')).toMatch(/isRoomSellable|shared\/usecases\/type-availability/)
   })
 })
