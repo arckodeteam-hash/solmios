@@ -18,7 +18,7 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { updateReservation } from './crud'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
-import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
+import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, freeChildrenLimitError, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
@@ -249,6 +249,13 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
   // de verdad requiere decidir qué hacer con reservas de panel sin edades declaradas (ver
   // Requerimiento B de la auditoría final: ReservationWizardModal.vue nunca las pide).
   if (room) {
+    // REQ-03 (#235) — tope de niños que NO consumen plaza (`maxFreeChildrenPerRoom`, null = sin
+    // límite) revalidado sobre la composición PROYECTADA al nuevo check-in: la reclasificación
+    // por edad al mover fechas (o una política que cambió desde que se creó la reserva) puede
+    // dejar más "libres" de los que el hotel admite hoy. Sin `childrenAges` cae a
+    // `DEFAULT_CHILD_POLICY` (sin límite) con `freeChildren: 0` — no aplica.
+    const freeLimitError = freeChildrenLimitError(childPolicy ?? DEFAULT_CHILD_POLICY, composition)
+    if (freeLimitError) throw new ConflictError(freeLimitError)
     const roomTypeCapacityMap = await resolveRoomTypeCapacityMap(deps.configRepo, existing.hotelId)
     const capacity = effectiveRoomCapacity(roomTypeCapacityMap, {
       type: room.type, capacity: Number(room.capacity) || composition.chargeableOccupancy,
