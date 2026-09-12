@@ -3,7 +3,7 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, RetryRefundSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -162,9 +162,11 @@ export class ReservasController {
   }
 
   // ── RETRY REFUND (#272): reintenta en Stripe el reembolso de una cancelación web que quedó `failed` ──
-  // Sin body que validar: el monto sale de `reservations.refundAmount`, nunca del cliente.
+  // Sin campos que validar (el monto sale de `reservations.refundAmount`, nunca del cliente), pero el
+  // POST pasa igual por `validateSchema` con un schema vacío: regla del módulo, sin cambio de comportamiento.
   async retryRefund(req: HttpRequest) {
     try {
+      validateSchema(RetryRefundSchema, req.body ?? {})
       const result = await this.service.retryRefund(req.params.id, req.user as any)
       return { status: 200, body: result }
     } catch (e: any) {
