@@ -1,9 +1,12 @@
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** Detalle estructurado del backend (p. ej. el 409 de assign-room trae `{ reason, locator, ... }`). */
+  details?: Record<string, unknown>
+  constructor(status: number, message: string, details?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    if (details) this.details = details
   }
 }
 
@@ -333,7 +336,8 @@ function withFieldDetail(message: string, errObj: unknown): string {
     // El framework envuelve errores en { success, error }; server.ts usa { error }
     const errObj = raw?.error ?? raw
     const msg = (typeof errObj === 'object' && errObj?.message) || raw?.error || raw?.message || `Error ${res.status}`
-    throw new ApiError(res.status, withFieldDetail(msg, errObj))
+    const details = raw?.details ?? (typeof errObj === 'object' ? errObj?.details : undefined)
+    throw new ApiError(res.status, withFieldDetail(msg, errObj), details && typeof details === 'object' ? details : undefined)
   }
 
   // Envelope del framework arckode: { success, data, meta, error }
