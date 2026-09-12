@@ -23,17 +23,29 @@ test.use({ storageState: ADMIN_STORAGE_STATE })
 //      la 205 sí, la 202 no porque ya la ocupa la reserva del paso 3) → "(asignada el … por …)".
 //
 // Datos: 3 reservas Doble creadas por API y des-asignadas con DELETE /assign-room. La 102 la
-// ocupa res-0002 del seed (confirmed, 13→16/09) y NO se toca. Todo lo creado se borra al final.
+// ocupa res-0002 del seed (confirmed, hoy+1 → hoy+4, relativo) y NO se toca. Todo lo creado se borra al final.
 
 const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
 const SHOTS = 'test-results/room-assign'
 const OCCUPIED_RES_ID = 'res-0002-0000-0000-000000000002'
 const GUEST_PREFIX = 'E2E Asig'
 
-// Ventana fija dentro de la semana visible del planning (hoy es 2026-09-12 en la BD de prueba;
-// el planning arranca en "hoy" y muestra 14 días). A y B se solapan (→ 2 carriles), C no.
-const STAY_AB = { checkIn: '2026-09-13', checkOut: '2026-09-15' }
-const STAY_C = { checkIn: '2026-09-16', checkOut: '2026-09-18' }
+// Fechas RELATIVAS a hoy (mismo helper que edit.spec.ts): el seed de res-0002 en la 102 es
+// relativo (`d(1)..d(4)` en backend/migrate-db.ts), así que una ventana fija dejaba de solapar al
+// pasar los días y el test 2 esperaba 409 y recibía 200. A y B ocupan [hoy+1, hoy+3) → solapan
+// entre sí (2 carriles) y con res-0002 (409 al soltar en la 102); C ocupa [hoy+4, hoy+6). Todo
+// cae dentro de los 14 días que el planning muestra a partir de hoy.
+function dayFromToday(offset: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  return d.toISOString().slice(0, 10)
+}
+const STAY_AB = { checkIn: dayFromToday(1), checkOut: dayFromToday(3) }
+const STAY_C = { checkIn: dayFromToday(4), checkOut: dayFromToday(6) }
+// Celdas donde se suelta la barra: sólo importa la FILA (las fechas de la reserva no se tocan),
+// pero la celda tiene que existir en el rango visible.
+const DROP_DAY_OCCUPIED = dayFromToday(5)
+const DROP_DAY_FREE = dayFromToday(2)
 
 type Room = { id: string; number: string; type: string }
 
@@ -150,7 +162,7 @@ test.describe('RES-HAC-06 — habitación al check-in: banda sin asignar, drag, 
     room102 = byNumber('102'); room202 = byNumber('202'); room205 = byNumber('205')
     for (const r of [room102, room202, room205]) expect(r.type, `la ${r.number} debe ser double`).toBe('double')
 
-    // La 102 tiene que estar ocupada por res-0002 (confirmed 13→16) para el drag a "ocupada".
+    // La 102 tiene que estar ocupada por res-0002 (confirmed hoy+1 → hoy+4) para el drag a "ocupada".
     const occupied = await getReservation(OCCUPIED_RES_ID)
     expect(occupied.roomId).toBe(room102.id)
     expect(occupied.status).toBe('confirmed')
@@ -209,7 +221,7 @@ test.describe('RES-HAC-06 — habitación al check-in: banda sin asignar, drag, 
       (r) => r.url().includes(`/api/reservas/${resA}/assign-room`) && r.request().method() === 'POST',
       { timeout: 15_000 },
     )
-    await dragBarToRoom(page, resA, room102, '2026-09-17')
+    await dragBarToRoom(page, resA, room102, DROP_DAY_OCCUPIED)
     expect((await assignCall).status()).toBe(409)
 
     const toast = page.getByTestId('toast-error').filter({ hasText: 'Ocupada por' })
@@ -237,7 +249,7 @@ test.describe('RES-HAC-06 — habitación al check-in: banda sin asignar, drag, 
       (r) => r.url().includes(`/api/reservas/${resA}/assign-room`) && r.request().method() === 'POST',
       { timeout: 15_000 },
     )
-    await dragBarToRoom(page, resA, room202, '2026-09-14')
+    await dragBarToRoom(page, resA, room202, DROP_DAY_FREE)
     expect((await assignCall).status()).toBe(200)
 
     await expect(page.getByTestId('toast-success').filter({ hasText: /asignada/ })).toBeVisible({ timeout: 10_000 })
