@@ -17,6 +17,38 @@ export interface EmailAttachment {
   contentBase64: string
 }
 
+/**
+ * Adjunto DIFERIDO (#270): un marcador que se persiste en la fila de la cola y que el worker
+ * resuelve a un `EmailAttachment` justo antes de enviar. Existe porque generar el recibo PDF
+ * lanza un Chromium (15 s + 10 s de timeouts): hacerlo en el request que encola —el webhook de
+ * Stripe o el retorno de Azul/CardNet— lo bloqueaba y N pagos simultáneos eran N Chromiums sin
+ * tope. El worker procesa una fila por vez, así que el navegador se lanza de a uno. Si la
+ * resolución falla, el correo sale sin adjunto (el huésped tiene el botón de descarga igual).
+ */
+export interface DeferredEmailAttachment {
+  kind: 'receipt'
+  reservationId: string
+  filename: string
+}
+
+export type EmailAttachmentInput = EmailAttachment | DeferredEmailAttachment
+
+export function isDeferredAttachment(a: unknown): a is DeferredEmailAttachment {
+  return !!a && typeof a === 'object'
+    && (a as DeferredEmailAttachment).kind === 'receipt'
+    && typeof (a as DeferredEmailAttachment).reservationId === 'string'
+    && typeof (a as DeferredEmailAttachment).filename === 'string'
+}
+
+export function isInlineAttachment(a: unknown): a is EmailAttachment {
+  return !!a && typeof a === 'object'
+    && typeof (a as EmailAttachment).filename === 'string'
+    && typeof (a as EmailAttachment).contentBase64 === 'string'
+}
+
+/** Resuelve un marcador diferido a un adjunto real; `null` = sin adjunto. Lo inyecta la infraestructura. */
+export type DeferredAttachmentResolver = (marker: DeferredEmailAttachment) => Promise<EmailAttachment | null>
+
 /** Input para resolver + renderizar + encolar una notificación por (event, language). */
 export interface NotificationInput {
   to: string
@@ -27,8 +59,8 @@ export interface NotificationInput {
   /** Origen para trazabilidad (ej: 'reservation', 'checkin'). */
   relatedType?: string
   relatedId?: string
-  /** Adjuntos opcionales (#270: recibo PDF). */
-  attachments?: EmailAttachment[]
+  /** Adjuntos opcionales (#270: recibo PDF, en línea o como marcador diferido). */
+  attachments?: EmailAttachmentInput[]
 }
 
 /**

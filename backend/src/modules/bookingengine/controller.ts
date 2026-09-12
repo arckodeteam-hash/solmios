@@ -39,9 +39,10 @@ import { createPublicBookingGroup } from './usecases/public-booking-group'
 import { getPublicHotelInfo } from './usecases/public-hotel-info'
 import { getPublicReservation } from './usecases/public-reservation'
 // #270 — recibo de pago PDF del huésped (mismo HMAC/404 que getPublicReservation). puppeteer y su
-// rate limit por IP viven en facturas/usecases/pdf.ts: se reusa el mismo techo (10 PDFs/min/IP).
+// rate limit por IP viven en infrastructure/pdf.ts (compartido con facturas): mismo techo
+// (10 PDFs/min/IP), sin import módulo→módulo.
 import { getPublicReceiptPdf } from './usecases/public-receipt'
-import { htmlToPdf, checkPdfRateLimit } from '../facturas/usecases/pdf'
+import { htmlToPdf, checkPdfRateLimit } from '../../infrastructure/pdf'
 import { getClientIp } from '../../shared/middlewares/rate-limit'
 import { resolvePlatformIdentity } from '../../shared/utils/platform-identity'
 import { cancelPublicBooking } from './usecases/public-cancel'

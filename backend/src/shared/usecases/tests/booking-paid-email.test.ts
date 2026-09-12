@@ -25,7 +25,7 @@ interface HarnessOver {
   siblings?: any[]
   rooms?: Record<string, any>
   configRow?: any
-  receiptPdf?: (id: string) => Promise<Buffer | null>
+  attachReceipt?: boolean
   publicUrl?: string
   enqueue?: (i: any) => Promise<string>
 }
@@ -47,7 +47,7 @@ function harness(over: HarnessOver = {}) {
   // probando el contrato mínimo de 5 deps.
   if (over.rooms) deps.roomsRepo = { findById: async (id: string) => over.rooms![id] ?? null }
   if (over.configRow !== undefined) deps.configRepo = { findOne: async () => over.configRow }
-  if (over.receiptPdf) deps.receiptPdf = over.receiptPdf
+  if (over.attachReceipt !== undefined) deps.attachReceipt = over.attachReceipt
   if (over.publicUrl !== undefined) deps.publicUrl = over.publicUrl
   deps.notificationsRepo = { create: async (row: any) => { notifications.push(row); return row } }
   return { sent, notifications, run: () => sendBookingPaidEmail(deps, RESERVA.id) }
@@ -333,28 +333,18 @@ describe('recibo completo (#270)', () => {
     expect(typeof n.id).toBe('string')
   })
 
-  it('(d) el recibo PDF viaja adjunto cuando el generador responde', async () => {
-    const pdf = Buffer.from('%PDF-1.4 fake')
-    const calls: string[] = []
-    const h = harness({ receiptPdf: async (id) => { calls.push(id); return pdf } })
+  it('(d) el recibo PDF viaja como marcador DIFERIDO: el worker de la cola lo genera, no este usecase', async () => {
+    const h = harness({ attachReceipt: true })
     expect(await h.run()).toBe(true)
-    expect(calls).toEqual([RESERVA.id])
+    // Sin base64 ni Buffer: acá no se lanza Chromium (el webhook de Stripe espera este await).
     expect(h.sent[0].attachments).toEqual([{
+      kind: 'receipt',
+      reservationId: RESERVA.id,
       filename: `recibo-${RESERVA.id.slice(0, 8)}.pdf`,
-      contentType: 'application/pdf',
-      contentBase64: pdf.toString('base64'),
     }])
   })
 
-  it('(d bis) si el generador del PDF falla el correo sale igual, sin adjunto', async () => {
-    const h = harness({ receiptPdf: async () => { throw new Error('chromium no arranca') } })
-    expect(await h.run()).toBe(true)
-    expect(h.sent).toHaveLength(1)
-    expect(h.sent[0].attachments).toBeUndefined()
-    expect(h.notifications).toHaveLength(0)
-  })
-
-  it('sin generador (deps mínimos) no hay adjunto', async () => {
+  it('sin attachReceipt (deps mínimos) no hay adjunto', async () => {
     const h = harness(); await h.run()
     expect(h.sent[0].attachments).toBeUndefined()
   })

@@ -16,11 +16,16 @@
 //
 // Best-effort: cualquier fallo se loguea y se traga. El cobro ya está asentado; no se revierte
 // una reserva pagada porque el correo no salió. Lo que sí hace es AVISAR al hotel (notificación
-// `system` en la campanita) para que mande la confirmación a mano desde la reserva. El PDF
-// también es best-effort: si el generador falla, el correo sale igual sin adjunto.
+// `system` en la campanita) para que mande la confirmación a mano desde la reserva.
+//
+// El PDF NO se genera acá: el correo se encola con un marcador diferido (`{ kind: 'receipt' }`)
+// y el worker de la cola genera el recibo justo antes de enviar. Generarlo en línea lanzaba un
+// Chromium dentro del webhook de Stripe / retorno de Azul-CardNet (que esperan este usecase con
+// `await`): N pagos simultáneos = N navegadores sin tope. Si el worker no logra generarlo, el
+// correo sale igual sin adjunto — el huésped tiene el botón de descarga en la confirmación.
 
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import type { EmailSender, EmailAttachment } from '../../services/email-sender'
+import type { EmailSender, DeferredEmailAttachment } from '../../services/email-sender'
 import type { NotificationLanguage } from '../../services/notification-defaults'
 import { resolveGuestLanguage } from '../../services/guest-language'
 import { escapeHtml } from '../../services/notification-renderer'
@@ -42,10 +47,10 @@ export interface BookingPaidEmailDeps {
   /** Identidad de la plataforma (`{platform_name}`); sin él se usa el default. */
   configRepo?: Pick<RepositoryAdapter<any>, 'findOne'>
   /**
-   * Generador del recibo PDF. Lo inyecta la infraestructura (puppeteer) para que este usecase
-   * no dependa del navegador headless; `null` = no hay recibo para adjuntar.
+   * Adjuntar el recibo PDF como marcador diferido: lo genera el worker de la cola al enviar
+   * (ver header). `false`/ausente = el correo va sin recibo.
    */
-  receiptPdf?: (reservationId: string) => Promise<Buffer | null>
+  attachReceipt?: boolean
   /** Origen del frontend (PUBLIC_URL): arma manage_url, receipt_url y el logo relativo. */
   publicUrl?: string
 }
@@ -159,19 +164,12 @@ async function roomsLinesOf(
   return linesHtml(items)
 }
 
-/** Recibo PDF adjunto, best-effort: sin generador o con fallo el correo sale igual. */
-async function receiptAttachmentOf(
+/** Marcador del recibo PDF: el worker de la cola lo resuelve (genera el PDF) al enviar. */
+function receiptAttachmentOf(
   deps: BookingPaidEmailDeps, reservationId: string, locator: string,
-): Promise<EmailAttachment[] | undefined> {
-  if (!deps.receiptPdf) return undefined
-  try {
-    const pdf = await deps.receiptPdf(reservationId)
-    if (!pdf) return undefined
-    return [{ filename: `recibo-${locator}.pdf`, contentType: 'application/pdf', contentBase64: pdf.toString('base64') }]
-  } catch (e) {
-    deps.logger.warn('booking-paid-email: no se pudo generar el recibo PDF', { reservationId, error: (e as Error).message })
-    return undefined
-  }
+): DeferredEmailAttachment[] | undefined {
+  if (!deps.attachReceipt) return undefined
+  return [{ kind: 'receipt', reservationId, filename: `recibo-${locator}.pdf` }]
 }
 
 /** Aviso al hotel cuando el correo no salió: el cobro está, la confirmación hay que mandarla a mano. */
@@ -290,7 +288,7 @@ export async function sendBookingPaidEmail(
     const taxBreakdown: any[] = Array.isArray(breakdown.taxBreakdown) ? breakdown.taxBreakdown : []
     const childrenAges: unknown[] = Array.isArray(reservation.childrenAges) ? reservation.childrenAges : []
 
-    const attachments = await receiptAttachmentOf(deps, reservationId, locator)
+    const attachments = receiptAttachmentOf(deps, reservationId, locator)
 
     await emailSender.enqueueNotification({
       to,

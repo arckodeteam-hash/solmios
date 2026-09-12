@@ -13,12 +13,13 @@
 import nodemailer from 'nodemailer'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { NotificationRenderer, renderTemplate, escapeHtml } from './notification-renderer'
-import type { EmailSender, NotificationInput, EmailAttachment } from './email-sender'
+import type { EmailSender, NotificationInput, EmailAttachment, EmailAttachmentInput, DeferredAttachmentResolver } from './email-sender'
+import { isDeferredAttachment, isInlineAttachment } from './email-sender'
 import { resolvePlatformIdentity } from '../shared/utils/platform-identity'
 
 // Re-exports backward-compat: renderTemplate y NotificationInput migraron a módulos propios (SRP).
 export { renderTemplate } from './notification-renderer'
-export type { NotificationInput, EmailAttachment } from './email-sender'
+export type { NotificationInput, EmailAttachment, EmailAttachmentInput, DeferredEmailAttachment } from './email-sender'
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -39,8 +40,9 @@ export interface EmailQueueDTO {
   provider?: 'smtp' | 'resend' | null
   relatedType?: string | null
   relatedId?: string | null
-  /** #270: columna json. El ORM deserializa al leer; puede llegar string en repos crudos (ver parseAttachments). */
-  attachments?: EmailAttachment[] | null
+  /** #270: columna json. El ORM deserializa al leer; puede llegar string en repos crudos (ver parseAttachments).
+   *  Puede traer adjuntos en línea (base64) o marcadores diferidos que el worker resuelve al enviar. */
+  attachments?: EmailAttachmentInput[] | null
   createdAt?: string
   updatedAt?: string
 }
@@ -55,8 +57,8 @@ export interface EnqueueInput {
   /** Origen del email para trazabilidad (ej: 'reservation'). */
   relatedType?: string
   relatedId?: string
-  /** Adjuntos (#270: recibo PDF). Se persisten en la fila de la cola. */
-  attachments?: EmailAttachment[]
+  /** Adjuntos (#270: recibo PDF). Se persisten en la fila de la cola; un marcador diferido se resuelve al enviar. */
+  attachments?: EmailAttachmentInput[]
 }
 
 interface SmtpConfig {
@@ -139,16 +141,20 @@ export class EmailNotConfiguredError extends Error {
 /**
  * #270: `attachments` es columna json — el ORM la deserializa al leer, pero un repo crudo puede
  * devolver el texto. Tolera objeto o string; cualquier cosa inválida → sin adjuntos (no rompe el envío).
+ * Conserva tanto los adjuntos en línea como los marcadores diferidos (los resuelve el worker).
  */
-function parseAttachments(raw: unknown): EmailAttachment[] | undefined {
+function parseAttachments(raw: unknown): EmailAttachmentInput[] | undefined {
   let value = raw
   if (typeof raw === 'string') {
     try { value = JSON.parse(raw) } catch { return undefined }
   }
   if (!Array.isArray(value)) return undefined
-  const list = value.filter((a): a is EmailAttachment =>
-    !!a && typeof a === 'object' && typeof (a as EmailAttachment).filename === 'string' && typeof (a as EmailAttachment).contentBase64 === 'string')
+  const list = value.filter((a): a is EmailAttachmentInput => isInlineAttachment(a) || isDeferredAttachment(a))
   return list.length ? list : undefined
+}
+
+function attachmentsBytesOf(list: EmailAttachment[]): number {
+  return list.reduce((s, a) => s + Buffer.byteLength(String(a.contentBase64 ?? ''), 'utf8'), 0)
 }
 
 // ─── EmailService ───────────────────────────────────────────────────────────
@@ -158,6 +164,8 @@ export class EmailService implements EmailSender {
   private processing = false
   /** Cache de transporters SMTP por host:port:user (evita reconstruir por email). */
   private transporters = new Map<string, nodemailer.Transporter<unknown>>()
+  /** #270: resuelve marcadores diferidos (recibo PDF) al enviar. Sin él, el marcador se descarta con warn. */
+  private attachmentResolver: DeferredAttachmentResolver | null = null
 
   constructor(
     private readonly configRepo: RepositoryAdapter<Record<string, unknown>>,
@@ -166,6 +174,14 @@ export class EmailService implements EmailSender {
     /** Render de plantillas (override hotel > default código > 'es). Default: renderer sin override (solo defaults de código). */
     private readonly renderer: NotificationRenderer = new NotificationRenderer(null, logger),
   ) {}
+
+  /**
+   * #270: inyecta el resolutor de adjuntos diferidos (lo hace `email-bootstrap`, que es quien
+   * conoce puppeteer y el recibo). El worker lo llama fila por fila, justo antes de enviar.
+   */
+  setAttachmentResolver(resolver: DeferredAttachmentResolver | null): void {
+    this.attachmentResolver = resolver
+  }
 
   /**
    * Encola un email para envío asíncrono. Inserta la fila y dispara el procesamiento
@@ -184,7 +200,9 @@ export class EmailService implements EmailSender {
 
     const html = input.variables ? renderTemplate(input.html, input.variables) : input.html
     let attachments = input.attachments?.length ? input.attachments : undefined
-    const attachmentsBytes = (attachments ?? []).reduce((s, a) => s + Buffer.byteLength(String(a.contentBase64 ?? ''), 'utf8'), 0)
+    // El techo se mide sobre lo que ya viene en base64; un marcador diferido pesa nada acá y se
+    // vuelve a medir en el worker una vez resuelto.
+    const attachmentsBytes = attachmentsBytesOf((attachments ?? []).filter(isInlineAttachment))
     if (attachments && attachmentsBytes > MAX_ATTACHMENTS_BYTES) {
       this.logger.warn('EmailService: adjuntos descartados por tamaño', { to: input.to, bytes: attachmentsBytes, max: MAX_ATTACHMENTS_BYTES })
       attachments = undefined
@@ -281,12 +299,47 @@ export class EmailService implements EmailSender {
     try {
       const provider = await this.sendNow({
         to: row.recipient, subject: row.subject, html: row.html, hotelId: row.hotelId,
-        attachments: parseAttachments(row.attachments),
+        attachments: await this.resolveAttachments(row, parseAttachments(row.attachments)),
       })
       await this.queueRepo.update(row.id, { status: 'sent', provider, lastError: null, nextRetryAt: null } as Partial<EmailQueueDTO>)
     } catch (e) {
       await this.handleFailure(row, e as Error)
     }
+  }
+
+  /**
+   * #270: convierte los adjuntos persistidos en lo que va al proveedor. Los en línea pasan tal
+   * cual; cada marcador diferido se resuelve con `attachmentResolver` (el recibo PDF se genera
+   * ACÁ, en el worker, y no en el request que encoló). Best-effort: si no hay resolutor, devuelve
+   * null o tira, ese adjunto se omite con warn y el correo sale igual. El techo de tamaño se
+   * aplica sobre el resultado final, igual que en `enqueue`.
+   */
+  private async resolveAttachments(row: EmailQueueDTO, list: EmailAttachmentInput[] | undefined): Promise<EmailAttachment[] | undefined> {
+    if (!list?.length) return undefined
+    const out: EmailAttachment[] = []
+    for (const a of list) {
+      if (isInlineAttachment(a)) { out.push(a); continue }
+      if (!this.attachmentResolver) {
+        this.logger.warn('EmailService: adjunto diferido sin resolutor, se omite', { id: row.id, kind: a.kind, reservationId: a.reservationId })
+        continue
+      }
+      try {
+        const resolved = await this.attachmentResolver(a)
+        if (resolved) out.push(resolved)
+        else this.logger.warn('EmailService: adjunto diferido sin contenido, se omite', { id: row.id, kind: a.kind, reservationId: a.reservationId })
+      } catch (e) {
+        this.logger.warn('EmailService: no se pudo generar el adjunto diferido, el correo sale sin él', {
+          id: row.id, kind: a.kind, reservationId: a.reservationId, error: (e as Error).message,
+        })
+      }
+    }
+    if (!out.length) return undefined
+    const bytes = attachmentsBytesOf(out)
+    if (bytes > MAX_ATTACHMENTS_BYTES) {
+      this.logger.warn('EmailService: adjuntos descartados por tamaño', { id: row.id, to: row.recipient, bytes, max: MAX_ATTACHMENTS_BYTES })
+      return undefined
+    }
+    return out
   }
 
   /** Envía el email: SMTP desde Configuration, fallback Resend, o error si ninguno. */

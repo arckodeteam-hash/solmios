@@ -7,7 +7,7 @@ import type { Logger } from 'arckode-framework'
 import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
 import { resolvePlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
 import { buildReceiptHtmlFor } from '../modules/bookingengine/usecases/public-receipt'
-import { htmlToPdf } from '../modules/facturas/usecases/pdf'
+import { htmlToPdf } from './pdf'
 import type { ReservationEmailSender } from '../shared/usecases/notify-reservation-received'
 
 export interface EmailBootstrapResult {
@@ -15,11 +15,36 @@ export interface EmailBootstrapResult {
   startWorker: () => void
 }
 
-export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name: string) => T | null): EmailBootstrapResult {
+export interface EmailBootstrapOptions {
+  /** HTML → PDF (puppeteer en producción). Inyectable para testear el cableado sin Chromium. */
+  toPdf?: (html: string) => Promise<Buffer>
+}
+
+export function bootstrapEmail(
+  orm: any,
+  logger: Logger,
+  resolveModule: <T>(name: string) => T | null,
+  options: EmailBootstrapOptions = {},
+): EmailBootstrapResult {
+  const toPdf = options.toPdf ?? htmlToPdf
   const emailConfigRepo = new OrmRepository<Record<string, unknown>>(orm, 'Configuration')
   const emailQueueRepo = new OrmRepository<EmailQueueDTO>(orm, 'EmailQueue')
   const notificationRenderer = new NotificationRenderer(new OrmRepository<AutoMessageTemplateRow>(orm, 'AutoMessages'), logger)
   const emailService = new EmailService(emailConfigRepo, emailQueueRepo, logger, notificationRenderer)
+
+  // #270 — el recibo PDF adjunto se genera en el WORKER de la cola, fila por fila, a partir del
+  // marcador `{ kind: 'receipt', reservationId }` que deja `booking-paid-email`. Antes se generaba
+  // en línea dentro de `onBookingPaid`, que el webhook de Stripe y el retorno de Azul/CardNet
+  // esperan con `await`: un Chromium (15 s + 10 s) por pago, sin tope de concurrencia. El mismo
+  // HTML que sirve GET /api/public/reservations/:id/receipt.pdf.
+  emailService.setAttachmentResolver(async (marker) => {
+    if (marker.kind !== 'receipt') return null
+    const identity = await resolvePlatformIdentity(emailConfigRepo)
+    const html = await buildReceiptHtmlFor(orm, marker.reservationId, identity.platformName)
+    if (!html) return null
+    const pdf = await toPdf(html)
+    return { filename: marker.filename, contentType: 'application/pdf', contentBase64: pdf.toString('base64') }
+  })
 
   const reservasForEmail = resolveModule<{ setEmailDeps(es: EmailSender, r: any): void }>('reservas')
   if (reservasForEmail && typeof reservasForEmail.setEmailDeps === 'function') {
@@ -168,9 +193,9 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
   // Lleva plata, fechas CON hora, política y datos del hotel — SIN habitación ni código: la
   // habitación puede reasignarse hasta la víspera, y el pase lo manda `prearrival-pass-cron`.
   //
-  // #270: el recibo PDF adjunto se genera ACÁ y no en el usecase porque `htmlToPdf` es puppeteer
-  // (infraestructura: navegador headless); el usecase sólo recibe un generador y sigue siendo
-  // testeable sin Chromium. El mismo HTML que sirve GET /api/public/reservations/:id/receipt.pdf.
+  // #270: el recibo PDF va como marcador diferido (`attachReceipt`) y lo genera el worker de la
+  // cola — ver `setAttachmentResolver` arriba. Este handler termina en cuanto la fila está
+  // encolada, sin esperar a Chromium.
   const bookingengineForEmail = resolveModule<{ setSockets(s: any): void }>('bookingengine')
   if (bookingengineForEmail && typeof bookingengineForEmail.setSockets === 'function') {
     const configRepo = new OrmRepository<any>(orm, 'Configuration')
@@ -187,11 +212,7 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           notificationsRepo: new OrmRepository<any>(orm, 'Notifications'),
           configRepo,
           publicUrl: process.env.PUBLIC_URL || '',
-          receiptPdf: async (id: string) => {
-            const identity = await resolvePlatformIdentity(configRepo)
-            const html = await buildReceiptHtmlFor(orm, id, identity.platformName)
-            return html ? htmlToPdf(html) : null
-          },
+          attachReceipt: true,
           logger,
         }, reservationId)
       },

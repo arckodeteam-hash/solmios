@@ -9,7 +9,7 @@ import type { FacturasService } from './service'
 import { CreateFacturasSchema, UpdateFacturasSchema, PayFacturasSchema, CreditNoteSchema, EmailInvoiceSchema } from './validators/schema'
 import { renderInvoiceHtml } from './usecases/invoice-template'
 import { hotelHeaderOf } from './usecases/hotel-header'
-import { htmlToPdf, checkPdfRateLimit } from './usecases/pdf'
+import { htmlToPdf, checkPdfRateLimit } from '../../infrastructure/pdf'
 
 export class FacturasController {
   constructor(

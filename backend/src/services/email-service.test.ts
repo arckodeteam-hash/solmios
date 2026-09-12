@@ -256,4 +256,68 @@ describe('EmailService', () => {
       expect(sent.attachments).toEqual([{ filename: 'recibo-ABC123.pdf', content: PDF_BASE64 }])
     })
   })
+
+  // El recibo PDF se genera en el WORKER (fila por fila), no en el request que encola: el marcador
+  // `{ kind: 'receipt', reservationId }` se persiste y el resolutor lo convierte al enviar.
+  describe('adjuntos diferidos (#270)', () => {
+    const PDF_BASE64 = Buffer.from('%PDF-1.4 recibo').toString('base64')
+    const marker = { kind: 'receipt' as const, reservationId: 'res-1', filename: 'recibo-res-1.pdf' }
+    const settle = async (queue: ReturnType<typeof makeQueueRepo>, id: string): Promise<EmailQueueDTO> => {
+      for (let i = 0; i < 50; i++) {
+        const row = queue._store.get(id)!
+        if (row.status === 'sent' || row.status === 'failed') return row
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      throw new Error(`fila ${id} no se procesó`)
+    }
+
+    it('el marcador se persiste tal cual al encolar y el resolutor lo genera recién en el worker', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      const resolved: string[] = []
+      svc.setAttachmentResolver(async (m) => {
+        resolved.push(m.reservationId)
+        return { filename: m.filename, contentType: 'application/pdf', contentBase64: PDF_BASE64 }
+      })
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1', attachments: [marker] })
+      // La fila guarda el marcador, no el PDF: encolar no generó nada.
+      expect(queue._store.get('q-1')!.attachments).toEqual([marker])
+      expect((await settle(queue, 'q-1')).status).toBe('sent')
+      expect(resolved).toEqual(['res-1'])
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments: { filename: string; content: Buffer; contentType: string }[] }
+      expect(mail.attachments).toHaveLength(1)
+      expect(mail.attachments[0].filename).toBe('recibo-res-1.pdf')
+      expect(mail.attachments[0].contentType).toBe('application/pdf')
+      expect(mail.attachments[0].content.equals(Buffer.from(PDF_BASE64, 'base64'))).toBe(true)
+    })
+
+    it('si el resolutor falla el correo sale igual, sin adjunto (best-effort)', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      svc.setAttachmentResolver(async () => { throw new Error('chromium no arranca') })
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1', attachments: [marker] })
+      expect((await settle(queue, 'q-1')).status).toBe('sent')
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments?: unknown[] }
+      expect(mail.attachments).toBeUndefined()
+    })
+
+    it('sin resolutor inyectado el marcador se omite y el correo sale igual', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1', attachments: [marker] })
+      expect((await settle(queue, 'q-1')).status).toBe('sent')
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments?: unknown[] }
+      expect(mail.attachments).toBeUndefined()
+    })
+
+    it('un marcador como JSON string (repo crudo) también se resuelve', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      svc.setAttachmentResolver(async (m) => ({ filename: m.filename, contentType: 'application/pdf', contentBase64: PDF_BASE64 }))
+      await queue.create({ hotelId: 'h1', recipient: 'b@b.com', subject: 's', html: '<p/>', status: 'pending', maxAttempts: 3, attachments: JSON.stringify([marker]) } as any)
+      await svc.processQueue()
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments?: { filename: string }[] }
+      expect(mail.attachments?.[0].filename).toBe('recibo-res-1.pdf')
+    })
+  })
 })
