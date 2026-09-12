@@ -890,6 +890,7 @@ export async function createPublicBookingDirect(
         mealPlanPriceMode: mealPlanLine?.priceMode ?? null,
         mealPlanUnitPrice: mealPlanLine?.unitPrice ?? 0,
         mealPlanTotal: round2(mealPlanTotal),
+        mealPlanPersons: mealPlanLine?.persons ?? null,
         regime: mealPlanLine?.code ?? ROOM_ONLY_CODE,
         totalAmount, deposit: 0,
         // Tarea 24 (#88): el desglose que el huésped vio y aceptó se guarda con la reserva, para

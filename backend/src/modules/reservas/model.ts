@@ -82,6 +82,11 @@ export const ReservasModel: ModelDefinition = {
     mealPlanPriceMode: { type: 'string' },
     mealPlanUnitPrice: { type: 'number', default: 0 },
     mealPlanTotal: { type: 'number', default: 0 },
+    // Personas que pagaron el régimen (adultos + niños con plaza, sin bebés) al reservar. Se
+    // persiste porque derivarlas de `mealPlanTotal ÷ (unitPrice × noches)` con las fechas
+    // ACTUALES inventa un número al reagendar. Sin default ni backfill: `null` en reservas
+    // anteriores a la columna → el panel no muestra personas.
+    mealPlanPersons: { type: 'number' },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },

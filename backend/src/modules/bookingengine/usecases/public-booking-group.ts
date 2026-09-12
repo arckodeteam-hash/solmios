@@ -696,6 +696,7 @@ export async function createPublicBookingGroup(
             mealPlanPriceMode: line.mealPlan?.priceMode ?? null,
             mealPlanUnitPrice: line.mealPlan?.unitPrice ?? 0,
             mealPlanTotal: line.mealPlan?.total ?? 0,
+            mealPlanPersons: line.mealPlan?.persons ?? null,
             regime: line.mealPlan?.code ?? ROOM_ONLY_CODE,
             // Cada fila lleva SU propio importe (para que folios/reportes sumen bien) — el
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).

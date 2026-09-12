@@ -190,7 +190,9 @@ export const UpdateUpsellSchema: Record<string, BodyRule> = {
 export const UpsertMealPlanSchema: Record<string, BodyRule> = {
   active: { type: 'boolean' as const },
   priceMode: { type: 'string' as const },
-  price: { type: 'number' as const },
+  // `min: 0` acá → 400 en el borde (el usecase lo vuelve a chequear, pero un precio negativo no
+  // tiene por qué llegar hasta él).
+  price: { type: 'number' as const, min: 0 },
 }
 
 // ─── Calendario público de tarifas ─────────────────────────────────────────
