@@ -138,6 +138,17 @@ async function bumpAdults(times = 1): Promise<void> {
 async function bumpChildren(times = 1): Promise<void> {
   for (let i = 0; i < times; i++) { plusButtons()[1]!.click(); await flushPromises() }
 }
+/** Los "−" del paso, mismo orden que `plusButtons` (Adultos, Niños). #343 — la tarjeta conserva
+ *  lo agregado, así que bajar es la única forma de volver a 1 adulto / 0 niños. */
+function minusButtons(): HTMLButtonElement[] {
+  return Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent?.trim() === '−')
+}
+async function lowerAdults(times = 1): Promise<void> {
+  for (let i = 0; i < times; i++) { minusButtons()[0]!.click(); await flushPromises() }
+}
+async function lowerChildren(times = 1): Promise<void> {
+  for (let i = 0; i < times; i++) { minusButtons()[1]!.click(); await flushPromises() }
+}
 
 function addRoomButton(): HTMLButtonElement {
   return Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes('Agregar esta habitación'))!
@@ -327,10 +338,10 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     await flushPromises()
     await clickAddRoom()
 
-    // El composer se resetea tras agregar — arma la segunda composición desde cero.
+    // #343 — la tarjeta conserva la habitación 1 (1 adulto + niño de 8): se suben 2 adultos y se
+    // cambia la edad del niño que ya está.
     // Habitación 2: 3 adultos + 1 niño de 9 (con plaza) → chargeable 3+1=4 (available, $480).
     await bumpAdults(2)
-    await bumpChildren(1)
     document.body.querySelector<HTMLSelectElement>('select')!.value = '9'
     document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
     await flushPromises()
@@ -562,8 +573,13 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       await composeBabyAndPaying() // 1 adulto + [1, 8]
       await clickAddRoom()
       expect(store.cart).toHaveLength(1)
-      // El composer se reseteó tras agregar (1 adulto / 0 niños → sin desplegables de edad).
+      // #343 — la tarjeta conserva lo agregado (2 niños). Para probar que Editar RESTAURA lo
+      // guardado, el huésped la cambia antes: quita los dos niños y sube a 2 adultos.
+      expect(document.body.querySelectorAll('select')).toHaveLength(2)
+      await lowerChildren(2)
+      await bumpAdults(1)
       expect(document.body.querySelectorAll('select')).toHaveLength(0)
+      expect(document.body.querySelector('[aria-label="Familiar · Adultos: 2"]')).not.toBeNull()
 
       const edit = document.body.querySelector<HTMLButtonElement>('[data-testid="cart-edit"]')!
       expect(edit).not.toBeNull()
@@ -588,10 +604,12 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       const store = useBookingStore()
       await bumpAdults(1) // 2 adultos, sin niños → "para 2"
       await clickAddRoom()
-      await bumpAdults(1)
-      await clickAddRoom()
+      await clickAddRoom() // #343 — la tarjeta sigue en 2 adultos: misma línea, quantity 2
       expect(store.cart).toHaveLength(1)
       expect(store.cart[0]!.quantity).toBe(2)
+      // Se cambia la tarjeta antes de editar para probar que Editar RESTAURA los 2 adultos.
+      await lowerAdults(1)
+      expect(document.body.querySelector('[aria-label="Familiar · Adultos: 1"]')).not.toBeNull()
 
       document.body.querySelector<HTMLButtonElement>('[data-testid="cart-edit"]')!.click()
       await flushPromises()
@@ -675,8 +693,10 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       await flushPromises()
       await clickAddRoom()
 
-      // Habitación 2: 1 adulto (default tras reset) + niños de 6 y 10 (con plaza).
-      await bumpChildren(2)
+      // Habitación 2: 1 adulto + niños de 6 y 10 (con plaza). #343 — la tarjeta conserva la
+      // habitación 1 (2 adultos + 1 niño): se baja un adulto y se suma un niño explícitamente.
+      await lowerAdults(1)
+      await bumpChildren(1)
       const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
       selects[0]!.value = '6'
       selects[0]!.dispatchEvent(new Event('change'))
@@ -705,7 +725,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       await flushPromises()
       await clickAddRoom()
 
-      await bumpChildren(1) // otra vez 1 adulto + 1 niño, edad DISTINTA
+      // #343 — la tarjeta conserva 1 adulto + 1 niño: solo se cambia la edad (DISTINTA).
       document.body.querySelector<HTMLSelectElement>('select')!.value = '9'
       document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
       await flushPromises()
