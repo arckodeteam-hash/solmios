@@ -27,8 +27,9 @@ el id de la reserva que ocupa (`availability.ts:36`).
 
 - GIVEN la habitación H1 con reserva activa del 2026-09-10 al 2026-09-15
 - WHEN se crea una reserva de H1 del 2026-09-12 al 2026-09-18
-- THEN el backend responde 409 con "Habitación no disponible en esas fechas (ocupada del
-  2026-09-10 al 2026-09-15 por la reserva {id})"
+- THEN el backend responde 409 `room_overlap` ("La habitación ya está ocupada esas noches", con
+  `conflictReservationId`, `from`, `to`) — el chequeo por unidad vive en `assign-room.ts`
+  (`assertNoRoomConflict`, REQ-HAC-02); antes de eso el TIPO ya tuvo que tener lugar (`availableOfType`)
 - AND no se persiste ninguna reserva nueva
 
 #### Scenario: Back-to-back el mismo día permitido
@@ -888,6 +889,50 @@ best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
 - **GIVEN** una reserva web pagada sin `roomId`
 - **WHEN** llega `onPaymentRequestPaid`
 - **THEN** 0 códigos; al asignarle habitación → 1 código activo
+
+### Requirement: Disponibilidad por tipo que cuenta reservas sin asignar (REQ-HAC-02, #257)
+
+**Fuente única (`shared/usecases/type-availability.ts`).** `availableOfType(port, hotelId, roomType,
+checkIn, checkOut, opts?)` → `{ rooms, booked, available, perNight }`. `rooms` = unidades del tipo con
+`isRoomSellable(status)` (una en `maintenance`/`out_of_order` no cuenta). `booked(noche)` = reservas
+del hotel del mismo `roomType` en estado bloqueante (`pending`, `confirmed`, `checked_in`) que solapan
+esa noche — **asignadas o no** (`reservationOccupiesType`: con `roomId` manda la unidad física; sin
+`roomId` manda `roomType`) — más los `RoomBlocks` de unidades del tipo. `available = rooms − booked`
+por noche; la estadía entra si `min(available) ≥ n`. `opts.excludeReservationId` excluye la propia
+reserva al reprogramar. Las consultas son acotadas (`Rooms {hotelId, type}`, `Reservations {hotelId,
+roomType}`), nunca la tabla entera; el core (`countAvailableOfType`) filtra en memoria por tipo.
+`daily-availability.ts` (rangos para Channex) comparte el mismo motor por noche.
+
+**Quién decide por tipo.** El motor público (`public-booking.ts`, `public-booking-group.ts`,
+`AvailabilityUseCase`), el alta desde el panel (`crud.ts`), la reprogramación (`reschedule.ts`) y la
+ingesta OTA (`booking-ingestion.ts`) MUST decidir la disponibilidad con `availableOfType`; el widget y el
+grupo responden 409 `No hay habitaciones de este tipo disponibles para esas fechas` / `Solo hay N ...`
+cuando `available < cantidad`, y el panel 409 `type_sold_out`. El solape **por habitación** queda
+SOLO en el camino de asignar (`assign-room.ts` → `assertNoRoomConflict`); `assertRoomAvailable` y el
+`hasOverlap` del widget dejan de existir. Mientras el alta del panel siga exigiendo `roomId`, la
+unidad se valida después del tipo con `assertNoRoomConflict` (409 `room_overlap`). La ingesta OTA
+elige la primera unidad vendible no ocupada del tipo y, si no hay ninguna, igual crea la reserva
+marcando `⚠ OVERBOOKING` en las notas (nunca dropea un booking OTA).
+
+#### Scenario: Tres unidades, tres reservas sin asignar
+- **GIVEN** un tipo con 3 unidades vendibles y 3 reservas `confirmed` sin `roomId` con ese `roomType` que solapan la estadía
+- **WHEN** se consulta `availableOfType`
+- **THEN** `available` es 0 y un cuarto pedido del tipo rebota 409 en widget, grupo y panel
+
+#### Scenario: Mezcla de asignadas y sin asignar
+- **GIVEN** 3 unidades, 2 reservas asignadas a unidades del tipo y 1 sin asignar del mismo tipo
+- **WHEN** se pide una más
+- **THEN** 409: `booked` es 3 y `available` 0
+
+#### Scenario: Unidad fuera de servicio y grupo que no entra
+- **GIVEN** 3 unidades con una en `maintenance` y 1 reserva activa
+- **WHEN** un grupo pide 2 del tipo
+- **THEN** `rooms` es 2, `available` 1 y el grupo rebota 409 con `available: 1`
+
+#### Scenario: Reprogramar no choca consigo misma
+- **GIVEN** 1 unidad y la propia reserva ocupándola
+- **WHEN** se cotiza el reagendo con `excludeReservationId`
+- **THEN** `available` es 1 y el reagendo es posible
 
 ### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
 
