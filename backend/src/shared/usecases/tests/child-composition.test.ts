@@ -7,6 +7,7 @@ import {
   resolveChildComposition, fitsRoomCapacity, DEFAULT_CHILD_POLICY, type ChildPolicy,
   projectAge, projectChildrenAges, recoverRawAdults, composeFromPersistedReservation,
   classifyAge, describeChildrenAges, resolveAdminCapacityComposition, resolveChildPolicy,
+  freeChildrenLimitError,
 } from '../child-composition'
 
 // Ejemplo textual del pedido: "Aceptar niños: Sí, edad máxima niño: 12, edad máxima sin plaza: 3"
@@ -397,6 +398,72 @@ describe('resolveChildPolicy — parseo de maxBabyAge', () => {
     expect(p1.maxBabyAge).toBe(0)
     const p2 = await resolveChildPolicy(repoWith({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 5 }), 'h1')
     expect(p2.maxBabyAge).toBe(0)
+  })
+})
+
+// ─── REQ-03 (#235) — Máximo de niños que no consumen plaza por habitación ──────────────────────
+// Sin configurar = sin límite (nunca un default numérico). Cuenta `freeChildren` (bebés
+// incluidos), que siguen sin consumir plaza; aplica a CADA habitación.
+describe('REQ-03 (#235) — freeChildrenLimitError', () => {
+  it('sin límite (null o ausente): nunca hay error, aunque haya muchos niños libres', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: null }, { freeChildren: 7 })).toBeNull()
+    expect(freeChildrenLimitError({}, { freeChildren: 7 })).toBeNull()
+    expect(freeChildrenLimitError(DEFAULT_CHILD_POLICY, { freeChildren: 7 })).toBeNull()
+  })
+
+  it('max 2 con 3 libres: motivo que nombra el tope y la cantidad', () => {
+    const err = freeChildrenLimitError({ maxFreeChildrenPerRoom: 2 }, { freeChildren: 3 })
+    expect(typeof err).toBe('string')
+    expect(err).toContain('no consumen plaza')
+    expect(err).toContain('2')
+    expect(err).toContain('3')
+  })
+
+  it('max 2 con 2 libres (límite incluido): entra', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 2 }, { freeChildren: 2 })).toBeNull()
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 2 }, { freeChildren: 0 })).toBeNull()
+  })
+
+  it('max 0 con 1 libre: error (0 es un límite válido, no "sin límite")', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 0 }, { freeChildren: 1 })).toContain('no consumen plaza')
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 0 }, { freeChildren: 0 })).toBeNull()
+  })
+
+  it('los bebés cuentan para el tope (están dentro de freeChildren) pero no para capacidad', () => {
+    const policy: ChildPolicy = { ...POLICY, maxBabyAge: 1, maxFreeChildrenPerRoom: 1 }
+    const c = resolveChildComposition(2, [0, 3], policy)
+    expect(c.freeChildren).toBe(2)
+    expect(c.babies).toBe(1)
+    expect(c.chargeableOccupancy).toBe(2)
+    expect(fitsRoomCapacity({ capacity: 2 }, c)).toBe(true)
+    expect(freeChildrenLimitError(policy, c)).toContain('no consumen plaza')
+  })
+})
+
+describe('REQ-03 (#235) — resolveChildPolicy: parseo de maxFreeChildrenPerRoom', () => {
+  function repoWith(value: unknown) {
+    return { findOne: async () => (value === undefined ? null : { hotelId: 'h1', key: 'child_policy', value }) } as any
+  }
+  const base = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 0 }
+
+  it('sin fila / sin campo / null: null = sin límite (nunca un default numérico)', async () => {
+    expect(DEFAULT_CHILD_POLICY.maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith(undefined), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith(base), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: null }), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+  })
+
+  it('configurado 2: se respeta; 0 también es un valor válido', async () => {
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: 2 }), 'h1')).maxFreeChildrenPerRoom).toBe(2)
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: 0 }), 'h1')).maxFreeChildrenPerRoom).toBe(0)
+    expect((await resolveChildPolicy(repoWith(JSON.stringify({ ...base, maxFreeChildrenPerRoom: 2 })), 'h1')).maxFreeChildrenPerRoom).toBe(2)
+  })
+
+  it('negativo / no numérico: null (defensa en profundidad); 2.7 → 2 (floor)', async () => {
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: -1 }), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: 'x' }), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: '' }), 'h1')).maxFreeChildrenPerRoom).toBeNull()
+    expect((await resolveChildPolicy(repoWith({ ...base, maxFreeChildrenPerRoom: 2.7 }), 'h1')).maxFreeChildrenPerRoom).toBe(2)
   })
 })
 
