@@ -6,16 +6,25 @@
 //   2. Mismo tipo ×N (el caso literal original: "Deluxe × 2").
 //   3. Pedir más unidades de las que hay libres → 409 con el máximo real.
 //   4. Techo defensivo (MAX_GROUP_UNITS).
-//   5. Anti-doble-claim: 2 líneas del MISMO tipo (distinta ocupación) no se pueden llevar la
-//      MISMA unidad física.
+//   5. Anti-doble-claim: 2 líneas del MISMO tipo (distinta ocupación) suman contra el
+//      inventario del tipo (no hay unidad física que repartir).
 //   6. Promo se aplica UNA vez sobre el subtotal combinado, no por línea.
 //   7. Stripe: 1 sola Checkout Session, sobre la reserva LÍDER, por el total combinado.
 //   8. #270: `priceBreakdown.upsells` (snapshot por línea, MR-10) en la LÍDER y
 //      estimatedArrival/specialRequests estructurados en TODAS las filas del grupo.
+//
+// REQ-HAC-05 (#260): el grupo nace POR TIPO sin unidad — cada fila lleva `roomType` y
+// `roomId: null` (la habitación se asigna al check-in). Las filas se crean en el orden de las
+// líneas del body, así que `byLine(tables)[i]` es la fila de la línea i (antes se indexaba por
+// `roomId`). La cobertura específica del alta por tipo vive en `public-booking-group-by-type.test.ts`.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingGroup, MAX_GROUP_UNITS } from '../usecases/public-booking-group'
 
 const HOTEL_ID = 'h1'
+
+/** REQ-HAC-05 — las filas se crean en el orden de las líneas del body (una línea → `quantity`
+ *  filas consecutivas); con quantity 1 por línea, `byLine(tables)[i]` es la fila de la línea i. */
+const byLine = (tables: Record<string, any[]>) => tables.Reservations
 
 /** ORM en memoria REAL (mismo patrón que el e2e pricing↔bookingengine de esta sesión): las
  *  aserciones leen directo de `tables`, no de un mock por-tabla estático. */
@@ -270,7 +279,8 @@ describe('createPublicBookingGroup — mismo tipo ×N (caso literal original)', 
     })
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    expect(new Set(tables.Reservations.map((r: any) => r.roomId)).size).toBe(2) // 2 unidades DISTINTAS
+    // REQ-HAC-05 — 2 filas del TIPO, sin unidad: la habitación la asigna recepción.
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'deluxe')).toBe(true)
   })
 
   it('pide ×4 con solo 3 libres → 409 informando el máximo real (3)', async () => {
@@ -302,9 +312,9 @@ describe('createPublicBookingGroup — techo defensivo y anti-doble-claim', () =
     expect(res.status).toBe(400)
   })
 
-  it('2 líneas del MISMO tipo (distinta ocupación) no se reparten la MISMA unidad física', async () => {
+  it('2 líneas del MISMO tipo (distinta ocupación) suman contra el inventario del tipo', async () => {
     // Solo 1 habitación deluxe físicamente — pedir "para 2 ×1" + "para 4 ×1" del mismo tipo
-    // no puede satisfacerse con una sola unidad.
+    // no puede satisfacerse con una sola unidad (la segunda línea descuenta lo que reclamó la primera).
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'deluxe', capacity: 4, basePrice: 100, status: 'available' }],
     })
@@ -335,7 +345,7 @@ describe('createPublicBookingGroup — techo defensivo y anti-doble-claim', () =
     })
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    expect(new Set(tables.Reservations.map((r: any) => r.roomId)).size).toBe(2)
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'deluxe')).toBe(true)
   })
 })
 
@@ -385,7 +395,7 @@ describe('createPublicBookingGroup — capacidad física (defensa en profundidad
     expect(tables.Groups).toHaveLength(0)
   })
 
-  it('capacidad MIXTA: solo cuenta/asigna las unidades que SÍ entran, no las más baratas sin más', async () => {
+  it('capacidad MIXTA: solo cuenta las unidades que SÍ entran; las filas nacen sin unidad (HAC-05)', async () => {
     const { orm, tables } = makeDb({
       rooms: [
         { id: 'r-chica', hotelId: HOTEL_ID, type: 'familiar', capacity: 2, basePrice: 80, status: 'available' },
@@ -399,8 +409,9 @@ describe('createPublicBookingGroup — capacidad física (defensa en profundidad
     })
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    // 'r-chica' (capacity 2) nunca podía entrar en la línea "para 4" aunque fuera la más barata.
-    expect(tables.Reservations.map((r: any) => r.roomId).sort()).toEqual(['r-grande-1', 'r-grande-2'])
+    // 'r-chica' (capacity 2) nunca podía entrar en la línea "para 4": hay exactamente 2 unidades
+    // que la admiten, así que ×2 pasa. REQ-HAC-05: no se elige cuál — recepción asigna después.
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'familiar')).toBe(true)
   })
 
   it('con capacidad mixta, pedir más unidades grandes de las que hay → 409 con el máximo real (no cuenta las chicas)', async () => {
@@ -455,19 +466,19 @@ describe('createPublicBookingGroup — childrenAges por línea', () => {
 
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    const [lineA, lineB] = byLine(tables)
     // Línea 1 (niño libre): sigue costando "para 2" — 2 noches × $100 = $200.
-    expect(byRoom['r-a'].childrenAges).toEqual([2])
-    expect(byRoom['r-a'].totalAmount).toBe(200)
+    expect(lineA.childrenAges).toEqual([2])
+    expect(lineA.totalAmount).toBe(200)
     // Línea 2 (niño con plaza): cotiza "para 3" — sin tarifas cargadas cae al basePrice × noches
     // igual (el fallback no distingue ocupación), pero la composición sigue quedando registrada.
-    expect(byRoom['r-b'].childrenAges).toEqual([8])
-    expect(byRoom['r-b'].adults).toBe(2)
-    expect(byRoom['r-b'].children).toBe(1)
+    expect(lineB.childrenAges).toEqual([8])
+    expect(lineB.adults).toBe(2)
+    expect(lineB.children).toBe(1)
     // Requerimiento 12 (edad de referencia, 2026-09-03) — cada línea con edades ancla su propio
     // `childrenAgesAsOf` al checkIn del grupo, para poder proyectar si se reagenda esa reserva.
-    expect(byRoom['r-a'].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
-    expect(byRoom['r-b'].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
+    expect(lineA.childrenAgesAsOf).toBe(BASE_BODY.checkIn)
+    expect(lineB.childrenAgesAsOf).toBe(BASE_BODY.checkIn)
   })
 
   it('hotel con "aceptar niños" apagado → 400, ninguna reserva se crea', async () => {
@@ -535,8 +546,9 @@ describe('createPublicBookingGroup — childrenAges por línea', () => {
       expect(r.childrenAges).toEqual([2, 8])
       expect(r.children).toBe(2) // 1 libre + 1 con plaza, ninguno se perdió al expandir
     }
-    // Ninguna de las 3 comparte roomId — son 3 UNIDADES reales, no una fila repetida.
-    expect(new Set(tables.Reservations.map((r: any) => r.roomId)).size).toBe(3)
+    // REQ-HAC-05 — 3 filas del tipo, sin unidad (ids distintos: son 3 reservas, no una repetida).
+    expect(new Set(tables.Reservations.map((r: any) => r.id)).size).toBe(3)
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'familiar')).toBe(true)
   })
 })
 
@@ -655,13 +667,13 @@ describe('createPublicBookingGroup — Tarea "Cobro % niños", POR LÍNEA', () =
     }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) } as any)
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    const [lineA, lineB] = byLine(tables)
     // Línea A: adultsTotal=100 (occ=1), niño = 50% de 100 = 50 → total 150.
-    expect(byRoom['r-a'].totalAmount).toBe(150)
+    expect(lineA.totalAmount).toBe(150)
     // Línea B: adultsTotal=180 (occ=2), "valor de un adulto" = 180/2 = 90, niño = 45 → total 225.
-    expect(byRoom['r-b'].totalAmount).toBe(225)
-    expect(byRoom['r-a'].childrenRatePercentApplied).toBe(50)
-    expect(byRoom['r-b'].childrenRatePercentApplied).toBe(50)
+    expect(lineB.totalAmount).toBe(225)
+    expect(lineA.childrenRatePercentApplied).toBe(50)
+    expect(lineB.childrenRatePercentApplied).toBe(50)
   })
 
   it('bebé en una línea no recibe la regla, aunque otra línea del MISMO grupo sí tenga un niño con plaza', async () => {
@@ -674,11 +686,11 @@ describe('createPublicBookingGroup — Tarea "Cobro % niños", POR LÍNEA', () =
       ],
     }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) } as any)
     expect(res.status).toBe(201)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-a'].totalAmount).toBe(100) // solo el adulto (occ=1), el bebé no se cobra
-    expect(byRoom['r-a'].childrenRatePercentApplied).toBeNull()
-    expect(byRoom['r-b'].totalAmount).toBe(150) // 100 + 50% de 100
-    expect(byRoom['r-b'].childrenRatePercentApplied).toBe(50)
+    const [lineA, lineB] = byLine(tables)
+    expect(lineA.totalAmount).toBe(100) // solo el adulto (occ=1), el bebé no se cobra
+    expect(lineA.childrenRatePercentApplied).toBeNull()
+    expect(lineB.totalAmount).toBe(150) // 100 + 50% de 100
+    expect(lineB.childrenRatePercentApplied).toBe(50)
   })
 
   it('quantity=2 (misma línea expandida a 2 unidades físicas): AMBAS aplican el mismo split de precio', async () => {
@@ -849,11 +861,11 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
 
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-a'].childrenAges).toEqual([2])
-    expect(byRoom['r-a'].totalAmount).toBe(200) // niño libre no sube la ocupación
-    expect(byRoom['r-b'].childrenAges).toEqual([8])
-    expect(byRoom['r-b'].totalAmount).toBe(300) // niño con plaza SÍ la sube
+    const [lineA, lineB] = byLine(tables)
+    expect(lineA.childrenAges).toEqual([2])
+    expect(lineA.totalAmount).toBe(200) // niño libre no sube la ocupación
+    expect(lineB.childrenAges).toEqual([8])
+    expect(lineB.totalAmount).toBe(300) // niño con plaza SÍ la sube
     // El total del Group es la SUMA de ambas líneas a su propio precio — no 2×200 ni 2×300.
     expect(tables.Groups[0].totalAmount).toBe(500)
   })
@@ -882,12 +894,12 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
     }, undefined, undefined, fakeStripe as any, undefined, stripeUrls, { config: childPolicyConfigRepo() })
 
     expect(res.status).toBe(201)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-a'].adults).toBe(3)
-    expect(byRoom['r-a'].children).toBe(0)
-    expect(byRoom['r-a'].totalAmount).toBe(300)
-    expect(byRoom['r-b'].adults).toBe(2)
-    expect(byRoom['r-b'].totalAmount).toBe(200)
+    const [lineA, lineB] = byLine(tables)
+    expect(lineA.adults).toBe(3)
+    expect(lineA.children).toBe(0)
+    expect(lineA.totalAmount).toBe(300)
+    expect(lineB.adults).toBe(2)
+    expect(lineB.totalAmount).toBe(200)
   })
 })
 
@@ -922,11 +934,11 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
     }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
 
     expect(res.status).toBe(201)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-a'].needsCrib).toBe(true)
-    expect(byRoom['r-a'].cribCount).toBe(1)
-    expect(byRoom['r-b'].needsCrib).toBe(false)
-    expect(byRoom['r-b'].cribCount).toBe(0)
+    const [lineA, lineB] = byLine(tables)
+    expect(lineA.needsCrib).toBe(true)
+    expect(lineA.cribCount).toBe(1)
+    expect(lineB.needsCrib).toBe(false)
+    expect(lineB.cribCount).toBe(0)
   })
 
   it('tipo SIN custom:cuna: la línea no recibe cuna, aunque tenga bebé y lo pida', async () => {
@@ -957,7 +969,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
     expect(tables.Reservations[0].cribCount).toBe(1)
   })
 
-  it('quantity>1: cada unidad física de la línea recibe la MISMA solicitud de cuna', async () => {
+  it('quantity>1: cada fila de la línea recibe la MISMA solicitud de cuna', async () => {
     const { orm, tables } = makeDb({
       rooms: [
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },

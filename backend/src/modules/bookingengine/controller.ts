@@ -495,6 +495,8 @@ export class BookingengineController {
       this.service, this.logger,
       stripeUrls,
       extraDeps,
+      // REQ-HAC-05 — las filas del grupo nacen por tipo: el push a las OTAs va por `roomType`.
+      this.pushAvailabilityByType,
     )
     // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
     // directo a Reservations, sin pasar por el CRUD de `reservas`.

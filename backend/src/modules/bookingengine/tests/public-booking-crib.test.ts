@@ -8,7 +8,8 @@
 // el resto de las custom) se resuelven contra la UNIÓN de `RoomAmenities` de las unidades
 // vendibles del tipo; un `roomId` en el body sólo deriva el tipo. Ya no se "prefiere la unidad
 // con cuna": si alguna del tipo la ofrece, se cobra, y recepción asigna esa unidad al check-in.
-// El grupo (`createPublicBookingGroup`) sigue asignando unidad hasta su propia subtarea.
+// El grupo (`createPublicBookingGroup`) hace lo mismo por línea: todas las filas de una línea
+// llevan el mismo snapshot (unión del tipo) y nacen sin unidad.
 //
 // Cubre:
 //  (a) tipo SIN `custom:cuna`, bebé + needsCrib:true → needsCrib false, cribCount 0, sin línea.
@@ -27,8 +28,8 @@
 //      (needsCrib true) y la fila nace sin unidad. Con `roomId` explícito A → mismo resultado
 //      (sólo deriva el tipo). (g3): si NINGUNA unidad del tipo tiene cuna → needsCrib false SIN
 //      línea de cuna (antes persistía needsCrib=true + "Cuna: solicitada" sin línea).
-//  (h) lo mismo en grupo: quantity 1 → B con cuna; quantity 2 → B needsCrib true, A false, cada
-//      fila espejo exacto de su propio snapshot.
+//  (h) lo mismo en grupo: quantity 1 → fila sin unidad con cuna + jacuzzi (unión del tipo);
+//      quantity 2 → las DOS filas con el mismo snapshot, cada una espejo exacto de él.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
@@ -348,15 +349,17 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     }, logger)
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-double'].needsCrib).toBe(true)
-    expect(byRoom['r-double'].cribCount).toBe(1)
-    expect(byRoom['r-double'].roomAmenities).toEqual([CUNA])
-    expect(byRoom['r-double'].roomAmenitiesTotal).toBe(15)
-    expect(byRoom['r-suite'].needsCrib).toBe(false)
-    expect(byRoom['r-suite'].cribCount).toBe(0)
-    expect(byRoom['r-suite'].roomAmenities).toEqual([])
-    expect(byRoom['r-suite'].roomAmenitiesTotal).toBe(0)
+    // HAC-05: filas en el orden de las líneas, sin unidad, con el tipo de su línea.
+    expect(tables.Reservations.every((r: any) => r.roomId === null)).toBe(true)
+    const byType = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomType, r]))
+    expect(byType['double'].needsCrib).toBe(true)
+    expect(byType['double'].cribCount).toBe(1)
+    expect(byType['double'].roomAmenities).toEqual([CUNA])
+    expect(byType['double'].roomAmenitiesTotal).toBe(15)
+    expect(byType['suite'].needsCrib).toBe(false)
+    expect(byType['suite'].cribCount).toBe(0)
+    expect(byType['suite'].roomAmenities).toEqual([])
+    expect(byType['suite'].roomAmenitiesTotal).toBe(0)
     // 100×2 + 150×2 + 15.
     const tb = res.body.totalBreakdown
     expect(tb.roomAmenitiesTotal).toBe(15)
@@ -373,7 +376,7 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     }
   })
 
-  it('(h) revisor: A jacuzzi / B cuna, línea con jacuzzi + cuna + bebé (quantity 1) → se asigna B con cuna cobrada', async () => {
+  it('(h) revisor: A jacuzzi / B cuna, línea con jacuzzi + cuna + bebé (quantity 1) → HAC-05: la unión del tipo ofrece las dos, se cobran ambas y la fila nace sin unidad', async () => {
     const { orm, tables } = jacuzziVsCribDb()
     const { logger, warns } = makeLogger()
     const res = await group(orm, {
@@ -382,18 +385,20 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(1)
     const saved = tables.Reservations[0]
-    expect(saved.roomId).toBe('r-crib')
+    expect(saved.roomId).toBeNull()
+    expect(saved.roomType).toBe('double')
     expect(saved.needsCrib).toBe(true)
     expect(saved.cribCount).toBe(1)
-    expect(saved.roomAmenities).toEqual([CUNA])
-    expect(saved.roomAmenitiesTotal).toBe(15)
+    expect(saved.roomAmenities).toEqual([JACUZZI, CUNA])
+    expect(saved.roomAmenitiesTotal).toBe(55)
+    // Habitación al MÍNIMO basePrice del tipo (80, lo que `/rates` publica) × 2 noches + 55.
     expect(res.body.totalBreakdown.subtotal).toBe(215)
     expect(saved.notes).toContain('Cuna: double')
     expectCribMirrorsSnapshot(saved)
     expect(warns.some((w) => w.includes('cuna pedida'))).toBe(false)
   })
 
-  it('(h2) revisor: misma línea con quantity 2 → B needsCrib true (cuna), A needsCrib false (jacuzzi); cada fila espejo de SU snapshot', async () => {
+  it('(h2) revisor: misma línea con quantity 2 → las DOS filas con el mismo snapshot (cuna + jacuzzi), cada una espejo de él', async () => {
     const { orm, tables } = jacuzziVsCribDb()
     const { logger, warns } = makeLogger()
     const res = await group(orm, {
@@ -401,22 +406,22 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     }, logger)
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-crib'].needsCrib).toBe(true)
-    expect(byRoom['r-crib'].cribCount).toBe(1)
-    expect(byRoom['r-crib'].roomAmenities).toEqual([CUNA])
-    expect(byRoom['r-jacuzzi'].needsCrib).toBe(false)
-    expect(byRoom['r-jacuzzi'].cribCount).toBe(0)
-    expect(byRoom['r-jacuzzi'].roomAmenities).toEqual([JACUZZI])
-    for (const r of tables.Reservations) expectCribMirrorsSnapshot(r)
-    // Amenidades: 15 (cuna en B) + 40 (jacuzzi en A). El precio de la línea sale de la primera
-    // unidad elegida (B, 100) × 2 unidades × 2 noches = 400 (criterio del flujo de grupo, previo).
-    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(55)
-    expect(res.body.totalBreakdown.subtotal).toBe(455)
+    for (const r of tables.Reservations) {
+      expect(r.roomId).toBeNull()
+      expect(r.roomType).toBe('double')
+      expect(r.needsCrib).toBe(true)
+      expect(r.cribCount).toBe(1)
+      expect(r.roomAmenities).toEqual([JACUZZI, CUNA])
+      expect(r.roomAmenitiesTotal).toBe(55)
+      expectCribMirrorsSnapshot(r)
+    }
+    // Amenidades: (40 jacuzzi + 15 cuna) × 2 filas = 110. Habitación: 80 × 2 unidades × 2 noches = 320.
+    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(110)
+    expect(res.body.totalBreakdown.subtotal).toBe(430)
     // Las notas son del GRUPO (compartidas por todas las filas): el vistazo dice qué tipo la recibió.
     expect(tables.Reservations[0].notes).toContain('Cuna: double')
-    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: double: Cuna=15.00, Jacuzzi=40.00')
-    expect(warns.some((w) => w.includes('cuna pedida pero la unidad asignada no la ofrece'))).toBe(true)
+    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: double: Jacuzzi=80.00, Cuna=30.00')
+    expect(warns.some((w) => w.includes('cuna pedida'))).toBe(false)
   })
 
   it('(e2) línea con cuna pero needsCrib:false y la key en roomAmenities → sin cuna; childAmenities por línea se ignora', async () => {

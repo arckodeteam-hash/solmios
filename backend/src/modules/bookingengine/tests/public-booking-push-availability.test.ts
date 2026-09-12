@@ -2,10 +2,10 @@
 //
 // Antes había un connector `booking-channex` suscripto a `onBookingCreated` que exigía
 // `status === 'confirmed'` — y la reserva pública nace SIEMPRE `pending`, así que nunca empujaba.
-// El push real es el callback `pushAvailability` que reciben `createPublicBookingDirect` y
-// `createPublicBookingGroup`: una llamada por unidad física asignada, con el roomId resuelto.
-// REQ-HAC-05 (#260): la reserva individual nace SIN unidad (`roomId` null), así que el usecase
-// directo empuja por TIPO (`pushAvailabilityByType`, 9.º arg) y NO invoca al callback por unidad.
+// El push real lo disparan `createPublicBookingDirect` y `createPublicBookingGroup`.
+// REQ-HAC-05 (#260): la reserva (individual y de grupo) nace SIN unidad (`roomId` null), así que
+// ambos usecases empujan por TIPO (`pushAvailabilityByType`, 9.º arg) — una vez por tipo distinto,
+// no por fila — y NO invocan al callback legado por unidad (`pushAvailability`).
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
@@ -104,7 +104,7 @@ describe('#276 — pushAvailability lo dispara el usecase, una vez por habitaci�
     expect(pushCalls).toHaveLength(0)
   })
 
-  it('grupo de 3 habitaciones → 3 pushes, uno por roomId distinto', async () => {
+  it('grupo de 3 habitaciones (deluxe ×2 + standard ×1) → 2 pushes POR TIPO (uno por tipo distinto, HAC-05); ninguno por unidad', async () => {
     const { orm, tables } = makeDb({
       rooms: [
         { id: 'r-deluxe-1', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' },
@@ -113,6 +113,7 @@ describe('#276 — pushAvailability lo dispara el usecase, una vez por habitaci�
       ],
     })
     const { pushCalls, pushAvailability } = makePush()
+    const { pushTypeCalls, pushAvailabilityByType } = makePushByType()
 
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -120,15 +121,17 @@ describe('#276 — pushAvailability lo dispara el usecase, una vez por habitaci�
         { roomType: 'deluxe', adults: 2, quantity: 2 },
         { roomType: 'standard', adults: 2, quantity: 1 },
       ],
-    }, pushAvailability, undefined, fakeStripe as any, undefined, stripeUrls)
+    }, pushAvailability, undefined, fakeStripe as any, undefined, stripeUrls, undefined, pushAvailabilityByType)
 
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(3)
-    expect(pushCalls).toHaveLength(3)
-    expect(pushCalls.every((c) => c.hotelId === HOTEL_ID)).toBe(true)
-    const pushedRooms = pushCalls.map((c) => c.roomId).sort()
-    expect(new Set(pushedRooms).size).toBe(3)
-    expect(pushedRooms).toEqual(tables.Reservations.map((r: any) => r.roomId).sort())
-    expect(pushedRooms).toEqual(['r-deluxe-1', 'r-deluxe-2', 'r-standard'])
+    expect(tables.Reservations.every((r: any) => r.roomId === null)).toBe(true)
+    expect(tables.Reservations.map((r: any) => r.roomType).sort()).toEqual(['deluxe', 'deluxe', 'standard'])
+    // Un push por TIPO distinto (no uno por fila): deluxe una sola vez aunque se vendieron 2.
+    expect(pushTypeCalls).toHaveLength(2)
+    expect(pushTypeCalls.every((c) => c.hotelId === HOTEL_ID)).toBe(true)
+    expect(pushTypeCalls.map((c) => c.roomType).sort()).toEqual(['deluxe', 'standard'])
+    // Sin unidad asignada no hay nada que empujar por habitación.
+    expect(pushCalls).toHaveLength(0)
   })
 })

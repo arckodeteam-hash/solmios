@@ -144,7 +144,7 @@ describe('[cribUnavailable] cuna pedida que la unidad asignada no ofrece', () =>
     expect(res.body.cribUnavailable).toBe(true)
   })
 
-  it('grupo: línea double (cuna) + línea suite (sin cuna), ambas con bebé + needsCrib → marca por FILA, nota con el tipo y respuesta del grupo', async () => {
+  it('grupo: línea double (cuna) + línea suite (sin cuna), ambas con bebé + needsCrib → marca por LÍNEA (HAC-05: filas sin unidad), nota con el tipo y respuesta del grupo', async () => {
     const { orm, tables } = makeDb({
       rooms: [room('r-double', 'double', 100), room('r-suite', 'suite', 150)],
       roomAmenities: [am('r-double', CRIB_AMENITY_KEY, { name: 'Cuna', price: 15 })],
@@ -154,17 +154,18 @@ describe('[cribUnavailable] cuna pedida que la unidad asignada no ofrece', () =>
       { roomType: 'suite', adults: 2, childrenAges: [0], quantity: 1, needsCrib: true },
     ] })
     expect(res.status).toBe(201)
-    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
-    expect(byRoom['r-double'].needsCrib).toBe(true)
-    expect(byRoom['r-double'].cribUnavailable).toBe(false)
-    expect(byRoom['r-suite'].needsCrib).toBe(false)
-    expect(byRoom['r-suite'].cribUnavailable).toBe(true)
-    expect(byRoom['r-suite'].notes).toContain(`${CRIB_UNAVAILABLE_NOTE} (suite)`)
-    expect(byRoom['r-suite'].notes).toContain('Cuna: double')
+    expect(tables.Reservations.every((r: any) => r.roomId === null)).toBe(true)
+    const byType = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomType, r]))
+    expect(byType['double'].needsCrib).toBe(true)
+    expect(byType['double'].cribUnavailable).toBe(false)
+    expect(byType['suite'].needsCrib).toBe(false)
+    expect(byType['suite'].cribUnavailable).toBe(true)
+    expect(byType['suite'].notes).toContain(`${CRIB_UNAVAILABLE_NOTE} (suite)`)
+    expect(byType['suite'].notes).toContain('Cuna: double')
     expect(res.body.cribUnavailable).toBe(true)
   })
 
-  it('grupo: todas las unidades con cuna → sin marca ni nota', async () => {
+  it('grupo: el tipo ofrece cuna → sin marca ni nota', async () => {
     const { orm, tables } = makeDb({ rooms: [room('r-double', 'double', 100)], roomAmenities: [am('r-double', CRIB_AMENITY_KEY, { name: 'Cuna', price: 15 })] })
     const res = await group(orm, { rooms: [{ roomType: 'double', adults: 2, childrenAges: [1], quantity: 1, needsCrib: true }] })
     expect(res.status).toBe(201)
