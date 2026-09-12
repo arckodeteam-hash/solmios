@@ -26,11 +26,7 @@
         <span class="text-text-muted">{{ t('pay.extras') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.upsellsTotal) }}</span>
       </div>
-      <div v-if="(breakdown.childAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="child-amenity-line">
-        <span class="text-text-muted">{{ t('pay.childAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
-        <span class="font-bold text-navy tabular-nums">{{ format(breakdown.childAmenitiesTotal) }}</span>
-      </div>
-      <!-- REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…); opcional como el anterior. -->
+      <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292, cama extra…); opcional. -->
       <div v-if="(breakdown.roomAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="room-amenity-line">
         <span class="text-text-muted">{{ t('pay.roomAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.roomAmenitiesTotal) }}</span>
@@ -65,9 +61,11 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Alojamiento = subtotal sin extras, amenidades infantiles ni amenidades de la habitación (el
- *  backend guarda `subtotal` con los tres adentro; `childAmenitiesTotal` y `roomAmenitiesTotal` son
- *  opcionales — reservas previas a REQ-01 #233 / #290 no los traen). */
+/** Alojamiento = subtotal sin extras ni amenidades de la habitación (el backend guarda `subtotal`
+ *  con ambos adentro; `roomAmenitiesTotal` es opcional — reservas previas a #290 no lo traen).
+ *  `childAmenitiesTotal` es el snapshot histórico del catálogo global de amenidades infantiles
+ *  (dado de baja en #292, siempre 0 en reservas nuevas): se resta para que el alojamiento de una
+ *  reserva vieja siga siendo correcto, sin fila propia en el motor público. */
 const lodging = computed(() => Math.round((
   (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
   - (props.breakdown?.roomAmenitiesTotal ?? 0)

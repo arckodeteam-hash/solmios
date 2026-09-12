@@ -10,9 +10,10 @@ import { createPublicBookingDirect } from '../usecases/public-booking'
 const HOTEL_ID = 'h1'
 
 /** Mismo patrón de ORM en memoria que `public-booking-group.test.ts`. */
-function makeDb(seed: { rooms?: any[]; reservations?: any[]; assignments?: any[]; rates?: any[] } = {}) {
+function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; reservations?: any[]; assignments?: any[]; rates?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
+    RoomAmenities: seed.roomAmenities ?? [],
     Reservations: seed.reservations ?? [],
     RoomBlocks: [],
     RoomRates: seed.rates ?? [],
@@ -318,18 +319,21 @@ describe('createPublicBookingDirect — Requerimiento 5: ocupación efectiva usa
   })
 })
 
-// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+// ─── Tarea 22 (Cuna, 2026-09-08) — #292: la cuna es la amenidad `custom:cuna` de la habitación ──
+// La cobertura completa del gate por habitación (precio, línea en `roomAmenities`, grupo) vive en
+// `public-booking-crib.test.ts`; acá queda el contrato Sí/No + bebé del flujo de 1 habitación.
 describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No)', () => {
   // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
-  const BABY_POLICY_CRIB_ON = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true }
-  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, cribAvailable: false }
-  function childPolicyRepo(value: unknown = BABY_POLICY_CRIB_ON) {
+  const BABY_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+  function childPolicyRepo(value: unknown = BABY_POLICY) {
     return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
   }
 
-  function dbWithRoom() {
+  /** Una room 'double' que OFRECE cuna (`RoomAmenities` custom:cuna activa) — salvo `withCrib: false`. */
+  function dbWithRoom(withCrib = true) {
     return makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 6, basePrice: 100, status: 'available' }],
+      roomAmenities: withCrib ? [{ id: 'r1-cuna', roomId: 'r1', amenityKey: 'custom:cuna', name: 'Cuna', price: 0, isActive: true }] : [],
     })
   }
 
@@ -347,18 +351,18 @@ describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 
     expect(tables.Reservations[0].cribCount).toBe(0)
   })
 
-  it('hotel con cuna DESHABILITADA (cribAvailable:false): needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
-    const { orm, tables } = dbWithRoom()
+  it('tipo SIN custom:cuna: needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
+    const { orm, tables } = dbWithRoom(false)
     const res = await createPublicBookingDirect(
       orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },
-      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(BABY_POLICY_CRIB_OFF) },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
     )
     expect(res.status).toBe(201)
     expect(tables.Reservations[0].needsCrib).toBe(false)
     expect(tables.Reservations[0].cribCount).toBe(0)
   })
 
-  it('con un bebé y cuna habilitada por el hotel: needsCrib true se persiste, cribCount siempre 1', async () => {
+  it('con un bebé y un tipo que ofrece custom:cuna: needsCrib true se persiste, cribCount siempre 1', async () => {
     const { orm, tables } = dbWithRoom()
     const res = await createPublicBookingDirect(
       orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },

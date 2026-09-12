@@ -114,12 +114,8 @@
         <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
-      <!-- REQ-01 (#233) — amenidades infantiles, una fila por habitación × amenidad. -->
-      <div v-for="line in store.childAmenityLines" :key="`${line.lineKey}-${line.id}`" class="flex justify-between" data-testid="child-amenity-line">
-        <span class="text-text-muted">{{ t('pay.childAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
-        <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
-      </div>
-      <!-- REQ-01 (#290) — amenidades de la habitación, una fila por habitación × amenidad. -->
+      <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292 incluida), una fila por
+           habitación × amenidad. -->
       <div v-for="line in store.roomAmenityLines" :key="`${line.lineKey}-${line.key}`" class="flex justify-between" data-testid="room-amenity-line">
         <span class="text-text-muted">{{ t('pay.roomAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
@@ -239,7 +235,7 @@
 import { computed, ref } from 'vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import type { PromoValidationReason } from '@/types/booking'
+import { CRIB_AMENITY_KEY, type PromoValidationReason } from '@/types/booking'
 import { classifyAge } from '@/utils/child-composition'
 
 const store = useBookingStore()
@@ -386,12 +382,10 @@ function cartLineGuestsLabel(line: CartLine): string {
         ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
-  // REQ-01 (#233) — amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot).
-  const amenities = (line.childAmenities ?? []).map((a) => a.name)
-  const withChildAmenities = amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
-  // REQ-01 (#290) — ídem con las amenidades de la habitación (snapshot de la línea).
-  const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
-  return roomAmenities.length > 0 ? `${withChildAmenities} · ${roomAmenities.join(', ')}` : withChildAmenities
+  // REQ-01 (#290) — amenidades de la habitación elegidas para ESTA habitación, por nombre
+  // (snapshot de la línea). La cuna (#292, `custom:cuna`) ya se nombró arriba: no se repite.
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => a.key !== CRIB_AMENITY_KEY).map((a) => a.name)
+  return roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
 }
 
 /** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato EXACTO que `RoomsStep.vue`

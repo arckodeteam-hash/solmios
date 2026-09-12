@@ -2,7 +2,7 @@
 // PERSONALIZADAS de la habitación (RoomAmenities `custom:*`) en la reserva pública (single y grupo).
 //
 // Cubre:
-//  (a) single por roomType con `roomAmenities:[{key:'custom:cuna'}]` donde solo la room más cara la
+//  (a) single por roomType con `roomAmenities:[{key:'custom:jacuzzi'}]` donde solo la room más cara la
 //      ofrece → se asigna ESA room, breakdown.roomAmenitiesTotal = su precio, subtotal/total lo
 //      incluyen, la reserva persiste el snapshot con precio y `roomAmenitiesTotal`.
 //  (b) key no ofrecida por ninguna room del tipo → se ignora con warn, total sin cambios.
@@ -12,13 +12,17 @@
 //      unidad cobra el precio de SUS filas.
 //  (e) sin roomAmenities → breakdown.roomAmenitiesTotal 0, snapshot [] y nada más cambia.
 //  (f) total = subtotal - promo + taxes sigue cuadrando con las amenidades dentro del subtotal.
+//
+// #292 — la amenidad de ejemplo es `custom:jacuzzi`: `custom:cuna` es la CUNA, la gobierna
+// `needsCrib` (bebé + el tipo la ofrece) y no una key suelta en `roomAmenities` — ver
+// `public-booking-crib.test.ts`.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
 
 const HOTEL_ID = 'h1'
 
-/** Mismo ORM en memoria que `public-booking-child-amenities.test.ts`, con `RoomAmenities`. */
+/** ORM en memoria (mismo patrón que `public-booking-group.test.ts`), con `RoomAmenities`. */
 function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; promoCodes?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
@@ -76,44 +80,44 @@ function makeLogger() {
   return { logger: { warn: (m: string) => { warns.push(m) }, error: () => {} }, warns }
 }
 
-/** 2 rooms 'double': r-cheap (80, sin cuna) y r-crib (100, con cuna a 15 y cama extra a 30). */
+/** 2 rooms 'double': r-cheap (80, sin jacuzzi) y r-jac (100, con jacuzzi a 15 y cama extra a 30). */
 function twoRoomsDb() {
   return makeDb({
     rooms: [
       { id: 'r-cheap', hotelId: HOTEL_ID, type: 'double', capacity: 2, basePrice: 80, status: 'available' },
-      { id: 'r-crib', hotelId: HOTEL_ID, type: 'double', capacity: 2, basePrice: 100, status: 'available' },
+      { id: 'r-jac', hotelId: HOTEL_ID, type: 'double', capacity: 2, basePrice: 100, status: 'available' },
     ],
     roomAmenities: [
       am('r-cheap', 'wifi'),
       am('r-cheap', 'custom:cama_extra', { name: 'Cama extra', price: 25 }),
-      am('r-crib', 'wifi'),
-      am('r-crib', 'custom:cuna', { name: 'Cuna', price: 15 }),
-      am('r-crib', 'custom:cama_extra', { name: 'Cama extra', price: 30 }),
+      am('r-jac', 'wifi'),
+      am('r-jac', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15 }),
+      am('r-jac', 'custom:cama_extra', { name: 'Cama extra', price: 30 }),
     ],
   })
 }
 
 describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)', () => {
-  it('(a) solo la room más cara ofrece la cuna → se asigna esa, roomAmenitiesTotal=15, subtotal/total la incluyen, snapshot persistido', async () => {
+  it('(a) solo la room más cara ofrece el jacuzzi → se asigna esa, roomAmenitiesTotal=15, subtotal/total la incluyen, snapshot persistido', async () => {
     const { orm, tables } = twoRoomsDb()
-    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:cuna' }] })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:jacuzzi' }] })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-crib')
+    expect(res.body.reservation.roomId).toBe('r-jac')
     const tb = res.body.totalBreakdown
     expect(tb.roomAmenitiesTotal).toBe(15)
     expect(tb.childAmenitiesTotal).toBe(0)
-    // 2 noches × 100 (la room asignada) + 15 de cuna.
+    // 2 noches × 100 (la room asignada) + 15 de jacuzzi.
     expect(tb.subtotal).toBe(215)
     expect(tb.total).toBe(215)
     expect(res.body.reservation.totalAmount).toBe(215)
 
     const saved = tables.Reservations[0]
-    expect(saved.roomId).toBe('r-crib')
+    expect(saved.roomId).toBe('r-jac')
     expect(saved.roomAmenitiesTotal).toBe(15)
-    expect(saved.roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15, quantity: 1, total: 15 }])
+    expect(saved.roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 }])
     expect(saved.priceBreakdown.roomAmenitiesTotal).toBe(15)
     expect(saved.priceBreakdown.subtotal).toBe(215)
-    expect(saved.notes).toContain('Amenidades habitación: Cuna=15.00')
+    expect(saved.notes).toContain('Amenidades habitación: Jacuzzi=15.00')
   })
 
   it('(a2) las dos la ofrecen → sigue ganando la más barata y cobra SU precio', async () => {
@@ -129,7 +133,7 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
   it('(b) key no ofrecida por ninguna room → se ignora con warn, total sin cambios', async () => {
     const { orm, tables } = twoRoomsDb()
     const { logger, warns } = makeLogger()
-    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:jacuzzi' }] }, undefined, undefined, undefined, logger)
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:sauna' }] }, undefined, undefined, undefined, logger)
     expect(res.status).toBe(201)
     expect(res.body.reservation.roomId).toBe('r-cheap')
     expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(0)
@@ -143,9 +147,9 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
   it('(b2) una key fija (wifi) o inactiva no se cobra ni entra al snapshot', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 2, basePrice: 80, status: 'available' }],
-      roomAmenities: [am('r1', 'wifi', { price: 99 }), am('r1', 'custom:cuna', { name: 'Cuna', price: 15, isActive: false })],
+      roomAmenities: [am('r1', 'wifi', { price: 99 }), am('r1', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15, isActive: false })],
     })
-    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'wifi' }, { key: 'custom:cuna' }] })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'wifi' }, { key: 'custom:jacuzzi' }] })
     expect(res.status).toBe(201)
     expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(0)
     expect(res.body.totalBreakdown.subtotal).toBe(160)
@@ -154,16 +158,16 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
 
   it('(c) el precio mandado en el body se IGNORA: manda el de RoomAmenities', async () => {
     const { orm, tables } = twoRoomsDb()
-    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:cuna', price: 0.01, name: 'Gratis' }] })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:jacuzzi', price: 0.01, name: 'Gratis' }] })
     expect(res.status).toBe(201)
     expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(15)
-    expect(tables.Reservations[0].roomAmenities[0]).toEqual({ key: 'custom:cuna', name: 'Cuna', price: 15, quantity: 1, total: 15 })
+    expect(tables.Reservations[0].roomAmenities[0]).toEqual({ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 })
   })
 
   it('(c2) roomId explícito → resuelve contra las filas de ESA room', async () => {
     const { orm, tables } = twoRoomsDb()
-    // r-cheap no ofrece la cuna: se ignora aunque r-crib la tenga. La cama extra sí, a SU precio.
-    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomId: 'r-cheap', adults: 2, roomAmenities: [{ key: 'custom:cuna' }, { key: 'custom:cama_extra' }] })
+    // r-cheap no ofrece el jacuzzi: se ignora aunque r-jac la tenga. La cama extra sí, a SU precio.
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomId: 'r-cheap', adults: 2, roomAmenities: [{ key: 'custom:jacuzzi' }, { key: 'custom:cama_extra' }] })
     expect(res.status).toBe(201)
     expect(res.body.reservation.roomId).toBe('r-cheap')
     expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(25)
@@ -186,7 +190,7 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
     const promo = { id: 'p1', hotelId: HOTEL_ID, code: 'DESC10', kind: 'percent', value: 10, active: true, uses: 0, maxUses: null }
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 2, basePrice: 100, status: 'available' }],
-      roomAmenities: [am('r1', 'custom:cuna', { name: 'Cuna', price: 10 })],
+      roomAmenities: [am('r1', 'custom:jacuzzi', { name: 'Jacuzzi', price: 10 })],
       promoCodes: [promo],
     })
     const promoCodes = {
@@ -198,7 +202,7 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
     } as any
     const res = await createPublicBookingDirect(
       orm,
-      { ...BASE_BODY, roomType: 'double', adults: 2, promoCode: 'DESC10', roomAmenities: [{ key: 'custom:cuna' }] },
+      { ...BASE_BODY, roomType: 'double', adults: 2, promoCode: 'DESC10', roomAmenities: [{ key: 'custom:jacuzzi' }] },
       undefined, undefined, undefined, undefined, undefined,
       { config, promoCodes },
     )
@@ -224,10 +228,10 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
         { id: 'r-f3', hotelId: HOTEL_ID, type: 'family', capacity: 4, basePrice: 100, status: 'available' },
       ],
       roomAmenities: [
-        am('r-a', 'custom:cuna', { name: 'Cuna', price: 15 }), // la línea double NO la pide
-        am('r-f2', 'custom:cuna', { name: 'Cuna', price: 15 }),
-        am('r-f3', 'custom:cuna', { name: 'Cuna', price: 20 }),
-        // r-f1 no ofrece la cuna → con quantity 2 se eligen f2 y f3 (las que la ofrecen).
+        am('r-a', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15 }), // la línea double NO la pide
+        am('r-f2', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15 }),
+        am('r-f3', 'custom:jacuzzi', { name: 'Jacuzzi', price: 20 }),
+        // r-f1 no ofrece el jacuzzi → con quantity 2 se eligen f2 y f3 (las que la ofrecen).
       ],
     })
   }
@@ -238,12 +242,12 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
       ...BASE_BODY,
       rooms: [
         { roomType: 'double', adults: 2, quantity: 1 },
-        { roomType: 'family', adults: 2, quantity: 2, roomAmenities: [{ key: 'custom:cuna' }] },
+        { roomType: 'family', adults: 2, quantity: 2, roomAmenities: [{ key: 'custom:jacuzzi' }] },
       ],
     })
     expect(res.status).toBe(201)
     const tb = res.body.totalBreakdown
-    // Habitaciones: 80×2 + 100×2×2 = 560; cunas: 15 (f2) + 20 (f3) = 35.
+    // Habitaciones: 80×2 + 100×2×2 = 560; jacuzzis: 15 (f2) + 20 (f3) = 35.
     expect(tb.roomAmenitiesTotal).toBe(35)
     expect(tb.subtotal).toBe(595)
     expect(tb.total).toBe(595)
@@ -252,18 +256,18 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     expect(tables.Reservations).toHaveLength(3)
     const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
     expect(Object.keys(byRoom).sort()).toEqual(['r-a', 'r-f2', 'r-f3'])
-    // Línea 1 (no pidió nada): sin snapshot aunque r-a ofrezca la cuna.
+    // Línea 1 (no pidió nada): sin snapshot aunque r-a ofrezca el jacuzzi.
     expect(byRoom['r-a'].roomAmenities).toEqual([])
     expect(byRoom['r-a'].roomAmenitiesTotal).toBe(0)
     // Línea 2: cada unidad con SU snapshot (quantity 1) y SU precio.
-    expect(byRoom['r-f2'].roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15, quantity: 1, total: 15 }])
+    expect(byRoom['r-f2'].roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 }])
     expect(byRoom['r-f2'].roomAmenitiesTotal).toBe(15)
-    expect(byRoom['r-f3'].roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 20, quantity: 1, total: 20 }])
+    expect(byRoom['r-f3'].roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 20, quantity: 1, total: 20 }])
     expect(byRoom['r-f3'].roomAmenitiesTotal).toBe(20)
     // El desglose guardado en la líder es el del grupo, con las amenidades adentro.
     expect(tables.Reservations[0].priceBreakdown.roomAmenitiesTotal).toBe(35)
     expect(tables.Reservations[0].priceBreakdown.subtotal).toBe(595)
-    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: family: Cuna=35.00')
+    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: family: Jacuzzi=35.00')
   })
 
   it('línea que pide más unidades que rooms con la amenidad → la que no la ofrece la ignora con warn', async () => {
@@ -271,7 +275,7 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     const { logger, warns } = makeLogger()
     const res = await createPublicBookingGroup(
       orm,
-      { ...BASE_BODY, rooms: [{ roomType: 'family', adults: 2, quantity: 3, roomAmenities: [{ key: 'custom:cuna' }] }] },
+      { ...BASE_BODY, rooms: [{ roomType: 'family', adults: 2, quantity: 3, roomAmenities: [{ key: 'custom:jacuzzi' }] }] },
       undefined, undefined, undefined, logger,
     )
     expect(res.status).toBe(201)
@@ -304,7 +308,7 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     }
     const res = await createPublicBookingGroup(
       orm,
-      { ...BASE_BODY, rooms: [{ roomType: 'family', adults: 2, quantity: 1, roomAmenities: [{ key: 'custom:cuna' }] }] },
+      { ...BASE_BODY, rooms: [{ roomType: 'family', adults: 2, quantity: 1, roomAmenities: [{ key: 'custom:jacuzzi' }] }] },
       undefined, undefined, stripe, undefined, { successUrl: 'https://x/ok', cancelUrl: 'https://x/ko' },
     )
     expect(res.status).toBe(201)

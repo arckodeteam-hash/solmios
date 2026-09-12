@@ -1,4 +1,7 @@
 import { test, expect } from '../fixtures'
+import type { APIRequestContext } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { ADMIN_STORAGE_STATE } from '../global-setup'
 import { roomCard, gotoWizardWithDates, logConsoleAndHttpErrors } from './helpers'
 
 // REQ-02 (#234, 2026-09-11) — dos cosas sobre el resumen "Tu reserva" del paso Habitaciones:
@@ -9,9 +12,81 @@ import { roomCard, gotoWizardWithDates, logConsoleAndHttpErrors } from './helper
 //      SU tarjeta con adultos/edades/cuna/amenidades tal como estaban, para corregirla sin
 //      rearmarla desde cero. No debe tocar ni las otras líneas ni los composers de otras tarjetas.
 //
-// Fixture local: child_policy del hotel demo con maxChildAge=12, maxFreeAge=3, maxBabyAge=1 y
-// cribAvailable=true (sembrado ad-hoc en la DB SQLite local, nunca en una migración ni en prod).
-// Con eso: 1 año → bebé, 2 años → niño que no consume plaza, 8 años → niño que consume plaza.
+// Fixture (sembrado por la API admin en `beforeAll`, idempotente — mismo fixture que
+// 06-crib-and-child-amenities.spec.ts, nunca en una migración ni en prod): child_policy del hotel
+// demo con maxChildAge=12, maxFreeAge=3, maxBabyAge=1 — 1 año → bebé, 2 años → niño que no
+// consume plaza, 8 años → niño que consume plaza — y la cuna POR HABITACIÓN (#292): amenidad
+// `RoomAmenities` `custom:cuna` ('Cuna', 15, activa) en todas las habitaciones del tipo Double y en
+// ninguna del tipo Triple (ya no existe `childPolicy.cribAvailable`). "¿Necesita cuna?" aparece
+// sólo con un bebé en la tarjeta de un tipo que publica `custom:cuna`; "Sí" agrega esa key a las
+// amenidades de la línea, que es lo que "Editar" tiene que devolver intacto al composer.
+
+const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
+const CRIB_KEY = 'custom:cuna'
+const CRIB = { key: CRIB_KEY, name: 'Cuna', price: 15, isActive: true }
+const CRIB_TYPE = 'double' // tarjeta "Double"
+const NO_CRIB_TYPE = 'triple' // tarjeta "Triple"
+const CHILD_POLICY = {
+  acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1,
+  childrenDiscountEnabled: false, childrenRatePercent: 50, maxFreeChildrenPerRoom: null,
+}
+
+function authHeaders(): Record<string, string> {
+  const state = JSON.parse(readFileSync(ADMIN_STORAGE_STATE, 'utf-8'))
+  const token = state.origins?.flatMap((o: any) => o.localStorage ?? []).find((kv: any) => kv.name === 'token')?.value
+  if (!token) throw new Error(`No hay token en ${ADMIN_STORAGE_STATE} — ¿corrió el globalSetup?`)
+  return { Authorization: `Bearer ${token}` }
+}
+
+/** Desenvuelve `{success,data}` (y el doble envelope `{data:{data}}` de algunos controllers). */
+function unwrap(body: any): any {
+  const d = body?.data ?? body
+  return d && typeof d === 'object' && 'data' in d && !Array.isArray(d) ? d.data : d
+}
+
+/** Mismo seed que 06-crib-and-child-amenities.spec.ts (los specs no pueden importarse entre sí sin
+ *  registrar dos veces sus tests). Idempotente: sólo escribe si falta, así N workers de Playwright
+ *  (fullyParallel) no se pisan. Conserva las keys fijas y las demás custom de cada room. */
+async function seedCribFixture(request: APIRequestContext) {
+  const headers = authHeaders()
+
+  const policy = unwrap(await (await request.get(`${BACKEND}/api/configuracion/child_policy`, { headers })).json())?.valor
+  if (!policy || policy.acceptChildren !== true || policy.maxChildAge !== 12 || policy.maxFreeAge !== 3 || policy.maxBabyAge !== 1) {
+    const res = await request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: CHILD_POLICY } })
+    expect(res.ok(), 'seed child_policy').toBeTruthy()
+  }
+
+  // Idioma default del widget en ES (`booking_config.language`): los textos que buscan estos
+  // specs son en español y el widget arranca en `navigator.language` (en-US en Playwright) si el
+  // hotel no publica un default. El GET ya crea la fila con 'es' si no existía.
+  const bookingConfig = unwrap(await (await request.get(`${BACKEND}/api/booking-engine/config`, { headers })).json())
+  if (bookingConfig?.language !== 'es') {
+    const res = await request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: { language: 'es' } })
+    expect(res.ok(), 'seed booking_config.language=es').toBeTruthy()
+  }
+
+  const rooms = (unwrap(await (await request.get(`${BACKEND}/api/habitaciones?limit=100`, { headers })).json()) ?? []) as any[]
+  expect(rooms.length, 'habitaciones del hotel demo').toBeGreaterThan(0)
+  for (const room of rooms) {
+    if (room.type !== CRIB_TYPE && room.type !== NO_CRIB_TYPE) continue
+    const wantCrib = room.type === CRIB_TYPE
+    const rows = (unwrap(await (await request.get(`${BACKEND}/api/amenities/room/${room.id}`, { headers })).json()) ?? []) as any[]
+    const isOn = (v: unknown) => v === true || v === 1 || v === '1'
+    const crib = rows.find((a) => a.amenityKey === CRIB_KEY)
+    const cribOk = wantCrib
+      ? !!crib && isOn(crib.isActive) && Number(crib.price) === CRIB.price && crib.name === CRIB.name
+      : !crib || !isOn(crib.isActive)
+    if (cribOk) continue
+
+    const amenities = rows.filter((a) => !String(a.amenityKey).startsWith('custom:') && isOn(a.isActive)).map((a) => a.amenityKey)
+    const otherCustom = rows
+      .filter((a) => String(a.amenityKey).startsWith('custom:') && a.amenityKey !== CRIB_KEY)
+      .map((a) => ({ key: a.amenityKey, name: a.name, price: Number(a.price) || 0, isActive: isOn(a.isActive) }))
+    const items = wantCrib ? [...otherCustom, CRIB] : otherCustom
+    const res = await request.put(`${BACKEND}/api/amenities/room/${room.id}`, { headers, data: { amenities, items } })
+    expect(res.ok(), `seed custom:cuna en room ${room.number ?? room.id}`).toBeTruthy()
+  }
+}
 
 /** Arma en la tarjeta Double: 1 adulto (default) + 2 niños de 1 y 8 años, cuna Sí. */
 async function composeDoubleWithBabyAndChild(page: Parameters<typeof roomCard>[0]) {
@@ -29,6 +104,9 @@ async function composeDoubleWithBabyAndChild(page: Parameters<typeof roomCard>[0
 
 test.describe('/book/:slug — REQ-02 (#234): editar una habitación agregada y clasificación en el resumen', () => {
   let errors: string[]
+  test.beforeAll(async ({ request }) => {
+    await seedCribFixture(request)
+  })
   test.beforeEach(({ page }) => {
     errors = []
     logConsoleAndHttpErrors(page, errors)
@@ -97,7 +175,8 @@ test.describe('/book/:slug — REQ-02 (#234): editar una habitación agregada y 
     await doubleCard.getByTestId('crib-yes').click()
     await doubleCard.getByRole('button', { name: 'Agregar esta habitación' }).click()
 
-    // Triple: 2 adultos + niño de 8 años, sin cuna (sin bebé no se ofrece).
+    // Triple: 2 adultos + niño de 8 años, sin cuna (sin bebé no se ofrece — y el tipo tampoco
+    // publica `custom:cuna`).
     const tripleCard = roomCard(page, 'Triple')
     await expect(tripleCard).toBeVisible()
     await tripleCard.getByRole('button', { name: '+ Triple · Adultos' }).click()
@@ -169,5 +248,8 @@ test.describe('/book/:slug — REQ-02 (#234): editar una habitación agregada y 
     await expect(payLine).toContainText('1 año · bebé')
     await expect(payLine).toContainText('8 años · niño, consume plaza')
     await expect(payLine).toContainText('Cuna')
+    // #292 — la cuna viaja como amenidad `custom:cuna` de la línea: tras Editar + re-agregar sigue
+    // UNA sola fila "Cuna" en el desglose (no se duplicó ni se perdió la key).
+    await expect(page.getByTestId('room-amenity-line').filter({ hasText: 'Cuna' })).toHaveCount(1)
   })
 })

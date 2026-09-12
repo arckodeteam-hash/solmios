@@ -34,6 +34,7 @@ import { PublicHotelService } from '@/services/PublicHotel.service'
 import { useBookingStore } from '@/composables/useBooking'
 import type { PublicHotelInfo, PublicRatesResponse, OpenBookingOptions } from '@/types'
 import { formatMoney } from '@/utils/rate-calendar'
+import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
 
 const HOTEL = {
   id: 'h1',
@@ -299,7 +300,7 @@ describe('BookingModal', () => {
   it('toggleUpsell "por persona": ocupación física del carrito, sin duplicar al niño con plaza', async () => {
     await open(FROM_HERO)
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     // 2 adultos + niño de 8 (con plaza, ya en occupancy=3) + otra línea con 1 niño de 2 (libre).
     await store.addToCart(ratesResponse().roomTypes[0]!, { adults: 2, childrenAges: [8] })
     await store.addToCart(ratesResponse().roomTypes[1]!, { adults: 1, childrenAges: [2] })
