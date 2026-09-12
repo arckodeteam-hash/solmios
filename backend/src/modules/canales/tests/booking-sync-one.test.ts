@@ -129,15 +129,15 @@ describe('BookingSyncUseCase.runOne — webhook de reservas (CH-07)', () => {
     expect(created).toHaveLength(1)
   })
 
-  // REQ-HAC-01 (#258): la reserva OTA lleva el tipo vendido (`rooms.type` de la unidad elegida).
-  it('la reserva ingresada persiste roomType = rooms.type de la unidad resuelta (HAC-01)', async () => {
+  // REQ-HAC-01 (#258) + REQ-HAC-05 (#260): la reserva OTA lleva el tipo vendido y nace sin unidad.
+  it('la reserva ingresada persiste roomType del mapeo Channex y roomId null (HAC-01/HAC-05)', async () => {
     const calls: string[] = []
     const { channex } = makeChannexStub({ calls, revision: makeRevision() })
     const { orm, created } = makeOrm({ calls, configs: CONFIGS })
     const { logger } = makeLogger()
     await new BookingSyncUseCase(deps(channex, orm, logger)).runOne('rev-1')
     expect(created).toHaveLength(1)
-    expect(created[0].roomId).toBe('room-1')
+    expect(created[0].roomId).toBeNull()
     expect(created[0].roomType).toBe('double')
   })
 

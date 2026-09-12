@@ -106,20 +106,20 @@ describe('ingesta OTA — applyBookingRevision (QA-02)', () => {
   }
 })
 
-// REQ-HAC-02 (#257) — la unidad se elige con la fuente única de disponibilidad por tipo:
-// entre las unidades del tipo, la primera sin reserva bloqueante solapada. Si no queda ninguna,
-// la OTA se ingesta igual (nunca se dropea) y la nota marca el overbooking.
-describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (REQ-HAC-02)', () => {
+// REQ-HAC-05 (#260) — la OTA vende un TIPO: la reserva nace con `roomType` y `roomId` null,
+// la unidad la asigna recepción después. Nada de elegir habitación libre ni marcar overbooking:
+// la disponibilidad por tipo la cuenta `availableOfType` sobre las filas con `roomType`.
+describe('ingesta OTA — applyBookingRevision nace sin unidad con roomType (REQ-HAC-05)', () => {
   const DTO = {
-    externalLocator: 'OTA-HAC02', status: 'confirmed', channel: 'Booking.com', notes: 'OTA: Booking.com',
+    externalLocator: 'OTA-HAC05', status: 'confirmed', channel: 'Booking.com', notes: 'OTA: Booking.com',
     checkIn: '2026-10-10', checkOut: '2026-10-12', channexRoomTypeId: 'rt-twin',
   }
   const channex: any = { getRoomTypeById: async () => ({ id: 'rt-twin', title: 'Twin Room' }) }
-  const TWINS = [{ id: 'r1', type: 'twin', status: 'available' }, { id: 'r2', type: 'twin', status: 'available' }]
+  const TWINS = [{ id: 'r1', number: '101', type: 'twin', status: 'available' }, { id: 'r2', number: '102', type: 'twin', status: 'available' }]
 
   const ormCon = (reservations: any[], created: any[]): any => ({
     findMany: async (t: string, q: any) => {
-      if (t === 'Rooms') return TWINS
+      if (t === 'Rooms') return q?.type ? TWINS.filter((r) => r.type === q.type) : TWINS
       if (t === 'Reservations') return q?.externalLocator ? [] : reservations
       return []
     },
@@ -127,17 +127,17 @@ describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (R
     create: async (_t: string, d: any) => { created.push(d); return d },
   })
 
-  it('2 twin, r1 ocupada esas noches → la OTA se crea en r2', async () => {
+  it('2 twin, r1 ocupada esas noches → la OTA se crea con roomType twin y SIN unidad', async () => {
     const created: any[] = []
     const orm = ormCon([{ id: 'x1', roomId: 'r1', roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' }], created)
     const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
     expect(result).toEqual({ created: true })
     expect(created).toHaveLength(1)
-    expect(created[0]).toMatchObject({ roomId: 'r2', roomType: 'twin' })
-    expect(created[0].notes).not.toContain('OVERBOOKING')
+    expect(created[0]).toMatchObject({ roomId: null, roomType: 'twin' })
+    expect(created[0].notes).toBe('OTA: Booking.com')
   })
 
-  it('tipo agotado por 2 reservas SIN unidad (roomId null) → se crea igual con nota ⚠ OVERBOOKING', async () => {
+  it('tipo agotado por 2 reservas SIN unidad → se crea igual (nunca dropea), sin nota ni unidad', async () => {
     const created: any[] = []
     const orm = ormCon([
       { id: 'u1', roomId: null, roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' },
@@ -145,11 +145,11 @@ describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (R
     ], created)
     const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
     expect(result).toEqual({ created: true })
-    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
-    expect(created[0].notes).toContain('⚠ OVERBOOKING: sin unidad libre de twin')
+    expect(created[0]).toMatchObject({ roomId: null, roomType: 'twin' })
+    expect(created[0].notes).toBe('OTA: Booking.com')
   })
 
-  it('las 2 twin ocupadas → igual se crea (nunca dropea) en r1 con nota ⚠ OVERBOOKING', async () => {
+  it('las 2 twin ocupadas → igual se crea con roomType twin, sin unidad ni marca', async () => {
     const created: any[] = []
     const orm = ormCon([
       { id: 'x1', roomId: 'r1', roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' },
@@ -158,18 +158,11 @@ describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (R
     const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
     expect(result).toEqual({ created: true })
     expect(created).toHaveLength(1)
-    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
-    expect(created[0].notes).toBe('OTA: Booking.com | ⚠ OVERBOOKING: sin unidad libre de twin para esas fechas')
+    expect(created[0]).toMatchObject({ roomId: null, roomType: 'twin' })
+    expect(created[0].notes).toBe('OTA: Booking.com')
   })
 
-  it('una reserva del tipo SIN unidad asignada no bloquea ninguna unidad física: se elige r1', async () => {
-    const created: any[] = []
-    const orm = ormCon([{ id: 'x1', roomId: null, roomType: 'twin', status: 'confirmed', checkIn: '2026-10-10', checkOut: '2026-10-12' }], created)
-    await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
-    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
-  })
-
-  it('si el chequeo de disponibilidad falla, cae a rooms[0] sin romper la ingesta', async () => {
+  it('la ingesta no consulta reservas para elegir unidad: sólo Rooms y el dedupe por locator', async () => {
     const created: any[] = []
     const orm: any = {
       findMany: async (t: string, q: any) => {
@@ -182,7 +175,7 @@ describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (R
     }
     const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
     expect(result).toEqual({ created: true })
-    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
+    expect(created[0]).toMatchObject({ roomId: null, roomType: 'twin' })
   })
 })
 
@@ -192,7 +185,7 @@ describe('ingesta OTA — onIngested (#246)', () => {
   const NEW_DTO = { externalLocator: 'OTA999', status: 'confirmed', channel: 'Booking.com', notes: 'OTA', channexRoomTypeId: null }
 
   const ormNuevo = (created: any[] = []): any => ({
-    findMany: async (t: string) => (t === 'Rooms' ? [{ id: 'room-1' }] : []),
+    findMany: async (t: string) => (t === 'Rooms' ? [{ id: 'room-1', type: 'double' }] : []),
     update: async () => {},
     create: async (_t: string, d: any) => { created.push(d); return d },
   })

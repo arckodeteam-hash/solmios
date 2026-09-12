@@ -10,10 +10,14 @@ import { onReservationRoomChanged, type ReservationEventDeps, type ReservationRe
 
 export function reservasCanalesConnector(ctx: ConnectorContext): void {
   const reservas = ctx.resolveModule<{ setSockets: (s: any) => void }>('reservas')
+  type Canales = {
+    pushAvailabilityByRoom: (h: string, r: string) => Promise<{ pushed: boolean }>
+    pushAvailability: (h: string, t: string) => Promise<{ pushed: boolean }>
+  }
   const deps: ReservationEventDeps = {
-    pushAvailabilityByRoom: (hotelId, roomId) =>
-      ctx.resolveModule<{ pushAvailabilityByRoom: (h: string, r: string) => Promise<{ pushed: boolean }> }>('canales')
-        .pushAvailabilityByRoom(hotelId, roomId),
+    pushAvailabilityByRoom: (hotelId, roomId) => ctx.resolveModule<Canales>('canales').pushAvailabilityByRoom(hotelId, roomId),
+    // REQ-HAC-05 (#260): la reserva sin unidad (`roomId` null) publica por su `roomType`.
+    pushAvailabilityByType: (hotelId, roomType) => ctx.resolveModule<Canales>('canales').pushAvailability(hotelId, roomType),
   }
 
   reservas.setSockets({
