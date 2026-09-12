@@ -17,7 +17,7 @@
     />
 
     <!-- 2. KPIs gigantes — ocupación e ingresos pesan más que check-in/out -->
-    <div class="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1.25fr]">
+    <div class="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1fr_1.25fr]">
       <KpiHeroCard
         label="Ocupación Actual" accent="blue" suffix="%" icon="bed"
         :value="dashboard.stats.occupancy"
@@ -39,6 +39,14 @@
           { label: 'Realizados', value: arrivalsDone, tone: 'text-[#16A34A]' },
           { label: 'Pendientes', value: arrivalsPending, tone: 'text-[#D97706]' },
         ]"
+      />
+      <!-- HAC-06 (#261): llegadas de hoy que todavía no tienen habitación (se asignan en el planning) -->
+      <KpiHeroCard
+        label="Llegadas de hoy sin habitación" :accent="arrivalsUnassigned > 0 ? 'rose' : 'amber'" icon="bed"
+        :value="arrivalsUnassigned"
+        unit="Reservas"
+        :show-bar="false"
+        data-testid="kpi-arrivals-unassigned"
       />
       <KpiHeroCard
         label="Check-out Hoy" accent="purple" icon="checkout"
@@ -396,6 +404,8 @@ const todaysArrivals = computed(() =>
   reservationStore.reservations.filter(r => dstr(r.checkIn) === todayStr() && r.status !== 'cancelled'))
 const arrivalsDone = computed(() => todaysArrivals.value.filter(r => r.status === 'checked_in' || r.status === 'checked_out').length)
 const arrivalsPending = computed(() => todaysArrivals.value.length - arrivalsDone.value)
+// HAC-06 (#261): llegadas de hoy (pending|confirmed) sin habitación asignada, calculado en backend.
+const arrivalsUnassigned = computed(() => dashboard.stats.arrivalsUnassigned ?? 0)
 const arrivalsProgress = computed(() =>
   todaysArrivals.value.length ? Math.round((arrivalsDone.value / todaysArrivals.value.length) * 100) : 0)
 
