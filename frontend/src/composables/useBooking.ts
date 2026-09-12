@@ -253,8 +253,8 @@ export interface CartLine {
    *  es global al carrito). `undefined`/`false` en líneas sin bebé o del flujo legacy.
    *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable.
    *  #292 — la cuna se cobra como la amenidad de habitación `custom:cuna` (`CRIB_AMENITY_KEY`):
-   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el composer la
-   *  agrega en `setNeedsCrib`); el backend re-valida y la fuerza/quita según corresponda. */
+   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el huésped la
+   *  tilda en el checklist genérico — #341: `needsCrib` es el espejo de esa key, derivado en `toggleRoomAmenity`). */
   needsCrib?: boolean
   cribCount?: number
   /** REQ-01 (#290, amenidades de la habitación) — elegidas para ESTA línea, POR LÍNEA igual que
