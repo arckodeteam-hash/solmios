@@ -10,6 +10,8 @@
 //      MISMA unidad física.
 //   6. Promo se aplica UNA vez sobre el subtotal combinado, no por línea.
 //   7. Stripe: 1 sola Checkout Session, sobre la reserva LÍDER, por el total combinado.
+//   8. #270: `priceBreakdown.upsellLines` (snapshot por línea) en la LÍDER y
+//      estimatedArrival/specialRequests estructurados en TODAS las filas del grupo.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingGroup, MAX_GROUP_UNITS } from '../usecases/public-booking-group'
 
@@ -166,6 +168,50 @@ describe('Tarea 3.1 — estimatedArrival llega a Reservations.notes (grupo)', ()
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(2)
     expect(tables.Reservations.every((r: any) => String(r.notes).includes('Pedido especial: Necesitamos 2 cunas'))).toBe(true)
+  })
+
+  it('#270: upsellLines en el priceBreakdown de la LÍDER + estimatedArrival/specialRequests en TODAS las filas', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' },
+        { id: 'r-standard', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+      ],
+    })
+    const upsellsRepo = {
+      findMany: async () => [
+        { id: 'u1', hotelId: HOTEL_ID, name: 'Desayuno', price: 15, kind: 'per_person', active: true },
+        { id: 'u2', hotelId: HOTEL_ID, name: 'Inactivo', price: 999, kind: 'per_stay', active: false },
+      ],
+    }
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      estimatedArrival: ' 15:00 ',
+      specialRequests: '  Necesitamos 2 cunas  ',
+      upsells: [{ id: 'u1', quantity: 2 }, { id: 'u2', quantity: 1 }],
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1 },
+        { roomType: 'standard', adults: 2, quantity: 1 },
+      ],
+    }, undefined, undefined, fakeStripe as any, undefined, stripeUrls, { upsells: upsellsRepo as any })
+
+    expect(res.status).toBe(201)
+    // Subtotal 460 (habitaciones) + 15×2 = 490, sin impuestos.
+    const b = res.body.totalBreakdown
+    expect(b.upsellsTotal).toBe(30)
+    expect(b.total).toBe(490)
+    // Una línea por upsell válido (el inactivo se ignora), precio del catálogo, total = price × qty.
+    expect(b.upsellLines).toEqual([{ id: 'u1', name: 'Desayuno', price: 15, quantity: 2, total: 30 }])
+    expect(b.upsellLines[0].total).toBe(b.upsellLines[0].price * b.upsellLines[0].quantity)
+
+    expect(tables.Reservations).toHaveLength(2)
+    // El desglose (con las líneas) va SOLO en la líder; las demás no tienen desglose propio.
+    const [lead, ...rest] = tables.Reservations
+    expect(lead.priceBreakdown.upsellLines).toEqual(b.upsellLines)
+    expect(rest.every((r: any) => r.priceBreakdown === undefined)).toBe(true)
+    // Estructurados (trim) en TODAS las filas, además del texto en `notes` que no cambia.
+    expect(tables.Reservations.every((r: any) => r.estimatedArrival === '15:00')).toBe(true)
+    expect(tables.Reservations.every((r: any) => r.specialRequests === 'Necesitamos 2 cunas')).toBe(true)
+    expect(tables.Reservations.every((r: any) => String(r.notes).includes('Llegada estimada: 15:00'))).toBe(true)
   })
 })
 

@@ -159,6 +159,19 @@ export interface PublicBookingExtraDeps {
  * F2 2.5 — Desglose del total que el widget muestra en el step Pay y que Stripe cobra.
  * Todos los importes en `hotels.currency` (multi-moneda es display only — el cobro es en base).
  */
+/**
+ * #270 — Una línea de upsell (extra genérico) con el precio congelado al momento de cotizar.
+ * `total` = `price` × `quantity`. Es lo que el correo de confirmación y el recibo PDF listan
+ * línea por línea; hasta este cambio los upsells solo quedaban como texto en `notes`.
+ */
+export interface UpsellLine {
+  id: string
+  name: string
+  price: number
+  quantity: number
+  total: number
+}
+
 export interface TotalBreakdown {
   /** room.basePrice × nights + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal (antes de promo e impuestos). */
   subtotal: number
@@ -166,6 +179,10 @@ export interface TotalBreakdown {
   promoDiscount: number
   /** Σ upsell.price × quantity (extras genéricos). */
   upsellsTotal: number
+  /** #270 — Snapshot de cada upsell validado contra el catálogo del hotel (precio congelado).
+   *  `upsellsTotal` es la suma de sus `total`. `[]` si no se pidió ninguno o si no hay repo
+   *  de upsells cableado (en ese caso solo queda el resumen crudo en `notes`). */
+  upsellLines: UpsellLine[]
   /** REQ-01 (#233) — Σ amenidad.price × unidades (amenidades para niños/bebés, por habitación).
    *  0 si no se pidió ninguna o si la reserva no tiene menores. Ya incluido en `subtotal`. */
   childAmenitiesTotal: number
@@ -620,6 +637,8 @@ export async function createPublicBookingDirect(
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // #270 — mismo snapshot que `upsellSummary` pero estructurado, para `priceBreakdown.upsellLines`.
+  const upsellLines: UpsellLine[] = []
   if (upsellItems.length > 0 && extraDeps?.upsells) {
     const hotelUpsells = await extraDeps.upsells.findMany({ hotelId })
     const byId = new Map(hotelUpsells.map((u: any) => [u.id, u]))
@@ -633,6 +652,10 @@ export async function createPublicBookingDirect(
       const lineTotal = Number(found.price) * qty
       upsellsTotal += lineTotal
       upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
+      upsellLines.push({
+        id: String(found.id), name: String(found.name ?? ''),
+        price: Number(found.price), quantity: qty, total: round2(lineTotal),
+      })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     // F0 0.16 — Sin repo de upsells, dejamos el resumen crudo (id×qty) para que el recepcionista
@@ -707,6 +730,7 @@ export async function createPublicBookingDirect(
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
+    upsellLines,
     childAmenitiesTotal: round2(childAmenitiesTotal),
     roomAmenitiesTotal: round2(roomAmenitiesTotal),
     taxes,
@@ -821,6 +845,10 @@ export async function createPublicBookingDirect(
         // pago — no un total pelado que nadie puede reconstruir.
         priceBreakdown: totalBreakdown,
         notes: notesParts.join(' | '),
+        // #270 — además del texto en `notes` (que no cambia), la llegada estimada y el pedido
+        // especial se guardan estructurados para el correo de confirmación y el recibo.
+        estimatedArrival: typeof estimatedArrival === 'string' && estimatedArrival.trim() ? estimatedArrival.trim() : undefined,
+        specialRequests: typeof specialRequests === 'string' && specialRequests.trim() ? specialRequests.trim() : undefined,
         accessToken: crypto.randomUUID(),
         // F2 2.5 — persistimos el promoCode validado (upper-case). Upsells van en `notes`
         // (no hay tabla puente reservation_upsells en este cambio).

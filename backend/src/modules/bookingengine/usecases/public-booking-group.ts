@@ -42,7 +42,7 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
-import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
+import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, UpsellLine, ChildAmenityLine } from './public-booking'
 import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
@@ -428,6 +428,8 @@ export async function createPublicBookingGroup(
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // #270 — snapshot estructurado (precio congelado) para `priceBreakdown.upsellLines` de la líder.
+  const upsellLines: UpsellLine[] = []
   if (upsellItems.length > 0 && hotelUpsellsMap) {
     for (const item of upsellItems as UpsellItem[]) {
       const found = hotelUpsellsMap.get(item.id)
@@ -436,6 +438,10 @@ export async function createPublicBookingGroup(
       const lineTotal = Number(found.price) * qty
       upsellsTotal += lineTotal
       upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
+      upsellLines.push({
+        id: String(found.id), name: String(found.name ?? ''),
+        price: Number(found.price), quantity: qty, total: round2(lineTotal),
+      })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     logger?.warn('createPublicBookingGroup: upsells sin extraDeps.upsells cableado — se persisten en notes sin precios', { hotelId })
@@ -472,6 +478,7 @@ export async function createPublicBookingGroup(
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
+    upsellLines,
     childAmenitiesTotal,
     roomAmenitiesTotal,
     taxes,
@@ -582,6 +589,11 @@ export async function createPublicBookingGroup(
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,
             notes: notesParts.join(' | '),
+            // #270 — llegada estimada y pedido especial estructurados (además del texto en
+            // `notes`, que no cambia). Van en TODAS las filas del grupo: cada unidad física
+            // comparte la misma llegada y el mismo pedido del huésped.
+            estimatedArrival: typeof estimatedArrival === 'string' && estimatedArrival.trim() ? estimatedArrival.trim() : undefined,
+            specialRequests: typeof specialRequests === 'string' && specialRequests.trim() ? specialRequests.trim() : undefined,
             accessToken: sharedAccessToken,
             promoCode: promoCode ? String(promoCode).trim().toUpperCase() : undefined,
             // Tarea 3.4 (corrección 2026-08-25) — mismo criterio que public-booking.ts:
