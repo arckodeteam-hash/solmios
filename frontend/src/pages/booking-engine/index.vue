@@ -401,6 +401,22 @@
                 </div>
               </div>
 
+              <!-- REQ-03 (#235, mudado de Configuración Base) — tope de niños/bebés que NO
+                   consumen plaza por habitación. Vacío = sin límite (null); nunca se precarga un
+                   número por default. -->
+              <div v-if="childPolicy.acceptChildren" class="mt-4 max-w-xs">
+                <label for="booking-engine-max-ninos-sin-plaza" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Máximo de niños que no consumen plaza por habitación</label>
+                <input id="booking-engine-max-ninos-sin-plaza" name="maxFreeChildrenPerRoom"
+                  v-model="childPolicy.maxFreeChildrenPerRoom"
+                  type="number" min="0" step="1" placeholder="Sin límite"
+                  class="w-full h-10 px-4 rounded-xl border text-sm focus:outline-none focus:border-cyan"
+                  :class="childPolicyMaxFreeChildrenError ? 'border-warning' : 'border-border'"
+                />
+                <p class="mt-1 text-[10px]" :class="childPolicyMaxFreeChildrenError ? 'text-warning font-bold' : 'text-text-muted'">
+                  {{ childPolicyMaxFreeChildrenError || 'Se aplica a cada habitación de la reserva, sin importar su tipo. Vacío = sin límite.' }}
+                </p>
+              </div>
+
               <!-- Tarea "Cobro % niños" (2026-09-09) — cada niño CON PLAZA (nunca bebés ni niños
                    libres) paga este % del "valor de un adulto" en vez del precio completo de
                    ocupante. Apagado por default: nada cambia hasta que el hotel lo habilite. -->
@@ -615,9 +631,13 @@ const form = reactive<BookingConfig>(defaultConfig())
 // Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
 // NUNCA hardcodeado a 50): cada niño con plaza paga ese % del "valor de un adulto".
 // #292 — la cuna ya no es config global: es la amenidad `custom:cuna` de cada habitación.
+// REQ-03 (#235, mudado de Configuración Base) — `maxFreeChildrenPerRoom`: tope de niños/bebés
+// que no consumen plaza por habitación (entero ≥ 0). `null` = sin límite; el input vacío se
+// guarda como null, NUNCA se precarga un número por default.
 const childPolicy = reactive({
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
   childrenDiscountEnabled: false, childrenRatePercent: 50,
+  maxFreeChildrenPerRoom: null as number | string | null,
 })
 const childPolicyAgeError = computed(() =>
   childPolicy.maxFreeAge > childPolicy.maxChildAge
@@ -636,6 +656,18 @@ const childPolicyRateError = computed(() => {
   const pct = childPolicy.childrenRatePercent
   return !Number.isFinite(pct) || pct < 1 || pct > 100
     ? 'El porcentaje de tarifa para niños debe estar entre 1% y 100%.'
+    : ''
+})
+/** REQ-03 — input vacío/null → null (sin límite); cualquier otra cosa → Number (validado aparte). */
+function normalizeMaxFreeChildren(v: number | string | null): number | null {
+  if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null
+  return Number(v)
+}
+// REQ-03 — vacío/null es válido (sin límite); si hay valor, entero ≥ 0 (mismo criterio que el backend).
+const childPolicyMaxFreeChildrenError = computed(() => {
+  const maxFree = normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom)
+  return maxFree !== null && (!Number.isInteger(maxFree) || maxFree < 0)
+    ? 'Debe ser un entero mayor o igual a 0.'
     : ''
 })
 
@@ -708,6 +740,10 @@ async function saveConfig() {
     toast.error(childPolicyRateError.value)
     return
   }
+  if (childPolicyMaxFreeChildrenError.value) {
+    toast.error(childPolicyMaxFreeChildrenError.value)
+    return
+  }
   // #266: el backend exige entero entre 15 y 1440 minutos (400 si no). Normalizar antes de
   // mandar para que un input vacío / decimal / fuera de rango no rompa el guardado.
   form.pendingTtlMinutes = clampPendingTtlMinutes(form.pendingTtlMinutes)
@@ -717,7 +753,7 @@ async function saveConfig() {
   try {
     const [updated] = await Promise.all([
       BookingEngineService.updateConfig(form),
-      ConfigService.set('child_policy', { ...childPolicy }),
+      ConfigService.set('child_policy', { ...childPolicy, maxFreeChildrenPerRoom: normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom) }),
     ])
     // El backend puede normalizar/normalizar campos: reflotar el form con la respuesta.
     Object.assign(form, updated)
