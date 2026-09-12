@@ -763,6 +763,68 @@ confirmación pública con plazo y rama rechazada (es/en/pt en `useBookingI18n.t
 - WHEN el huésped abre la confirmación de una reserva pendiente → ve "El hotel revisará su reserva en las próximas 24 h"
 - AND de una rechazada con `refundAmount` 150.00 → ve "El hotel no pudo confirmar su reserva", "Se reembolsó 150.00 USD al medio de pago original" y el motivo, sin enlace "Cancelar reserva"
 
+### Requirement: Envío automático de la habitación asignada al huésped (#297)
+
+El hotel MUST poder configurar con cuánta anticipación se le manda al huésped la información
+de su habitación **realmente asignada**, y el sistema MUST mandarla solo por el canal que el
+hotel eligió, sin hardcodear el plazo.
+
+**Configuración.** `configuration` key `room_info_config` por hotel (`GET/POST
+/api/configuracion`, editable en `/panel/settings` → "Datos de la habitación al huésped"):
+`{ enabled: boolean, hoursBefore: 1–168, channel: 'email'|'whatsapp'|'both',
+whatsappTemplateId: string }`. `parseRoomInfoConfig` (`shared/usecases/room-info-notice.ts`)
+aplica defaults `{enabled:false, hoursBefore:24, channel:'email'}` y clampa las horas: un
+valor fuera de rango NUNCA apaga ni desborda el aviso. Kill-switch operativo
+`ROOM_INFO_NOTICE_DISABLED=1` (loguea y no barre).
+
+**Cron.** `shared/usecases/room-info-cron.ts` (tick 10 min, registrado en
+`composition-root.ts`) MUST recorrer, por hotel habilitado, las reservas `confirmed` (lista
+blanca: `pending` no pagó, `checked_in` ya tiene la habitación) con llegada real —
+`reservationAccessWindow().startMs`, en la zona del hotel — a `<= hoursBefore` horas y no más
+de 24 h pasada. Sin `roomId` MUST NOT mandar nada (CA13). En cada tick relee habitación,
+código vigente de `lock_codes` (`status:'active'`) y huésped: el aviso lleva SIEMPRE los datos
+actuales (CA14).
+
+**Contenido.** Número de habitación, nombre/identificador si existe, código de acceso si hay
+uno activo, horario de acceso (`effectiveCheckInTime/OutTime`) y enlace al check-in digital
+(`PUBLIC_URL/checkin/<hash>`) si `preCheckinStatus != 'completed'`. Una sección sin dato no se
+muestra; nunca se manda un campo vacío o inventado. Email renderizado en runtime
+(`renderRoomInfoEmail`, encolado con `EmailService.enqueue`, `relatedType:'room_info'`);
+WhatsApp por la Cloud API de Meta con la plantilla **aprobada** que el hotel configuró
+(`reservas.whatsappPort`, variables por `resolverVariables`, que ahora resuelve `lock_codes`).
+
+**Dedup y reintento.** Cada intento MUST quedar en `message_logs` con `channel`
+(`email`|`whatsapp_api`), `status` (`sent`|`failed`), `recipient`, `sentAt`, `errorMessage`
+(motivo ya traducido) y `response = auto:room_info:<huella>`, donde la huella es
+`sha256(roomId|código)` recortada (no deja el PIN en texto plano). Misma huella + canal ya
+`sent` → MUST NOT reenviar (CA15); huella distinta (se reasignó la habitación o cambió el
+código) → se manda de nuevo con los datos nuevos. Un `failed` se reintenta en el tick
+siguiente hasta 3 veces por huella + canal (CA20); el tope se reinicia solo si cambia la
+huella. Sin plantilla aprobada, sin teléfono válido, sin WhatsApp conectado o sin email del
+huésped, el intento queda `failed` con su motivo, visible en Mensajería → Historial de envíos.
+
+#### Scenario: Anticipación configurable
+
+- GIVEN `room_info_config` `{enabled:true, hoursBefore:12, channel:'email'}` y una reserva `confirmed` con habitación 204 que llega mañana 15:00
+- WHEN corre el cron faltando 13 h → no manda; faltando 11 h → encola UN email con "204", el código activo de `lock_codes` y el horario de acceso, y deja `message_logs` `channel:'email'`, `status:'sent'`
+- AND con `hoursBefore:48` manda faltando 40 h
+
+#### Scenario: Sin habitación, sin duplicados, datos actualizados
+
+- GIVEN la misma config y una reserva sin `roomId` → el cron no manda ni registra nada
+- WHEN corre dos veces sobre una reserva ya avisada → un solo envío
+- AND se reasigna la reserva a otra habitación → el siguiente tick manda el aviso con la habitación nueva
+
+#### Scenario: Fallo registrado y reintento
+
+- GIVEN el encolado del email falla
+- THEN queda una fila `failed` con `errorMessage` y el tick siguiente reintenta; tras 3 `failed` con la misma huella no vuelve a intentar hasta que cambie la habitación o el código
+
+#### Scenario: WhatsApp según config
+
+- GIVEN `channel:'both'` y una plantilla `approved` con `{room_number}` y `{lock_codes}` → email + `sendTemplate` con el número y el código, fila `whatsapp_api` `sent` con `providerMessageId`
+- AND `channel:'whatsapp'` sin plantilla configurada → fila `whatsapp_api` `failed` con motivo, sin llamar a Meta
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir

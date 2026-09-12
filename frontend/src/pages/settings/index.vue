@@ -266,6 +266,54 @@
             </label>
           </div>
         </SectionCard>
+
+        <!-- #297: aviso automático con los datos de la habitación asignada (número, código de acceso,
+             horario) N horas antes de la llegada, por email y/o WhatsApp. configuration('room_info_config'). -->
+        <SectionCard title="Datos de la habitación al huésped"
+          subtitle="Enviá número, código de acceso y horario de la habitación asignada antes de la llegada">
+          <template #actions>
+            <button @click="saveRoomInfo" :disabled="roomInfoSaving"
+              class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
+              {{ roomInfoSaving ? 'Guardando…' : 'Guardar aviso de habitación' }}
+            </button>
+          </template>
+          <div class="space-y-3">
+            <label for="room-info-enabled" class="flex items-center justify-between gap-4 rounded-xl bg-surface p-3.5 cursor-pointer">
+              <span class="text-sm font-bold text-navy">Enviar automáticamente
+                <span class="block text-[11px] font-normal text-text-muted">Se manda cuando la habitación ya está asignada; si cambia la habitación o el código, se vuelve a avisar</span></span>
+              <input id="room-info-enabled" name="roomInfoEnabled" type="checkbox" v-model="roomInfo.enabled" aria-label="Enviar automáticamente los datos de la habitación" class="h-5 w-5 shrink-0 rounded text-cyan cursor-pointer" />
+            </label>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="room-info-hours" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Horas antes de la llegada</label>
+                <input id="room-info-hours" name="roomInfoHoursBefore" v-model.number="roomInfo.hoursBefore" type="number" min="1" max="168" step="1" aria-label="Horas antes de la llegada"
+                  class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy text-right tabular-nums focus:border-navy focus:outline-none" />
+                <p class="text-[10px] text-text-muted mt-1">Entre 1 y 168 horas (7 días)</p>
+              </div>
+              <div>
+                <label for="room-info-channel" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Canal</label>
+                <select id="room-info-channel" name="roomInfoChannel" v-model="roomInfo.channel" aria-label="Canal de envío" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+                  <option value="email">Correo electrónico</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="both">Correo y WhatsApp</option>
+                </select>
+              </div>
+              <div v-if="roomInfo.channel !== 'email'" class="sm:col-span-2">
+                <label for="room-info-template" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Plantilla de WhatsApp</label>
+                <select id="room-info-template" name="roomInfoWhatsappTemplateId" v-model="roomInfo.whatsappTemplateId" aria-label="Plantilla de WhatsApp aprobada" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+                  <option value="">Elegí una plantilla aprobada</option>
+                  <option v-for="t in roomInfoTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
+                </select>
+                <p v-if="roomInfoTemplates.length === 0" class="text-[10px] text-text-muted mt-1">
+                  No hay plantillas aprobadas por Meta: creá una en Mensajería → Plantillas WhatsApp
+                </p>
+              </div>
+            </div>
+            <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
+              Sin habitación asignada no se envía nada. Cada envío queda en el Historial de envíos.
+            </p>
+          </div>
+        </SectionCard>
       </div>
 
       <!-- Columna lateral: identidad y plan -->
@@ -640,6 +688,7 @@ import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { AuthService } from '@/services/Auth.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
+import { WhatsappService, type WhatsappTemplate } from '@/services/Whatsapp.service'
 import { SignupService, type PublicPlan } from '@/services/Signup.service'
 import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
 import { useAuthStore } from '@/stores/auth.store'
@@ -828,6 +877,64 @@ async function saveAutomation() {
     toast.error((e as Error).message || 'No se pudo guardar')
   } finally {
     automationSaving.value = false
+  }
+}
+
+// #297: aviso con los datos de la habitación asignada N horas antes de la llegada.
+// configuration('room_info_config'), mismo patrón que automation_config. El backend
+// (room-info-notice.ts) parsea con defaults {enabled:false, hoursBefore:24, channel:'email', whatsappTemplateId:''}.
+type RoomInfoChannel = 'email' | 'whatsapp' | 'both'
+const ROOM_INFO_CHANNELS: RoomInfoChannel[] = ['email', 'whatsapp', 'both']
+const roomInfo = reactive<{ enabled: boolean; hoursBefore: number; channel: RoomInfoChannel; whatsappTemplateId: string }>({
+  enabled: false, hoursBefore: 24, channel: 'email', whatsappTemplateId: '',
+})
+const roomInfoSaving = ref(false)
+// Sólo plantillas aprobadas por Meta: una pendiente o rechazada no se puede enviar.
+const roomInfoTemplates = ref<WhatsappTemplate[]>([])
+async function loadRoomInfo() {
+  try {
+    const c = await ConfigService.get('room_info_config') as {
+      enabled?: boolean; hoursBefore?: number | string; channel?: string; whatsappTemplateId?: string
+    } | null
+    if (c && typeof c === 'object') {
+      roomInfo.enabled = !!c.enabled
+      roomInfo.hoursBefore = Number(c.hoursBefore) || 24
+      roomInfo.channel = ROOM_INFO_CHANNELS.includes(c.channel as RoomInfoChannel) ? (c.channel as RoomInfoChannel) : 'email'
+      roomInfo.whatsappTemplateId = typeof c.whatsappTemplateId === 'string' ? c.whatsappTemplateId : ''
+    }
+  } catch { /* defaults: apagado, 24 h, email */ }
+  // Sin await: el catálogo de plantillas es un extra del selector, no puede demorar el resto de
+  // la pantalla (y en los tests que no mockean el servicio, una llamada real colgaría el mount).
+  void loadRoomInfoTemplates()
+}
+async function loadRoomInfoTemplates() {
+  try {
+    const res = await WhatsappService.list()
+    roomInfoTemplates.value = (res?.data ?? []).filter((t) => t.approvalStatus === 'approved')
+  } catch { roomInfoTemplates.value = [] }
+}
+async function saveRoomInfo() {
+  const hours = Number(roomInfo.hoursBefore)
+  if (!Number.isInteger(hours) || hours < 1 || hours > 168) {
+    toast.error('Las horas deben ser un entero entre 1 y 168')
+    return
+  }
+  if (roomInfo.channel !== 'email' && !roomInfo.whatsappTemplateId) {
+    toast.error('Elegí una plantilla de WhatsApp aprobada')
+    return
+  }
+  roomInfoSaving.value = true
+  try {
+    await ConfigService.set('room_info_config', {
+      enabled: roomInfo.enabled, hoursBefore: hours, channel: roomInfo.channel, whatsappTemplateId: roomInfo.whatsappTemplateId,
+    })
+    await nextTick()
+    markClean()
+    toast.success('Aviso de habitación guardado')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    roomInfoSaving.value = false
   }
 }
 
@@ -1048,7 +1155,7 @@ function snapshot(): string {
   return JSON.stringify({
     form: form.value, ownerUserName: ownerUserName.value,
     emergencyContacts: emergencyContacts.value,
-    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation,
+    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, roomInfo,
     childPolicy,
     // Slug, servicios hotel-level, traducciones públicas y flags de reseñas públicas
     // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
@@ -1199,6 +1306,7 @@ onMounted(async () => {
     await loadCurrency()
     await loadGuaranteePin()
     await loadAutomation()
+    await loadRoomInfo()
     await loadChildPolicy()
     await loadInvoicePolicy()
   } catch (e) {
