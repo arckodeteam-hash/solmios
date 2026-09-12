@@ -204,10 +204,15 @@ export interface OrderItemModifierSnapshot {
   inventoryQuantity?: number
 }
 
-/** KDS — ajuste de receta hecho por cocina sobre una línea. Nombres de ingrediente, ya normalizados (trim, sin duplicados). */
+/**
+ * Ajuste de receta sobre una línea, hecho por cocina (KDS) o por el mozo (comanda). Nombres de
+ * ingrediente ya normalizados (trim, sin duplicados). `removed` = SIN, `added` = CON (extra),
+ * `doubled` = DOBLE porción. Un nombre no puede estar a la vez en `removed` y en `doubled`.
+ */
 export interface IngredientChanges {
   removed: string[]
   added: string[]
+  doubled: string[]
 }
 
 /** KDS — un ingrediente de la receta (menu_item_recipes ⋈ inventory_items), resuelto por el server para el tablero. */
@@ -233,7 +238,7 @@ export interface OrderItemDTO {
   lineTotal: number
   // F1: snapshot de modificadores elegidos, en la MISMA fila (no sub-líneas). null/ausente = sin modificadores.
   modifiers?: OrderItemModifierSnapshot[] | null
-  // KDS — ingredientes que cocina quitó/agregó a este plato (texto). null = receta tal cual. Ver model.ts.
+  // Ingredientes que cocina o el mozo quitaron/agregaron/doblaron en este plato (texto). null = receta tal cual. Ver model.ts.
   ingredientChanges?: IngredientChanges | null
   // F2 — 'item' (default, retrocompat) | 'combo_header' | 'combo_component'. Ver model.ts.
   kind?: 'item' | 'combo_header' | 'combo_component'

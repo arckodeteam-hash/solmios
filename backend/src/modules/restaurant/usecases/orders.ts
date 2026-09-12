@@ -193,10 +193,13 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
   return order
 }
 
-export async function listOrders(deps: OrdersDeps, query: { status?: string; tableId?: string } | undefined, user: CurrentUser): Promise<{ data: OrderDTO[]; total: number }> {
+export async function listOrders(deps: OrdersDeps, query: { status?: string; tableId?: string; waiterId?: string; businessDate?: string } | undefined, user: CurrentUser): Promise<{ data: OrderDTO[]; total: number }> {
   const filters: Record<string, unknown> = { hotelId: hotelFor(user) }
   if (query?.status) filters.status = query.status
   if (query?.tableId) filters.tableId = query.tableId
+  // "Mis mesas" del mozo: sus comandas (waiterId = users.id) y, para lo cobrado hoy, el día contable del hotel.
+  if (query?.waiterId) filters.waiterId = query.waiterId
+  if (query?.businessDate) filters.businessDate = query.businessDate
   const data = (await deps.orders.findMany(filters)) as OrderDTO[]
   data.sort((a, b) => String(b.openedAt || '').localeCompare(String(a.openedAt || '')))
   // #209: etiqueta de habitación/huésped solo en las comandas vivas (las que el salón pinta); el

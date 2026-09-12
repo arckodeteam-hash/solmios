@@ -81,16 +81,16 @@ describe('KDS con receta — la cola trae los ingredientes de cada plato', () =>
 
 describe('KDS con receta — cocina quita/agrega ingredientes', () => {
   it('normaliza: recorta, saca vacíos y repetidos (sin distinguir mayúsculas), ignora lo que no es string', () => {
-    expect(normalizeIngredientChanges({ removed: [' Cebolla ', 'cebolla', '', 7, 'Ajo'], added: ['Queso extra'] }))
-      .toEqual({ removed: ['Cebolla', 'Ajo'], added: ['Queso extra'] })
-    expect(normalizeIngredientChanges(undefined)).toEqual({ removed: [], added: [] })
+    expect(normalizeIngredientChanges({ removed: [' Cebolla ', 'cebolla', '', 7, 'Ajo'], added: ['Queso extra'], doubled: ['Queso', 'ajo'] }))
+      .toEqual({ removed: ['Cebolla', 'Ajo'], added: ['Queso extra'], doubled: ['Queso'] })   // "ajo" quitado no puede ir doble
+    expect(normalizeIngredientChanges(undefined)).toEqual({ removed: [], added: [], doubled: [] })
   })
 
   it('persiste el cambio en la línea viva, no toca precio ni estado y avisa por el canal en vivo', async () => {
     const { svc, linesStore, events } = setup()
-    const updated = await svc.setLineIngredients('l1', { removed: ['Queso'], added: ['Aceitunas'] }, cook)
-    expect(updated.ingredientChanges).toEqual({ removed: ['Queso'], added: ['Aceitunas'] })
-    expect(linesStore[0].ingredientChanges).toEqual({ removed: ['Queso'], added: ['Aceitunas'] })
+    const updated = await svc.setLineIngredients('l1', { removed: ['Queso'], added: ['Aceitunas'], doubled: ['Harina'] }, cook)
+    expect(updated.ingredientChanges).toEqual({ removed: ['Queso'], added: ['Aceitunas'], doubled: ['Harina'] })
+    expect(linesStore[0].ingredientChanges).toEqual({ removed: ['Queso'], added: ['Aceitunas'], doubled: ['Harina'] })
     expect(linesStore[0].status).toBe('preparing')
     expect(linesStore[0].lineTotal).toBe(10)
     expect(events.map((e) => e.id)).toEqual(['l1'])
@@ -98,16 +98,23 @@ describe('KDS con receta — cocina quita/agrega ingredientes', () => {
 
   it('listas vacías = volver a la receta tal cual (null en la fila)', async () => {
     const { svc, linesStore } = setup()
-    linesStore[0].ingredientChanges = { removed: ['Queso'], added: [] }
-    await svc.setLineIngredients('l1', { removed: [], added: [] }, cook)
+    linesStore[0].ingredientChanges = { removed: ['Queso'], added: [], doubled: [] }
+    await svc.setLineIngredients('l1', { removed: [], added: [], doubled: [] }, cook)
     expect(linesStore[0].ingredientChanges).toBeNull()
   })
 
-  it('un plato ya servido → rechaza; una comanda fuera de cocina → rechaza; línea inexistente → 404', async () => {
+  it('el mozo edita la receta en una comanda `open` (antes de enviar a cocina)', async () => {
+    const { svc, linesStore } = setup('open')
+    linesStore[0].status = 'new'
+    await svc.setLineIngredients('l1', { doubled: ['Queso'] }, { id: 'u-mozo', hotelId: 'h1', role: 'waiter' })
+    expect(linesStore[0].ingredientChanges).toEqual({ removed: [], added: [], doubled: ['Queso'] })
+  })
+
+  it('un plato ya servido → rechaza; una comanda cerrada → rechaza; línea inexistente → 404', async () => {
     const { svc } = setup()
-    await expect(svc.setLineIngredients('l2', { removed: ['x'] }, cook)).rejects.toThrow('ya no está en cocina')
+    await expect(svc.setLineIngredients('l2', { removed: ['x'] }, cook)).rejects.toThrow('ya no se puede modificar')
     const paid = setup('paid')
-    await expect(paid.svc.setLineIngredients('l1', { removed: ['x'] }, cook)).rejects.toThrow('ya no está en cocina')
+    await expect(paid.svc.setLineIngredients('l1', { removed: ['x'] }, cook)).rejects.toThrow('ya está cerrada')
     await expect(svc.setLineIngredients('nope', { removed: ['x'] }, cook)).rejects.toThrow('no encontrada')
   })
 
@@ -115,5 +122,15 @@ describe('KDS con receta — cocina quita/agrega ingredientes', () => {
     const { svc, linesStore } = setup('preparing', 'h2')
     await expect(svc.setLineIngredients('l1', { removed: ['Queso'] }, { ...cook, hotelId: 'h2' })).rejects.toThrow('IDOR')
     expect(linesStore[0].ingredientChanges).toBeUndefined()
+  })
+})
+
+describe('receta de un ítem para la comanda del mozo', () => {
+  it('devuelve los ingredientes del puerto; sin receta o sin puerto, lista vacía', async () => {
+    const { svc } = setup()
+    expect((await svc.menuItemIngredients('m1', cook)).data.map((i) => i.name)).toEqual(['Harina', 'Queso'])
+    expect((await svc.menuItemIngredients('m2', cook)).total).toBe(0)
+    svc.setRecipePorts({ getRecipeIngredients: undefined })
+    expect((await svc.menuItemIngredients('m1', cook)).total).toBe(0)
   })
 })

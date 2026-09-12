@@ -250,3 +250,17 @@ describe('#214 — con pagos parciales (cobrados o un Checkout abierto por una p
     expect(tpl, 'la carta explica por qué no se pueden agregar ítems').toMatch(/La cuenta ya tiene pagos parciales/)
   })
 })
+
+// Receta editable desde la comanda: el mozo ve los ingredientes del plato y los quita / dobla / agrega
+// a pedido del cliente, con el MISMO editor que el KDS. Solo en líneas vivas que no sean header de combo,
+// y solo con permiso de edición y comanda editable (el backend rechaza igual: 403 / comanda cerrada).
+describe('comanda.vue — receta por línea (LineIngredientsEditor)', () => {
+  it('monta el editor en cada línea viva con `editable && editPerm` y pinta la línea devuelta', () => {
+    const src = comanda()
+    expect(src).toMatch(/import LineIngredientsEditor from '@\/components\/features\/restaurante\/LineIngredientsEditor\.vue'/)
+    expect(src).toMatch(/<LineIngredientsEditor v-if="l\.kind !== 'combo_header' && isLineActive\(l\)" :line="l" :editable="editable && editPerm"/)
+    expect(src).toMatch(/function onLineIngredientsUpdated\(line: OrderLine, updated: OrderLine\)/)
+    // Ya no hay chips de solo lectura duplicando lo que el editor muestra.
+    expect(src).not.toMatch(/data-testid="line-ingredient-changes"/)
+  })
+})
