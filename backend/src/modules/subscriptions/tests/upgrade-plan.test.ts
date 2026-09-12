@@ -10,7 +10,7 @@
 import { describe, it, expect, mock, beforeEach, afterAll, setSystemTime } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
 import type { RepositoryAdapter } from 'arckode-framework'
-import { ConflictError, ValidationError } from 'arckode-framework'
+import { ConflictError, ErrorContract, ValidationError } from 'arckode-framework'
 
 // `mock.module` es GLOBAL al proceso de bun test (misma advertencia que
 // tests/create-checkout-session.test.ts): se parte del módulo real y solo se pisa `getClient`,
@@ -42,7 +42,7 @@ afterAll(() => {
   }))
 })
 
-const { previewUpgrade, applyUpgrade } = await import('../usecases/upgrade-plan')
+const { previewUpgrade, applyUpgrade, PaymentProviderError } = await import('../usecases/upgrade-plan')
 
 // Fin del período vigente que devuelve Stripe en el ítem (la API 2025-08-27 lo movió ahí).
 const PERIOD_END = 1893456000
@@ -135,8 +135,31 @@ function activeSub(over: any = {}) {
 
 /** Un error como los que tira stripe-node: lo que lo distingue es `type`, igual que en
  *  `payment-requests/usecases/live-session.ts`. */
-function errorDeStripe(type: string, message: string): Error {
-  return Object.assign(new Error(message), { type })
+function errorDeStripe(type: string, message: string, code?: string): Error {
+  return Object.assign(new Error(message), { type, ...(code ? { code } : {}) })
+}
+
+/** Logger con la misma forma que `silentLogger()` pero que guarda lo que se le pidió loguear:
+ *  #339 exige que un fallo de Stripe quede en `error` con hotel y plan, no sólo que suba. */
+function loggerEspia() {
+  const errores: Array<[string, any]> = []
+  const logger = {
+    error: (msg: string, ctx?: any) => { errores.push([msg, ctx]) },
+    warn: () => {}, info: () => {}, debug: () => {},
+  }
+  return { logger: logger as any, errores }
+}
+
+/** #339: lo que TODO fallo de Stripe (que no sea de tarjeta) tiene que cumplir al salir del
+ *  usecase — un `ErrorContract` que el router mapea a 502 con el motivo de Stripe, en vez del 500
+ *  "Error interno del servidor" sin explicación que veía la persona. */
+function esperarErrorDelProveedor(err: any, motivo: string | RegExp): void {
+  expect(err).toBeInstanceOf(ErrorContract)
+  expect(err).toBeInstanceOf(PaymentProviderError)
+  expect(err.httpStatus).toBe(502)
+  expect(err.errorCode).toBe('PAYMENT_PROVIDER_ERROR')
+  expect(err.message).toMatch(motivo)
+  expect(err.message).not.toMatch(/método de pago/i)
 }
 
 function setup(subs: any[]) {
@@ -419,9 +442,15 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
   // Revisión #84: el `catch` del update envolvía CUALQUIER error de Stripe en "revisá tu método de
   // pago". Un price inválido, un timeout o una caída de la API salían disfrazados de problema de
   // la tarjeta del hotel: la persona revisa una tarjeta que está bien y el log no grita lo que es
-  // un fallo de infraestructura. Sólo el `StripeCardError` se traduce; el resto sube tal cual.
-  it('un error de Stripe que NO es de tarjeta sube TAL CUAL, sin disfrazarse de método de pago', async () => {
+  // un fallo de infraestructura. Sólo el `StripeCardError` se traduce a tarjeta.
+  //
+  // #339: el resto tampoco puede subir CRUDO — el router sólo mapea `ErrorContract`, así que un
+  // error de stripe-node terminaba en un 500 "Error interno del servidor" sin motivo. Sale como
+  // `PaymentProviderError` (502) con lo que dijo Stripe y queda en el log con hotel y plan.
+  it('un error de Stripe que NO es de tarjeta sale como PaymentProviderError 502, sin disfrazarse de método de pago', async () => {
     const { deps, subRows, hotelRows } = setup([activeSub()])
+    const { logger, errores } = loggerEspia()
+    deps.logger = logger
     const escritas = espiarEscrituras(deps)
     const original = errorDeStripe('StripeAPIError', 'An error occurred with our connection to Stripe.')
     stripeClient.subscriptions.update = async () => { throw original }
@@ -429,10 +458,17 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     let err: any
     try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
 
-    // La MISMA instancia: no se envuelve, no se pierde el tipo ni el stack.
-    expect(err).toBe(original)
+    // Se traduce a un error que el router SÍ sabe devolver, con el motivo de Stripe a la vista.
+    esperarErrorDelProveedor(err, /An error occurred with our connection to Stripe/)
     expect(err).not.toBeInstanceOf(ValidationError)
-    expect(err.message).not.toMatch(/método de pago/i)
+    expect(err.message).toMatch(/plan actual no cambió/i)
+    // Y queda en el log como error del sistema, con lo necesario para investigarlo.
+    expect(errores).toHaveLength(1)
+    expect(errores[0][0]).toMatch(/error de Stripe, no del método de pago/i)
+    expect(errores[0][1]).toMatchObject({
+      hotelId: 'h1', planId: 'plan-pro', stripeType: 'StripeAPIError',
+      error: 'An error occurred with our connection to Stripe.',
+    })
     // Pero la fila SÍ se marca: Stripe cachea la respuesta de cualquier error una vez que el
     // endpoint empezó a ejecutarse, así que sin el rastro el reintento —tras un error transitorio
     // ya resuelto— reusaría la clave y recibiría el mismo error cacheado por hasta 24h.
@@ -448,19 +484,35 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
   it('un StripeInvalidRequestError (price mal configurado) tampoco se traduce como tarjeta, pero igual marca el intento', async () => {
     const { deps, subRows } = setup([activeSub()])
     const escritas = espiarEscrituras(deps)
-    const original = errorDeStripe('StripeInvalidRequestError', 'No such price: price_pro_349')
+    const original = errorDeStripe('StripeInvalidRequestError', 'No such price: price_pro_349', 'resource_missing')
     stripeClient.subscriptions.update = async () => { throw original }
 
     let err: any
     try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
 
-    expect(err).toBe(original)
+    esperarErrorDelProveedor(err, /No such price: price_pro_349/)
     expect(err.message).not.toMatch(/revisá tu método de pago/i)
     expect(subRows[0].planId).toBe('plan-ess')
     // Corregido el `stripePriceId` del plan, el reintento tiene que EJECUTARSE: sin la marca
     // chocaría con el mismo error cacheado bajo la clave de idempotencia.
     expect(escritas).toHaveLength(1)
     expect(escritas[0].patch).toEqual({})
+  })
+
+  // #339: el `retrieve` de `loadUpgrade` corre ANTES del update. Si falla ahí, no hay intento que
+  // marcar (nada llegó a la clave de idempotencia) y el error tiene que salir con el mismo contrato.
+  it('si Stripe falla al LEER la suscripción antes del cobro: PaymentProviderError 502, sin update ni marca', async () => {
+    const { deps, subRows } = setup([activeSub()])
+    const escritas = espiarEscrituras(deps)
+    stripeClient.subscriptions.retrieve = async () => { throw errorDeStripe('StripeConnectionError', 'Request timed out') }
+
+    let err: any
+    try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    esperarErrorDelProveedor(err, /Request timed out/)
+    expect(updates).toHaveLength(0)
+    expect(escritas).toHaveLength(0)
+    expect(subRows[0].planId).toBe('plan-ess')
   })
 
   // Si Stripe devolviera una respuesta cacheada por idempotencia (o el ítem no fuera el que se
@@ -572,6 +624,73 @@ describe('previewUpgrade — cuánto va a pagar, sin cobrar', () => {
     expect(previews[0].subscription_details.items).toEqual([{ id: 'si_1', price: 'price_ess_99' }])
     expect(res.planId).toBe('plan-ess')
     expect(res.currentPlanId).toBe('plan-pro')
+  })
+
+  // #339 — "Error interno del servidor" al calcular el cambio de plan. `createPreview` lanzaba (un
+  // `stripePriceId` que Stripe no conoce, una caída de su API) y el error subía crudo: el router
+  // sólo mapea `ErrorContract`, así que la persona veía un 500 sin motivo y el log no tenía ni el
+  // hotel. Tiene que salir como 502 del proveedor, con lo que dijo Stripe, y logueado con contexto.
+  it('si createPreview falla en Stripe: PaymentProviderError 502 con el motivo, logueado y sin escribir nada', async () => {
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+    const { logger, errores } = loggerEspia()
+    deps.logger = logger
+    const escritas = espiarEscrituras(deps)
+    stripeClient.invoices.createPreview = async () => {
+      throw errorDeStripe('StripeInvalidRequestError', 'No such price: price_x', 'resource_missing')
+    }
+
+    let err: any
+    try { await previewUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    esperarErrorDelProveedor(err, /No such price: price_x/)
+    expect(err.message).toMatch(/calcular el cambio de plan/i)
+    expect(errores).toHaveLength(1)
+    expect(errores[0][1]).toMatchObject({
+      hotelId: 'h1', planId: 'plan-pro', stripeSubscriptionId: 'sub_1',
+      stripeType: 'StripeInvalidRequestError', stripeCode: 'resource_missing', error: 'No such price: price_x',
+    })
+    // El preview no cobra ni escribe, y fallar tampoco: ni update en Stripe ni escritura local.
+    expect(updates).toHaveLength(0)
+    expect(escritas).toHaveLength(0)
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
+  })
+
+  it('si subscriptions.retrieve falla en Stripe: mismo contrato (502 con el motivo), sin escribir nada', async () => {
+    const { deps, subRows } = setup([activeSub()])
+    const { logger, errores } = loggerEspia()
+    deps.logger = logger
+    const escritas = espiarEscrituras(deps)
+    stripeClient.subscriptions.retrieve = async () => { throw errorDeStripe('StripeAPIError', 'Stripe is down') }
+
+    let err: any
+    try { await previewUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    esperarErrorDelProveedor(err, /Stripe is down/)
+    expect(err.message).toMatch(/leer tu suscripción en Stripe/i)
+    expect(errores).toHaveLength(1)
+    expect(errores[0][1]).toMatchObject({ hotelId: 'h1', planId: 'plan-pro', stripeType: 'StripeAPIError' })
+    expect(previews).toHaveLength(0)
+    expect(escritas).toHaveLength(0)
+    expect(subRows[0].planId).toBe('plan-ess')
+  })
+
+  // Un rechazo PROPIO (plan retirado, mismo plan, sin suscripción) no es un fallo de Stripe: tiene
+  // su status y su mensaje y NO puede salir envuelto en un 502 que le mienta a la persona.
+  it('un ValidationError propio (plan desactivado) sigue saliendo como ValidationError, no envuelto en 502', async () => {
+    const { deps } = setup([activeSub()])
+    const { logger, errores } = loggerEspia()
+    deps.logger = logger
+
+    let err: any
+    try { await previewUpgrade(deps, 'h1', 'plan-retirado-false') } catch (e) { err = e }
+
+    expect(err).toBeInstanceOf(ValidationError)
+    expect(err).not.toBeInstanceOf(PaymentProviderError)
+    expect(err.httpStatus).toBe(400)
+    expect(err.message).toMatch(/desactivado/i)
+    expect(errores).toHaveLength(0)
+    expect(previews).toHaveLength(0)
   })
 })
 
