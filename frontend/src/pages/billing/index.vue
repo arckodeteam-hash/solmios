@@ -691,6 +691,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import { FoliosService, type Folio } from '@/services/Folios.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { useInvoiceActions } from '@/composables/useInvoiceActions'
 import { usePermissions } from '@/composables/usePermissions'
 
 const auth = useAuthStore()
@@ -776,12 +777,12 @@ const creditNoteTarget = ref<any>(null)
 const creditNoteReason = ref('')
 const issuingCreditNote = ref(false)
 
-// Envío de factura por email
-const showEmailModal = ref(false)
-const emailTarget = ref<Invoice | null>(null)
-const emailTo = ref('')
-const emailError = ref('')
-const sendingEmail = ref(false)
+// Imprimir / PDF / Email de una factura: lógica compartida con el modal de reserva (#254)
+const {
+  printFrame, showEmailModal, emailTarget, emailTo, emailError, sendingEmail,
+  closeEmailModal, confirmEmail,
+  printInvoice: printInvoiceRef, openEmailModal: openEmailModalRef, downloadPdf: downloadPdfRef,
+} = useInvoiceActions()
 
 // New Invoice state
 const showNewInvoiceModal = ref(false)
@@ -1016,79 +1017,9 @@ function closeViewModal() {
   viewInvoice.value = null
 }
 
-const printFrame = ref<HTMLIFrameElement | null>(null)
-
-async function printInvoice() {
-  if (!viewInvoice.value) return
-  try {
-    const html = await BillingService.print(viewInvoice.value.id)
-    if (typeof html === 'string' && html.includes('<!DOCTYPE html>') && printFrame.value) {
-      const doc = printFrame.value.contentDocument
-      if (doc) {
-        doc.open()
-        doc.write(html)
-        doc.close()
-        setTimeout(() => printFrame.value?.contentWindow?.print(), 300)
-      }
-    }
-  } catch { toast.error('Error al generar impresión') }
-}
-
-// Un `prompt()` no valida nada y no distingue "cancelé" de "escribí cualquier cosa": el email salía
-// al backend sin chequear formato. El modal valida antes de gastar el request.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
-
-function openEmailModal() {
-  if (!viewInvoice.value) return
-  emailTarget.value = viewInvoice.value
-  emailTo.value = ''
-  emailError.value = ''
-  showEmailModal.value = true
-}
-
-function closeEmailModal() {
-  showEmailModal.value = false
-  emailTarget.value = null
-  emailTo.value = ''
-  emailError.value = ''
-}
-
-async function confirmEmail() {
-  if (!emailTarget.value || sendingEmail.value) return
-  const to = emailTo.value.trim()
-  if (!to) { emailError.value = 'Ingresá un email'; return }
-  if (!EMAIL_RE.test(to)) { emailError.value = 'El email no tiene un formato válido'; return }
-
-  sendingEmail.value = true
-  emailError.value = ''
-  try {
-    const res = await BillingService.emailInvoice(emailTarget.value.id, to)
-    if (!res.configured) {
-      toast.warning('El hotel no tiene email configurado (SMTP/Resend). Configurarlo en Settings.')
-      closeEmailModal()
-      return
-    }
-    toast.success(`Factura enviada a ${to}`)
-    closeEmailModal()
-  } catch {
-    emailError.value = 'No se pudo enviar la factura. Intentá de nuevo.'
-  } finally {
-    sendingEmail.value = false
-  }
-}
-
-async function downloadPdf() {
-  if (!viewInvoice.value) return
-  try {
-    const blob = await BillingService.downloadPdf(viewInvoice.value.id)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${viewInvoice.value.number}.pdf`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch { toast.error('Error al generar el PDF') }
-}
+function printInvoice() { if (viewInvoice.value) return printInvoiceRef(viewInvoice.value) }
+function openEmailModal() { if (viewInvoice.value) openEmailModalRef(viewInvoice.value) }
+function downloadPdf() { if (viewInvoice.value) return downloadPdfRef(viewInvoice.value) }
 
 async function openNewInvoice() {
   newInvoice.value = { roomSearch: '', roomId: '', guestId: '', guestName: '', items: [{ description: '', amount: 0 }], notes: '' }

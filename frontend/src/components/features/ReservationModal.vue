@@ -4,9 +4,8 @@
 // Acciones: Confirmar / Anular / Factura (imprimible) + bonos (alojamiento / cliente).
 // Spec: openspec/changes/match-misterplan/specs/reservation-modal/spec.md (REQ-1 a REQ-12).
 
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { pushModal, popModal } from '@/composables/useModalStack'
-import { useRouter } from 'vue-router'
 import { ReservationService } from '@/services/Reservation.service'
 import { WhatsappService } from '@/services/Whatsapp.service'
 import type { WhatsappTemplate } from '@/services/Whatsapp.service'
@@ -16,6 +15,7 @@ import { FoliosService } from '@/services/Folios.service'
 import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { AddonsService } from '@/services/Addons.service'
 import { ConfigService } from '@/services/Platform.service'
+import { ApiError } from '@/services/http'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
@@ -26,10 +26,13 @@ import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
 import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
+import { useConfirm } from '@/composables/useConfirm'
+import { useInvoiceActions } from '@/composables/useInvoiceActions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
-import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
+import type { ReservationDetail, ReservationDetailAddon, ReservationInvoiceView, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -38,7 +41,6 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const router = useRouter()
 const toast = useToast()
 const { can } = usePermissions()
 const MS_PER_DAY = 86_400_000
@@ -92,8 +94,9 @@ async function loadGroupRooms(hotelId: string, groupId: string) {
 // Emisor de la factura (nombre, dirección, RNC, impuesto). Se carga del hotel de la reserva.
 const hotelInfo = ref<HotelData | null>(null)
 // 'charges' = comprobante de cargos de la reserva. NO es una factura: no lleva numeración fiscal
-// ni NCF y no entra al libro de ventas. La factura real se emite desde el módulo Facturación
-// (`/panel/finanzas/facturacion`, POST /api/facturas), que es quien controla el numerador.
+// ni NCF y no entra al libro de ventas. La factura real se emite con `POST /api/reservas/:id/invoice`
+// (REQ-FDR-02) desde el botón "Facturar" de este modal (ver `facturar()`); el backend es quien
+// controla el numerador y la vincula con los pagos ya registrados.
 type PrintMode = 'detail' | 'voucherLodging' | 'voucherClient' | 'charges' | 'quote'
 const printMode = ref<PrintMode>('detail')
 /** Cuántos envíos muestra la tarjeta "Historial de Envíos" (el detalle los devuelve ordenados
@@ -503,8 +506,8 @@ function fmtDateTime(s?: string | null): string {
   const dt = new Date(s)
   return isNaN(dt.getTime()) ? String(s) : dt.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
-function money(n?: number): string {
-  const cur = d.value?.currency || 'USD'
+function money(n?: number, currency?: string): string {
+  const cur = currency || d.value?.currency || 'USD'
   const sym = cur === 'USD' ? 'US$' : cur === 'DOP' ? 'RD$' : cur + ' '
   return `${sym}${(n ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
@@ -931,15 +934,80 @@ function printAs(mode: PrintMode) {
 
 function editar() { if (d.value) emit('edit', d.value) }
 
-/**
- * Camino a la emisión REAL de la factura. Este modal NO emite facturas a propósito: la numeración
- * (invoice number + NCF) es política contable y vive en el módulo Facturación — fabricarla acá
- * abriría un hueco en el numerador y dejaría el libro de ventas sin respaldo.
- * Desde el folio de la reserva: cerrar folio → emitir factura (POST /api/folios/:id/invoice).
- */
-function irAFacturacion() {
-  emit('close')
-  router.push('/panel/finanzas/facturacion')
+// ── Facturas (REQ-FDR-02/03, #254) ──
+// Las facturas ya emitidas de la reserva vienen en `d.invoices` (más reciente primero). Imprimir /
+// PDF / Email son las mismas acciones de /panel/billing (`useInvoiceActions`); emitir es
+// `POST /api/reservas/:id/invoice`: el backend controla el numerador (número + NCF) y vincula los
+// pagos ya registrados — este modal no fabrica numeración por su cuenta.
+const {
+  printFrame, printInvoice, downloadPdf,
+  showEmailModal, emailTarget, emailTo, emailError, sendingEmail,
+  openEmailModal, closeEmailModal, confirmEmail,
+} = useInvoiceActions()
+
+const invoicesCard = ref<HTMLElement | null>(null)
+const issuing = ref(false)
+
+function invoiceStatusBadge(status?: string): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    pending: { label: 'Pendiente', cls: 'bg-amber-100 text-amber-800' },
+    paid: { label: 'Pagada', cls: 'bg-teal/10 text-teal' },
+    overdue: { label: 'Vencida', cls: 'bg-coral/10 text-coral' },
+    cancelled: { label: 'Anulada', cls: 'bg-gray-100 text-gray-500' },
+    draft: { label: 'Borrador', cls: 'bg-gray-100 text-gray-500' },
+  }
+  return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
+}
+
+/** Una nota de crédito resta: se muestra en negativo para que el total de la tarjeta se lea sin sumar mentalmente. */
+function invoiceAmount(inv: ReservationInvoiceView): string {
+  if (inv.type === 'credit_note') return `-${money(Math.abs(inv.amount), inv.currency)}`
+  return money(inv.amount, inv.currency)
+}
+
+function scrollToInvoices() {
+  const el = invoicesCard.value
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
+  onDone: async () => {
+    toast.success('Factura emitida')
+    await load({ silent: true })
+    emit('changed')
+    await nextTick()
+    scrollToInvoices()
+  },
+  onError: async (e) => {
+    // 409: la reserva ya tenía factura (otro operador la emitió mientras este modal estaba abierto).
+    // No es un error del usuario: se recarga y se muestra la existente en la tarjeta.
+    if (e instanceof ApiError && e.status === 409) {
+      toast.warning('Ya tiene factura')
+      await load({ silent: true })
+      await nextTick()
+      scrollToInvoices()
+      return
+    }
+    toast.error((e as Error)?.message || 'No se pudo emitir la factura')
+  },
+})
+
+/** Botón "Facturar": si ya hay factura, muestra la existente; si no, confirma y emite. */
+function facturar() {
+  if (!d.value) return
+  if (d.value.invoices?.length) { scrollToInvoices(); return }
+  const total = d.value.chargeableTotal ?? d.value.totalAmount ?? 0
+  const guestName = d.value.guest?.name || 'el huésped'
+  askConfirm({
+    title: 'Emitir factura',
+    message: `Se emitirá la factura por ${money(total, d.value.currency || undefined)} a nombre de ${guestName}. Los pagos ya registrados quedan vinculados.`,
+    confirmLabel: 'Facturar',
+    run: async () => {
+      if (!d.value) return
+      issuing.value = true
+      try { await ReservationService.issueInvoice(d.value.id) } finally { issuing.value = false }
+    },
+  })
 }
 </script>
 
@@ -971,9 +1039,9 @@ function irAFacturacion() {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
           Cargos
         </button>
-        <button v-if="can('billing','view')" @click="irAFacturacion" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Emitir la factura con numeración fiscal desde el módulo Facturación">
+        <button v-if="can('billing','create')" data-testid="invoice-issue-button" @click="facturar" :disabled="issuing" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20 disabled:opacity-50" title="Emitir la factura con numeración fiscal (si ya tiene, muestra la existente)">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
-          Facturar
+          {{ issuing ? 'Facturando…' : 'Facturar' }}
         </button>
         <button v-if="can('reservations','edit')" @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.932zM19.5 21H4.5a1.5 1.5 0 01-1.5-1.5V6a1.5 1.5 0 011.5-1.5h9"/></svg>
@@ -1238,6 +1306,48 @@ function irAFacturacion() {
                   <div v-for="(c, i) in folioCharges" :key="i" class="flex justify-between"><span class="truncate">{{ c.description || '—' }}</span><span class="font-bold" :class="c.kind === 'payment' ? 'text-teal' : 'text-navy'">{{ money(c.amount) }}</span></div>
                 </div>
                 <div v-else class="text-xs text-text-muted italic">Sin movimientos</div>
+              </div>
+            </div>
+
+            <!-- Facturas (REQ-FDR-03, #254): las facturas ya emitidas de ESTA reserva (`d.invoices`),
+                 con las mismas acciones que /panel/billing. Sin factura: el botón emite de verdad. -->
+            <div ref="invoicesCard" data-testid="invoices-card" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-navy/60 rounded-2xl p-4 shadow-card">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
+                <span class="w-7 h-7 rounded-lg bg-navy/10 flex items-center justify-center text-navy"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg></span>
+                <h4 class="text-sm font-black text-navy">Facturas</h4>
+                <span v-if="d.invoices?.length" class="ml-auto text-[10px] font-bold text-text-muted">({{ d.invoices.length }})</span>
+              </div>
+              <div v-if="d.invoices?.length" class="space-y-2">
+                <div v-for="inv in d.invoices" :key="inv.id" class="rounded-lg border border-border/60 bg-surface px-2.5 py-2" data-testid="invoice-row">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs font-black text-navy truncate" :title="inv.ncf ? `NCF ${inv.ncf}` : undefined">{{ inv.number }}</span>
+                    <span class="flex items-center gap-1 shrink-0">
+                      <span v-if="inv.type === 'credit_note'" class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple/10 text-purple">Nota de crédito</span>
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" :class="invoiceStatusBadge(inv.status).cls">{{ invoiceStatusBadge(inv.status).label }}</span>
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between gap-2 mt-0.5">
+                    <span class="text-[10px] text-text-muted">{{ fmtDate(inv.issuedAt) }}</span>
+                    <span class="text-xs font-black tabular-nums" :class="inv.type === 'credit_note' ? 'text-purple' : 'text-navy'">{{ invoiceAmount(inv) }}</span>
+                  </div>
+                  <!-- NC: el backend la crea con amountPaid=0 → balance=amount, pero no es deuda por cobrar; no se muestra saldo. -->
+                  <div v-if="inv.type !== 'credit_note'" class="flex items-center justify-between gap-2 mt-0.5">
+                    <span class="text-[10px] text-text-muted">Saldo</span>
+                    <span class="text-[11px] font-bold tabular-nums" :class="inv.balance > 0 ? 'text-coral' : 'text-teal'">{{ money(inv.balance, inv.currency) }}</span>
+                  </div>
+                  <div v-if="can('billing','view')" class="flex items-center gap-3 mt-1.5">
+                    <button type="button" data-testid="invoice-print" @click="printInvoice(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">Imprimir</button>
+                    <button type="button" data-testid="invoice-pdf" @click="downloadPdf(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">PDF</button>
+                    <button type="button" data-testid="invoice-email" @click="openEmailModal(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">Email</button>
+                  </div>
+                </div>
+              </div>
+              <div v-else>
+                <p class="text-xs text-text-muted italic">Esta reserva todavía no tiene factura.</p>
+                <button v-if="can('billing','create')" data-testid="invoice-issue-empty" @click="facturar" :disabled="issuing" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-navy text-white rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+                  {{ issuing ? 'Facturando…' : 'Facturar' }}
+                </button>
               </div>
             </div>
 
@@ -1785,6 +1895,41 @@ function irAFacturacion() {
        listado. `pending` sale del backend: el modal lo usa de tope y valor inicial. -->
   <MarkPaidModal :open="showMarkPaid" :reservation-id="d?.id ?? ''" :pending="pending" :currency="d?.currency || undefined"
     @close="showMarkPaid = false" @paid="onMarkPaid" />
+
+  <!-- Emitir factura (REQ-FDR-02, #254): confirmación estilada antes del POST /reservas/:id/invoice. -->
+  <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
+    :confirm-label="confirmModal.confirmLabel" :loading="confirmBusy" @confirm="runConfirm" @close="confirmModal = null" />
+
+  <!-- Enviar factura por email (mismo form que /panel/billing; la lógica vive en useInvoiceActions). -->
+  <AppModal v-if="showEmailModal && emailTarget" size="md"
+    :title="`Enviar factura #${emailTarget.number}`" @close="closeEmailModal">
+    <form class="space-y-4" @submit.prevent="confirmEmail">
+      <div>
+        <label for="rm-email-to" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email del destinatario</label>
+        <input
+          id="rm-email-to"
+          v-model.trim="emailTo"
+          type="email"
+          autocomplete="email"
+          placeholder="huesped@ejemplo.com"
+          class="w-full rounded-xl border px-4 py-2.5 text-sm transition-colors focus:outline-none"
+          :class="emailError ? 'border-red-400 focus:border-red-500' : 'border-border focus:border-navy'"
+          @input="emailError = ''"
+        />
+        <p v-if="emailError" class="mt-2 text-xs font-bold text-red-500">{{ emailError }}</p>
+      </div>
+    </form>
+    <template #footer>
+      <button @click="closeEmailModal" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
+      <button @click="confirmEmail" :disabled="sendingEmail || !emailTo"
+        class="rounded-full bg-teal px-5 py-2.5 text-sm font-extrabold text-white hover:bg-teal-light transition-colors cursor-pointer disabled:opacity-50">
+        {{ sendingEmail ? 'Enviando…' : 'Enviar' }}
+      </button>
+    </template>
+  </AppModal>
+
+  <!-- Iframe oculto para Imprimir factura (useInvoiceActions.printFrame). -->
+  <iframe ref="printFrame" class="hidden" style="position:absolute;width:0;height:0;border:0;"></iframe>
 
   <!-- Gestor completo de la cerradura de la habitación de esta reserva (se teletransporta a
        body, no afecta el layout del detalle). Se monta on-demand y refresca el detalle al

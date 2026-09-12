@@ -528,6 +528,14 @@ solo para decidir qué botón mostrar. Borrar deja el libro de ventas sin respal
 (`folios/usecases/close-and-create-invoice.ts` + connector `folios-facturas`). NO orquestar esto desde
 el frontend: si el segundo request falla, el folio queda cerrado sin factura.
 
+Lo mismo desde la reserva (REQ-FDR-02/03, #253/#254): `POST /api/reservas/:id/invoice`
+(`reservas/usecases/issue-invoice.ts` + connector `reservas-facturas`) decide él solo el camino —
+reserva CON folio abierto → el flujo de arriba (`source: 'folio'`); reserva SIN folio → factura directa
+desde la reserva (`source: 'reservation'`)— y **vincula los pagos que ya existían (`linkedPayments`),
+no los crea**. Si la reserva ya tiene factura responde 409 (idempotente). El botón "Facturar" del
+`ReservationModal` llama a ese endpoint; la tarjeta "Facturas" lee `detail.invoices` (REQ-FDR-01) y
+reusa Imprimir/PDF/Email de `/panel/billing` vía `composables/useInvoiceActions.ts`.
+
 ### Caché de listados: versionada, no por clave fija
 `CacheAdapter` solo borra claves exactas (no hay glob ni prefijo). Las claves de listado incluyen
 filtros y paginación, así que se invalidan bumpeando un token de versión

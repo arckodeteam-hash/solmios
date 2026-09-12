@@ -91,6 +91,18 @@ interface ReservationsResponse {
   total: number
 }
 
+/** Resultado de `POST /api/reservas/:id/invoice` (REQ-FDR-02, #253). Espejo del backend
+ *  `reservas/usecases/issue-invoice.ts`: el servidor emite la factura (con o sin folio) y
+ *  vincula los pagos que ya existían; no crea pagos. */
+export interface IssueInvoiceResult {
+  invoiceId: string
+  invoiceNumber?: string
+  source: 'folio' | 'reservation'
+  folioId?: string
+  linkedPayments?: number
+  amountPaid?: number
+}
+
 export const ReservationService = {
   /**
    * Envío REAL por WhatsApp al huésped, por la Cloud API de Meta.
@@ -263,6 +275,17 @@ export const ReservationService = {
   async markPaid(id: string, body: MarkPaidInput): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/mark-paid`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * REQ-FDR-02 (#253) — emite la factura de la reserva desde el modal: `POST /reservas/:id/invoice`.
+   * El backend decide si sale por el folio abierto (`source: 'folio'`) o directo desde la reserva
+   * (`source: 'reservation'`) y vincula los pagos que ya existían; NO crea pagos. Si la reserva ya
+   * tiene factura responde 409 con `invoiceId` (idempotente). El body se devuelve tal cual: `http.post`
+   * ya desenvuelve `{ success, data }` y el controller manda el resultado directo.
+   */
+  async issueInvoice(id: string, notes?: string): Promise<IssueInvoiceResult> {
+    return http.post<IssueInvoiceResult>(`/reservas/${id}/invoice`, notes ? { notes } : {})
   },
 
   /** Elimina una reserva (la UI lo limita a pendientes/canceladas). */
