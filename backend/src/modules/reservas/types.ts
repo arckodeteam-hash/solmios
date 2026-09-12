@@ -232,6 +232,11 @@ export interface AddonDTO {
   kind?: string
   quantity?: number
   status?: string
+  // #269 — `unitPrice` informativo, `source` 'manual' | 'booking_engine' (fuera del total
+  // cobrable), `taxRate` % aplicado al reservar.
+  unitPrice?: number
+  source?: string
+  taxRate?: number
   createdAt?: string
   updatedAt?: string
 }
@@ -240,6 +245,9 @@ export interface CreateAddonDTO {
   kind?: string
   amount?: number
   quantity?: number
+  unitPrice?: number
+  source?: string
+  taxRate?: number
 }
 
 export interface CurrentUser {
