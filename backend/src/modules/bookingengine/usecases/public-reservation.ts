@@ -146,7 +146,12 @@ export async function getPublicReservation(
       {
         folioRepo: { findMany: (f: any) => orm.findMany('Folios', f) },
         invoiceRepo: { findMany: (f: any) => orm.findMany('Invoices', f) },
-        paymentRepo: { findMany: (f: any) => orm.findMany('Payments', f) },
+        // #312 — 'Payment', SINGULAR: así lo registra `payments/model.ts:73`. Con 'Payments' el ORM
+        // no encuentra el modelo, tira, y el `catch` de abajo lo tapa cayendo a `reservation.deposit`
+        // — o sea, un cobro que no pasó por el motor web (efectivo por folio, transferencia asentada
+        // a mano) quedaba invisible para el huésped. Mismo aviso ya escrito en `public-receipt.ts:162`
+        // y `reports/usecases/report-queries.ts:87`.
+        paymentRepo: { findMany: (f: any) => orm.findMany('Payment', f) },
       },
       String(reservation.hotelId),
       String(reservation.id),
