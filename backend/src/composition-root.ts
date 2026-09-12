@@ -433,7 +433,6 @@ import { habitacionesReservasConnector } from './connectors/habitaciones-reserva
 import { reservasCanalesConnector } from './connectors/reservas-canales'
 import { mantenimientoNotificacionesConnector } from './connectors/mantenimiento-notificaciones'
 import { mantenimientoHabitacionesConnector } from './connectors/mantenimiento-habitaciones'
-import { bookingChannexConnector } from './connectors/booking-channex'
 import { reservasBookingengineConnector } from './connectors/reservas-bookingengine'
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
@@ -602,7 +601,6 @@ system.addConnector('habitaciones-reservas', habitacionesReservasConnector)
 system.addConnector('reservas-canales', reservasCanalesConnector)
 system.addConnector('mantenimiento-notificaciones', mantenimientoNotificacionesConnector)
 system.addConnector('mantenimiento-habitaciones', mantenimientoHabitacionesConnector)
-system.addConnector('booking-channex', bookingChannexConnector)
 system.addConnector('reservas-bookingengine', reservasBookingengineConnector)
 system.addConnector('reservas-huespedes', reservasHuespedesConnector(logger))
 // Invitación a opinar post-checkout: reservas emite onReservationCheckedOut → opiniones crea
@@ -1233,6 +1231,15 @@ if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function')
     bookingengineForExpiry.setExpirePending(async (id, hotelId) => {
       if (isPendingPaymentExpiryDisabled()) return { expired: false, reason: 'disabled' }
       return expirePendingReservation(expiryDeps, id, hotelId)
+    })
+  }
+
+  // #276 (MR-11) — el asiento del pago de un grupo marca Groups confirmed/paidAmount y resuelve el titular para payments.description.
+  const bookingengineForSettle = system.resolveModule<{ setSettleDeps?(d: { groups?: any; guests?: any }): void }>('bookingengine')
+  if (bookingengineForSettle && typeof bookingengineForSettle.setSettleDeps === 'function') {
+    bookingengineForSettle.setSettleDeps({
+      groups: new OrmRepository<any>(orm, 'Groups'),
+      guests: new OrmRepository<any>(orm, 'Guests'),
     })
   }
 
