@@ -151,7 +151,8 @@ describe('updateReservation — capacidad: NO debe existir una segunda puerta (c
   it('mover a una habitación que SÍ entra: acepta', async () => {
     const existing = existingReservation({ adults: 2 })
     const rooms = { 'room-1': { id: 'room-1', hotelId: HOTEL, type: 'double', capacity: 2 }, 'room-2': { id: 'room-2', hotelId: HOTEL, type: 'suite', capacity: 4 } }
-    const item = await updateReservation(resRepo(existing), noopLogger, noopCache, noopSockets, 'r1', { roomId: 'room-2' } as any, user, roomRepo(rooms), undefined, undefined, undefined, undefined, configRepo())
+    // #258: double→suite es cambio de TIPO — el PUT lo exige explícito (`allowTypeChange`); lo que se prueba acá es capacidad.
+    const item = await updateReservation(resRepo(existing), noopLogger, noopCache, noopSockets, 'r1', { roomId: 'room-2', allowTypeChange: true } as any, user, roomRepo(rooms), undefined, undefined, undefined, undefined, configRepo())
     expect(item.roomId).toBe('room-2')
   })
 })

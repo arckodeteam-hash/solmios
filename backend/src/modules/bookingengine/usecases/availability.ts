@@ -98,6 +98,7 @@ export class AvailabilityUseCase {
     // Noches reales de la estadía — las mismas celdas que pinta `/calendar` para este rango.
     const nightDates = stayNights(query.checkIn, query.checkOut)
     const occupied = this.occupiedIn(reservations as any[], query.checkIn, query.checkOut)
+    const unassigned = this.unassignedByType(reservations as any[], query.checkIn, query.checkOut)
     const blocked = blockedRoomIds(blocks as any[], nightDates)
     // Stop-sell POR OCUPACIÓN, no por tipo: un hotel puede cerrar la tarifa "para 4" de un mes y
     // dejar abierta la de "para 2". `closedRoomTypes` (que resolvía una sola vez, con el `adults`
@@ -106,7 +107,7 @@ export class AvailabilityUseCase {
     const seasonByDate = buildSeasonByDate(assignments as any[])
     const isClosedFor = (roomType: string, occupancy: number): boolean =>
       isClosedForOccupancy(baseRates, seasonByDate, roomType, nightDates, occupancy)
-    const roomTypes = this.aggregate(rooms as any[], occupied, blocked, isClosedFor, adults, roomTypeCapacityMap)
+    const roomTypes = this.aggregate(rooms as any[], occupied, blocked, isClosedFor, adults, roomTypeCapacityMap, unassigned)
 
     const result: AvailabilityResult = {
       hotelId: query.hotelId,
@@ -133,14 +134,38 @@ export class AvailabilityUseCase {
     const occupied = new Set<string>()
     for (const r of reservations) {
       if (!r.roomId) continue
-      const status = String(r.status ?? '').toLowerCase()
-      if (status && !BLOCKING_RESERVATION_STATUS.has(status)) continue
-      const from = String(r.checkIn ?? '').slice(0, 10)
-      const to = String(r.checkOut ?? '').slice(0, 10)
-      if (!from || !to) continue
-      if (from < checkOut && to > checkIn) occupied.add(r.roomId)
+      if (!this.overlapsStay(r, checkIn, checkOut)) continue
+      occupied.add(r.roomId)
     }
     return occupied
+  }
+
+  /**
+   * HAC-02 (#257/#258): reservas activas SIN unidad (`roomId` null, venden sólo `roomType`) que
+   * se pisan con el rango → cuántas unidades de cada tipo (en minúsculas) ya están vendidas
+   * aunque ninguna habitación concreta figure ocupada. Sin esto, soltar la unidad de una
+   * `confirmed` la hacía desaparecer del inventario y el motor vendía de más. Una fila sin
+   * `roomType` no tiene contra qué descontar y no cuenta (no hay unidad que mirar).
+   */
+  private unassignedByType(reservations: any[], checkIn: string, checkOut: string): Map<string, number> {
+    const out = new Map<string, number>()
+    for (const r of reservations) {
+      if (r.roomId || !r.roomType) continue
+      if (!this.overlapsStay(r, checkIn, checkOut)) continue
+      const type = String(r.roomType).toLowerCase()
+      out.set(type, (out.get(type) ?? 0) + 1)
+    }
+    return out
+  }
+
+  /** Estado que ocupa + solape `[checkIn, checkOut)` — el día de salida no cuenta. */
+  private overlapsStay(r: any, checkIn: string, checkOut: string): boolean {
+    const status = String(r.status ?? '').toLowerCase()
+    if (status && !BLOCKING_RESERVATION_STATUS.has(status)) return false
+    const from = String(r.checkIn ?? '').slice(0, 10)
+    const to = String(r.checkOut ?? '').slice(0, 10)
+    if (!from || !to) return false
+    return from < checkOut && to > checkIn
   }
 
   /**
@@ -173,6 +198,7 @@ export class AvailabilityUseCase {
     isClosedFor: (roomType: string, occupancy: number) => boolean,
     adults: number,
     roomTypeCapacityMap?: Map<string, RoomTypeCapacity>,
+    unassignedByType: Map<string, number> = new Map(),
   ): RoomTypeAvailability[] {
     const grouped: Record<string, { available: number; price: number; capacity: number; surfaceArea: number; amenities: string[]; sellableCapacities: number[]; maxAdults: number | null; maxChildren: number | null }> = {}
 
@@ -228,6 +254,20 @@ export class AvailabilityUseCase {
       // No se ofrece una habitación donde no entra el grupo.
       if ((cap.capacity ?? adults) < adults) continue
       grouped[type]!.available++
+    }
+
+    // HAC-02: cada reserva activa sin unidad consume UNA de su tipo. No sabemos cuál le va a
+    // tocar en recepción, así que se retira la de MAYOR capacidad (conservador: antes vender de
+    // menos en una ocupación que vender de más). `available` se mantiene consistente con
+    // `sellableCapacities` (es exactamente el conteo de las que aceptan `adults`).
+    for (const [type, d] of Object.entries(grouped)) {
+      let pending = unassignedByType.get(String(type).toLowerCase()) ?? 0
+      while (pending > 0 && d.sellableCapacities.length > 0) {
+        const i = d.sellableCapacities.indexOf(Math.max(...d.sellableCapacities))
+        const [cap] = d.sellableCapacities.splice(i, 1)
+        if (Number(cap) >= adults) d.available = Math.max(0, d.available - 1)
+        pending--
+      }
     }
 
     return Object.entries(grouped)

@@ -40,6 +40,7 @@ import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInp
 import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
 import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } from '../../shared/usecases/open-folio-balance'
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
+import type { RoomAssignmentDeps } from './usecases/assign-room'
 import { retryRefund as retryRefundUsecase, refundStatePatch, type RetryRefundResult } from './usecases/retry-refund'
 
 export class ReservasService {
@@ -100,7 +101,7 @@ export class ReservasService {
     // SEC3-2: el clamp de links vivos, si el connector lo cableó (ver orchestrationDeps).
     const c = this.orchestrationDeps.paymentRequestsCeiling
     return updateReservationWithBalance((rid, hid) => this.queries.getReservationAddons(rid, hid), this.paidSource(), this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes,
-      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined, this.configRepo)
+      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined, this.configRepo, { blockRepo: this.blockRepo, auditPort: this.auditPort }) // #258: RoomBlocks + auditoría del cambio de habitación por PUT
   }
   async delete(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<void> {
     this.logger.info('Eliminando reserva', { id, userId: currentUser.id }) // SEC3-3: release antes del delete
@@ -118,11 +119,9 @@ export class ReservasService {
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
   async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
-  async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> {
-    // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts
-    // (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
-    return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger })
-  }
+  /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
+
+  async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> { return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger }) } // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
 
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
   /** Saldo de la cuenta abierta — lo consulta la guarda de deuda del checkout. */
@@ -144,7 +143,7 @@ export class ReservasService {
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
-  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
+  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp, roomAssignment: this.roomAssignmentDeps() }) // #258: en estadía, el cambio de habitación delega en assignRoom (folio + estados)
   async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo, rateOverrideRepo: this.rateOverrideRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> { return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user) }
