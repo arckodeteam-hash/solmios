@@ -732,6 +732,9 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       expect(w.text()).toContain('Supera la capacidad de la habitación')
       expect(w.text()).not.toContain('over_capacity')
       expect((addRoomButton(w).element as HTMLButtonElement).disabled).toBe(true)
+      // El bloqueo por capacidad también es efectivo: el click apagado no agrega nada.
+      await clickAddRoom(w)
+      expect(store.cart).toHaveLength(0)
 
       // Edad 1 → libre otra vez → vuelve a "para 2" y se habilita.
       await select.setValue('1')
