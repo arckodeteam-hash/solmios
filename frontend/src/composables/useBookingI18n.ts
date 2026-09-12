@@ -289,6 +289,9 @@ const messages = {
     'confirm.errorToken': 'El enlace no es válido o expiró.',
     'confirm.errorPayment': 'El pago fue rechazado o cancelado. Probá de nuevo.',
     'confirm.retryCta': 'Volver a intentar',
+    'confirm.expiredTitle': 'Tu reserva venció porque no se completó el pago',
+    'confirm.expiredBody': 'La habitación volvió a estar disponible. Podés hacer una nueva reserva.',
+    'confirm.expiredCta': 'Volver a reservar',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Código de acceso',
     'confirm.backHome': 'Volver al hotel',
@@ -546,6 +549,9 @@ const messages = {
     'confirm.errorToken': 'The link is invalid or expired.',
     'confirm.errorPayment': 'The payment was declined or cancelled. Please try again.',
     'confirm.retryCta': 'Try again',
+    'confirm.expiredTitle': 'Your booking expired because the payment was not completed',
+    'confirm.expiredBody': 'The room is available again. You can make a new booking.',
+    'confirm.expiredCta': 'Book again',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Access code',
     'confirm.backHome': 'Back to hotel',
@@ -801,6 +807,9 @@ const messages = {
     'confirm.errorToken': 'O link é inválido ou expirou.',
     'confirm.errorPayment': 'O pagamento foi recusado ou cancelado. Tente novamente.',
     'confirm.retryCta': 'Tentar novamente',
+    'confirm.expiredTitle': 'Sua reserva expirou porque o pagamento não foi concluído',
+    'confirm.expiredBody': 'O quarto voltou a ficar disponível. Você pode fazer uma nova reserva.',
+    'confirm.expiredCta': 'Reservar novamente',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Código de acesso',
     'confirm.backHome': 'Voltar ao hotel',

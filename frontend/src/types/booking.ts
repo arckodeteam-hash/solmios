@@ -581,6 +581,9 @@ export interface PublicReservation {
   /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación
    *  instantánea" y todavía no revisó esta reserva. null = no aplica. */
   approvalStatus?: 'pending' | 'approved' | null
+  /** #266 (MR-01) — motivo de cancelación. 'payment_timeout' = venció sin completar el pago
+   *  (cron / checkout.session.expired): la confirmación muestra "venció, volvé a reservar". */
+  cancellationReason?: string | null
 }
 
 export interface PublicReservationResponse {
