@@ -147,6 +147,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         registry,
         // REQ-01 (#233) — Amenidades para niños/bebés, al final por el mismo motivo.
         childAmenityRepo,
+        // #272 — `Groups` para la cancelación pública en cascada. Al final.
+        new OrmRepository<any>(orm, 'Groups'),
       )
 
       // Admin routes (protegidas con auth)

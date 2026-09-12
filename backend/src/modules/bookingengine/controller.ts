@@ -130,6 +130,9 @@ export class BookingengineController {
     /** REQ-01 (#233) — Repo de amenidades para niños/bebés. Al final, mismo motivo que el resto
      *  de los deps nuevos. Opcional — defense-in-depth igual que upsellRepo/mealPlanRepo. */
     private readonly childAmenityRepo?: RepositoryAdapter<ChildAmenityDTO>,
+    /** #272 — `Groups`: la cancelación pública de un grupo marca `groups.status='cancelled'`.
+     *  Al final, mismo motivo que el resto de los deps nuevos. Opcional, best-effort. */
+    private readonly groupsRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -341,6 +344,9 @@ export class BookingengineController {
         // políticas custom reembolsaba el 100% pese a anunciar 100% de penalidad.
         hotelsRepo: this.hotelsRepo,
         logger: this.logger,
+        // #272 — cascada al grupo + inventario por habitación (Channex).
+        groupsRepo: this.groupsRepo,
+        pushAvailability: this.pushAvailability,
         // El evento onBookingCancelled está declarado en sockets.ts pero el service no lo
         // expone (gate <200 líneas). Accedemos al socket del service en runtime (ya está
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el

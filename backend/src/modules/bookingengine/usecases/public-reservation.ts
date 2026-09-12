@@ -32,6 +32,10 @@
 //     · si en el futuro se migra el stored a un hash, no cambia el contract.
 //
 // Forma funcional (sin clase) — mismo estilo que `public-booking.ts` y `public-hotel-info.ts`.
+//
+// #272 — Expone además el estado del reembolso (refundStatus/refundedAt/refundAmount/
+// cancellationFee/cancelledAt) y, si la reserva es parte de un grupo (token compartido), las
+// habitaciones hermanas en `group.rooms` (allow-list mínima: id, roomType, adults, children, status).
 
 import crypto from 'node:crypto'
 import { paymentAmountsOf } from '../../../shared/utils/payment-status'
@@ -39,6 +43,28 @@ import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { chargeableTotal } from '../../../shared/utils/reservation-balance'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
+
+/** #272 — Hermanas del grupo para la página pública. Best-effort: cualquier fallo → null. */
+async function publicGroupOf(orm: any, reservation: any): Promise<null | { id: string; rooms: any[] }> {
+  if (!reservation.groupId) return null
+  try {
+    const siblings = (await orm.findMany('Reservations', { hotelId: reservation.hotelId, groupId: reservation.groupId })) as any[]
+    if (!Array.isArray(siblings) || !siblings.length) return null
+    const rooms = await Promise.all(siblings.map(async (r) => {
+      let roomType = ''
+      try {
+        const room = (r.roomId ? (await orm.findMany('Rooms', { id: r.roomId })) as any[] : [])[0]
+        roomType = String(room?.type ?? '')
+      } catch {
+        // roomType = '' — mostrar la habitación sin tipo es mejor que no listarla.
+      }
+      return { id: r.id, roomType, adults: r.adults, children: r.children, status: r.status }
+    }))
+    return { id: String(reservation.groupId), rooms }
+  } catch {
+    return null
+  }
+}
 
 function hotelSecret(hotelId: string): string {
   const base = process.env.BOOKING_TOKEN_SECRET || 'dev-fallback-booking-secret'
@@ -124,6 +150,7 @@ export async function getPublicReservation(
     // addons = [] — chargeableTotal degrada a totalAmount + otherCharges, sin extras.
   }
   const amounts = paymentAmountsOf(chargeableTotal(reservation, addons as any[]), paid)
+  const group = await publicGroupOf(orm, reservation)
 
   // B-6/H-4 (auditoría 2026-08-19): allow-list ESTRICTA, campo por campo — NUNCA la fila
   // cruda (patrón public-hotel-info.ts). La fila de Reservations arrastra ownerNotes,
@@ -183,9 +210,20 @@ export async function getPublicReservation(
         // `cancellationReason` es texto libre (el panel guarda lo que tipea el empleado): al
         // público sale SOLO el código de sistema 'payment_timeout'; cualquier otro motivo → null.
         cancellationReason: reservation.cancellationReason === 'payment_timeout' ? 'payment_timeout' : null,
+        // #272 — SU cancelación y SU reembolso: lo que retuvo la política, lo que se le devuelve
+        // y en qué estado está ('none' | 'pending' | 'done' | 'failed', lo escribe el connector
+        // de refunds). La pantalla pública lo usa para decir "5-10 días hábiles" o "el hotel lo
+        // está gestionando" en vez de un genérico.
+        cancellationFee: reservation.cancellationFee ?? 0,
+        refundAmount: reservation.refundAmount ?? 0,
+        refundStatus: reservation.refundStatus ?? 'none',
+        refundedAt: reservation.refundedAt ?? null,
+        cancelledAt: reservation.cancelledAt ?? null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: amounts.status,
+      // #272 — grupo (token compartido): las N habitaciones, para listarlas y cancelarlas juntas.
+      group,
     },
   }
 }
