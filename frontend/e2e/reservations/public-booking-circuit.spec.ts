@@ -44,8 +44,10 @@ import {
 // con reembolso) en fechas aleatorias de 2028, el huésped y sus cobros. El upsell creado se borra
 // al final; la config del motor (enabled/language/instantConfirmation), la política de niños, la
 // amenidad `custom:cuna` de las Double, el régimen, el email del hotel y la config SMTP vuelven a
-// su valor anterior (snapshot ANTES de sembrar). Única excepción: una `custom:cuna` que no existía
-// queda desactivada (isActive=0), porque `PUT /api/amenities/room/:id` desactiva, no borra.
+// su valor anterior (undo registrado ANTES de cada mutación, deshecho en orden inverso aunque la
+// siembra falle a mitad). Dos excepciones de la API: una `custom:cuna` que no existía queda
+// desactivada (isActive=0), porque `PUT /api/amenities/room/:id` desactiva, no borra; y una
+// `child_policy` que no existía queda sembrada, porque `/api/configuracion` no tiene DELETE.
 
 const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
 const FRONTEND = `http://localhost:${process.env.E2E_PORT || '5173'}`
