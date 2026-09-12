@@ -19,6 +19,10 @@
     aparte. `store.removeCartLine(key)` quita SOLO esa línea, el resto del carrito no se toca.
     El resumen al pie del step usa `store.cartTotalRooms`/`cartTotalGuests` — SIEMPRE derivados
     del carrito real, nunca de un contador aparte que pudiera desincronizarse.
+      - REQ-02 (#234): cada línea del carrito muestra la clasificación de CADA menor (bebé / niño
+        sin plaza / niño con plaza, vía `classifyAge` + `store.childPolicy`) y tiene un botón
+        "Editar" (`editCartLine`) que devuelve UNA unidad de esa línea al composer de su tarjeta
+        con exactamente adultos/edades/cuna/amenidades guardados, sin tocar las otras líneas.
 
     ─── Matriz de ocupaciones (`roomType.occupancies`, precio por "para N") ──────────────────
     El composer traduce la composición elegida a un NÚMERO de ocupación (`chargeableOccupancy`,
@@ -350,6 +354,15 @@
           </div>
           <div class="flex shrink-0 items-center gap-2">
             <span class="font-black tabular-nums text-navy">{{ formatPrice(line.unitPrice * line.quantity, store.displayCurrency) }}</span>
+            <!-- REQ-02 (#234) — devuelve UNA unidad de esta línea al composer de su tarjeta con los
+                 mismos datos (adultos/edades/cuna/amenidades) para corregirla sin rearmarla. -->
+            <button
+              type="button"
+              class="cursor-pointer text-xs font-bold text-cyan-700 hover:underline"
+              data-testid="cart-edit"
+              :aria-label="t('rooms.cartEdit')"
+              @click="editCartLine(line)"
+            >{{ t('rooms.cartEdit') }}</button>
             <button
               type="button"
               class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-red-50 hover:text-red-600"
@@ -380,6 +393,7 @@ import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
 import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
+import { classifyAge } from '@/utils/child-composition'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
 import AggregateScore from '@/components/reviews/AggregateScore.vue'
 import Icon from '@/components/ui/Icon.vue'
@@ -518,6 +532,8 @@ const {
   childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
   // REQ-01 (#233) — amenidades para niños/bebés por habitación.
   shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
+  // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
+  editCartLine,
   // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…) por habitación.
   shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
 } = useGuestComposer()
@@ -547,7 +563,11 @@ function cartLineGuestsLabel(line: CartLine): string {
     : t('rooms.guests.summary', {
         adults: line.adults,
         children: line.childrenAges.length,
-        ages: line.childrenAges.join(', '),
+        // REQ-02 (#234) — cada menor con su edad Y su clasificación resultante (bebé / niño sin
+        // plaza / niño con plaza) según la política del hotel, para que el huésped confirme cómo
+        // quedó contado cada uno en ESTA habitación. 'adult' (edad > maxChildAge, no debería
+        // llegar al carrito) cae en "consume plaza" como fallback defensivo.
+        ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   // REQ-01 (#233) — las amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot
@@ -557,5 +577,16 @@ function cartLineGuestsLabel(line: CartLine): string {
   // REQ-01 (#290) — ídem con las amenidades de la habitación (snapshot de la línea).
   const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
   return roomAmenities.length > 0 ? `${withChildAmenities} · ${roomAmenities.join(', ')}` : withChildAmenities
+}
+
+/** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato que `PayStep.vue`. */
+function childAgeLabel(age: number): string {
+  const kind = classifyAge(age, store.childPolicy)
+  const classification = kind === 'baby'
+    ? t('rooms.guests.childBaby')
+    : kind === 'free'
+      ? t('rooms.guests.childFree')
+      : t('rooms.guests.childPaying')
+  return `${t('rooms.guests.childAgeYears', { age })} · ${classification}`
 }
 </script>

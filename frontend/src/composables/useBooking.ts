@@ -980,6 +980,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cart.value = cart.value.filter((l) => l.key !== key)
   }
 
+  /** REQ-02 (#234) — editar una habitación agregada devuelve UNA unidad al composer: si la línea
+   *  tiene `quantity > 1` se descuenta una unidad (las demás siguen en el carrito tal cual); si
+   *  era la última, la línea se quita entera (igual que `removeCartLine`). Nunca toca otras
+   *  líneas. Key desconocida = no-op. */
+  function removeCartLineUnit(key: string): void {
+    const line = cart.value.find((l) => l.key === key)
+    if (!line) return
+    if (line.quantity > 1) line.quantity -= 1
+    else removeCartLine(key)
+  }
+
   /** Vacía el carrito (cambio de fechas, o el huésped quiere empezar de nuevo). */
   function clearCart(): void {
     cart.value = []
@@ -1359,6 +1370,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     roomAmenitiesFor,
     addToCart,
     removeCartLine,
+    removeCartLineUnit,
     clearCart,
     setSelectedUpsells,
     setGuest,

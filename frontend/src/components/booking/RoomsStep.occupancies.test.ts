@@ -525,6 +525,90 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
   })
 
+  // ─── REQ-02 (#234) — "Mantener la clasificación resultante de cada menor (niño/bebé y
+  // consume/no consume plaza)" visible en la habitación agregada, y "al regresar a editar la
+  // habitación, recuperar los mismos datos". La clasificación sale de `classifyAge` contra
+  // `store.childPolicy` (misma regla que el badge en vivo y que el backend).
+  describe('REQ-02 (#234) — clasificación por menor en el carrito + Editar', () => {
+    const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+    /** 1 adulto + niños de 1 (bebé) y 8 (con plaza) → chargeable 1+1=2 (available, $300). Con 2
+     *  adultos daría 3, que el fixture marca `no_rate` y bloquea "Agregar". */
+    async function composeBabyAndPaying(w: VueWrapper): Promise<void> {
+      await bumpChildren(w, 2)
+      const selects = w.findAll('select')
+      await selects[0]!.setValue('1') // ≤ maxBabyAge=1 → bebé
+      await selects[1]!.setValue('8') // > maxFreeAge=5 → niño con plaza
+    }
+
+    it('la línea del carrito muestra edad + clasificación de CADA menor (bebé / consume plaza)', async () => {
+      const w = render(true, 'es', POLICY)
+      await composeBabyAndPaying(w)
+      await clickAddRoom(w)
+
+      const line = w.get('[data-testid="cart-line"]').text()
+      expect(line).toContain('1 adulto · 2 niños')
+      expect(line).toContain('1 año · bebé')
+      expect(line).toContain('8 años · niño, consume plaza')
+      expect(line).not.toContain('no consume plaza')
+      w.unmount()
+    })
+
+    it('un niño libre (no bebé) se muestra como "no consume plaza"', async () => {
+      const w = render(true, 'es', POLICY)
+      await bumpChildren(w, 1)
+      await w.get('select').setValue('3') // > maxBabyAge=1, ≤ maxFreeAge=5 → libre
+      await clickAddRoom(w)
+
+      expect(w.get('[data-testid="cart-line"]').text()).toContain('3 años · niño, no consume plaza')
+      w.unmount()
+    })
+
+    it('Editar saca la línea del carrito y precarga el composer de ESA tarjeta con los mismos adultos y edades', async () => {
+      const w = render(true, 'es', POLICY)
+      const store = useBookingStore()
+      await composeBabyAndPaying(w) // 1 adulto + [1, 8]
+      await clickAddRoom(w)
+      expect(store.cart).toHaveLength(1)
+      // El composer se reseteó tras agregar (1 adulto / 0 niños).
+      expect(w.findAll('select')).toHaveLength(0)
+
+      await w.get('[data-testid="cart-edit"]').trigger('click')
+      await flushPromises()
+
+      expect(store.cart).toHaveLength(0)
+      expect(w.find('[data-testid="cart-line"]').exists()).toBe(false)
+      expect(w.find('[aria-label="Familiar · Adultos: 1"]').exists()).toBe(true)
+      expect(w.find('[aria-label="Familiar · Niños: 2"]').exists()).toBe(true)
+      const selects = w.findAll('select')
+      expect(selects).toHaveLength(2)
+      expect((selects[0]!.element as HTMLSelectElement).value).toBe('1')
+      expect((selects[1]!.element as HTMLSelectElement).value).toBe('8')
+      // El badge de bebé vuelve a aparecer para el niño de 1 — misma clasificación que en el carrito.
+      expect(w.findAll('[data-testid="baby-badge"]')).toHaveLength(1)
+      w.unmount()
+    })
+
+    it('Editar con quantity 2 devuelve UNA sola unidad al composer y deja la otra en el carrito', async () => {
+      const w = render(true, 'es', POLICY)
+      const store = useBookingStore()
+      await bumpAdults(w, 1) // 2 adultos, sin niños → "para 2"
+      await clickAddRoom(w)
+      await bumpAdults(w, 1)
+      await clickAddRoom(w)
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.quantity).toBe(2)
+
+      await w.get('[data-testid="cart-edit"]').trigger('click')
+      await flushPromises()
+
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.quantity).toBe(1)
+      expect(w.find('[aria-label="Familiar · Adultos: 2"]').exists()).toBe(true)
+      w.unmount()
+    })
+  })
+
   it('sin regímenes configurados: "Sólo alojamiento" activo y los 3 códigos deshabilitados', () => {
     const w = render()
     const text = w.text()

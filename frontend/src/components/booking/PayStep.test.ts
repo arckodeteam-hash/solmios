@@ -399,3 +399,47 @@ describe('PayStep — sin pasarela (#267)', () => {
     w.unmount()
   })
 })
+
+// ─── REQ-02 (#234): el resumen pre-pago muestra la clasificación de CADA menor ─────────────
+// "Mantener la clasificación resultante de cada menor (niño/bebé y consume/no consume plaza)"
+// también en el paso de pago — misma etiqueta EXACTA que `RoomsStep.vue` (`cartLineGuestsLabel`),
+// calculada con `classifyAge` contra `store.childPolicy`, no con un texto guardado en la línea.
+describe('PayStep — clasificación por menor en el resumen (REQ-02 #234)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function renderWithChildren(childrenAges: number[], locale: BookingLocale = 'es'): VueWrapper {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = baseRates()
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: true }
+    store.cart = [{
+      key: `double|2|2|${childrenAges.join(',')}`, roomType: 'double', roomName: 'double', occupancy: 2, quantity: 1,
+      unitPrice: 200, unitTaxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], maxAvailable: 5, photoUrl: null,
+      adults: 2, childrenAges, needsCrib: true,
+    }]
+    useBookingI18nStore().setLocale(locale)
+    return mount(PayStep)
+  }
+
+  it('bebé (≤ maxBabyAge), niño libre (≤ maxFreeAge) y niño con plaza: cada uno con su edad y su clasificación', () => {
+    const w = renderWithChildren([1, 3, 8])
+    const line = w.get('[data-testid="cart-line"]').text().replace(/\s+/g, ' ')
+    expect(line).toContain('2 adultos · 3 niños')
+    expect(line).toContain('1 año · bebé')
+    expect(line).toContain('3 años · niño, no consume plaza')
+    expect(line).toContain('8 años · niño, consume plaza')
+    expect(line).toContain('Cuna')
+    w.unmount()
+  })
+
+  it('[en] la clasificación se traduce, no queda en español', () => {
+    const w = renderWithChildren([1, 8], 'en')
+    const line = w.get('[data-testid="cart-line"]').text().replace(/\s+/g, ' ')
+    expect(line).toContain('age 1 · baby')
+    expect(line).toContain('age 8 · child, uses capacity')
+    expect(line).not.toContain('años')
+    w.unmount()
+  })
+})
