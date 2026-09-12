@@ -15,6 +15,7 @@ import { backfillPaymentsReservationId } from './scripts/backfill-payments-reser
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
+import { backfillCribRoomAmenity } from './scripts/backfill-crib-room-amenity'
 import { backfillReservationSourceWeb } from './scripts/backfill-reservation-source-web'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
@@ -1503,6 +1504,18 @@ async function main(): Promise<void> {
     console.log(`roles.restaurant:discount: ${discounted} fila(s) actualizada(s)`)
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'roles.restaurant:discount', missingTable: 'roles', consequence: 'Sin este backfill, nadie puede aplicar descuentos ni cortesías en el POS de un hotel existente.' })
+  }
+
+  // #292 (revisión PR #329) — la cuna dejó de ser el toggle global `child_policy.cribAvailable` y pasó
+  // a ser la amenidad `custom:cuna` de cada habitación. A todo hotel que tenía el toggle en true se le
+  // crea esa fila ("Cuna", activa, precio 0 salvo `cribPrice`) en las habitaciones que no tengan ya una
+  // cuna; sin esto el motor deja de preguntar "¿Necesita cuna?" en prod hasta que alguien la cargue a
+  // mano habitación por habitación. Idempotente (0 filas la segunda vez). Las tablas las crea el ORM.
+  try {
+    const cribs = await backfillCribRoomAmenity(db)
+    console.log(`room_amenities custom:cuna (desde child_policy.cribAvailable): ${cribs} fila(s) creada(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'room_amenities custom:cuna', missingTable: 'room_amenities', consequence: 'Sin este backfill, los hoteles que ofrecían cuna (child_policy.cribAvailable) dejan de ofrecerla en el motor público hasta cargarla a mano en cada habitación.' })
   }
 
   // #247 (REQ-RWP-04) — `source='web'` a las reservas del motor público anteriores al cambio: desde
