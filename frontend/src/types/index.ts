@@ -1,3 +1,5 @@
+import type { UpsellBreakdownLine } from './booking'
+
 // === HOTEL ===
 export interface Hotel {
   id: string
@@ -550,6 +552,9 @@ export interface ReservationPriceBreakdown {
   mealPlanTotal?: number
   taxes?: number
   taxBreakdown?: { name: string; rate: number; amount: number }[]
+  /** MR-10 (#275) — extras cotizados línea por línea con su multiplicador por `kind`.
+   *  Sólo en reservas creadas después de la feature. */
+  upsells?: UpsellBreakdownLine[]
   total?: number
 }
 
