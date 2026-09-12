@@ -26,6 +26,7 @@
 
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { EmailSender, DeferredEmailAttachment } from '../../services/email-sender'
+import { reservationPanelLink } from './notify-reservation-received'
 import type { NotificationLanguage } from '../../services/notification-defaults'
 import { resolveGuestLanguage } from '../../services/guest-language'
 import { escapeHtml } from '../../services/notification-renderer'
@@ -186,7 +187,8 @@ async function notifyHotelOfFailure(
       message: `Reserva ${String(reservation.id ?? '').slice(0, 8)}: ${error}. Envíe la confirmación manualmente desde la reserva.`,
       read: 0,
       date: new Date().toISOString(),
-      metadata: { reservationId, link: `/reservas/${reservationId}` },
+      // Mismo destino que el aviso de "reserva recibida": `/reservas/:id` no existe en el panel.
+      metadata: { reservationId, link: reservationPanelLink(reservationId) },
     })
   } catch (e) {
     deps.logger.warn('booking-paid-email: no se pudo avisar al hotel del fallo', { reservationId, error: (e as Error).message })

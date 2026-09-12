@@ -329,7 +329,8 @@ describe('recibo completo (#270)', () => {
     expect(n.title).toContain('huesped@example.com')
     expect(n.message).toContain('smtp down')
     expect(n.metadata.reservationId).toBe(RESERVA.id)
-    expect(n.metadata.link).toBe(`/reservas/${RESERVA.id}`)
+    // `/reservas/:id` no existe en el panel: el link es el mismo que el aviso de reserva recibida.
+    expect(n.metadata.link).toBe(`/panel/reservations?open=${RESERVA.id}`)
     expect(typeof n.id).toBe('string')
   })
 
