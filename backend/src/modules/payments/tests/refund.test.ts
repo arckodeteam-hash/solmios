@@ -194,14 +194,15 @@ describe('StripeGateway.refund (#271)', () => {
 
   /** Stubea sessions.retrieve y refunds.create; registra las llamadas. */
   function stubStripe(gw: StripeGateway, session: any | (() => Promise<any>)) {
-    const calls = { retrieve: [] as any[], create: [] as any[] }
+    const calls = { retrieve: [] as any[], create: [] as any[], options: [] as any[] }
     const stripe = (gw as any).stripe
     stripe.checkout.sessions.retrieve = async (id: string) => {
       calls.retrieve.push(id)
       return typeof session === 'function' ? session() : session
     }
-    stripe.refunds.create = async (params: any) => {
+    stripe.refunds.create = async (params: any, options?: any) => {
       calls.create.push(params)
+      calls.options.push(options)
       return { id: 're_1', status: 'succeeded' }
     }
     return calls
@@ -252,5 +253,26 @@ describe('StripeGateway.refund (#271)', () => {
     await gw.refund('pi_y')
 
     expect(calls.create).toEqual([{ payment_intent: 'pi_y' }])
+  })
+
+  // #272: la clave de idempotencia viaja como request option (header `Idempotency-Key`), no en los params.
+  it('con idempotencyKey → refunds.create recibe { idempotencyKey } como opción y dos llamadas iguales mandan la misma', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: 'pi_y' })
+
+    await gw.refund('cs_x', 700, 'web-refund:p1:70000')
+    await gw.refund('cs_x', 700, 'web-refund:p1:70000')
+
+    expect(calls.create).toEqual([{ payment_intent: 'pi_y', amount: 700 }, { payment_intent: 'pi_y', amount: 700 }])
+    expect(calls.options).toEqual([{ idempotencyKey: 'web-refund:p1:70000' }, { idempotencyKey: 'web-refund:p1:70000' }])
+  })
+
+  it('sin idempotencyKey → refunds.create sin opciones (comportamiento previo intacto)', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: 'pi_y' })
+
+    await gw.refund('pi_y', 700)
+
+    expect(calls.options).toEqual([undefined])
   })
 })

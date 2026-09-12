@@ -4,7 +4,7 @@
 // vive en auto_messages; este archivo es el fallback. Versionado con git, testeable sin DB.
 // Las variables {key} se interpolan con renderTemplate() de email-service (6.1.2).
 
-export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_new_ota_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
+export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'reservation_cancelled_guest' | 'reservation_cancelled_staff' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_new_ota_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
 
 export interface NotificationDefault {
@@ -206,6 +206,155 @@ const PRESALE_PT = `<!DOCTYPE html>
   </div>
 </body>
 </html>`
+
+// ─── reservation_cancelled_guest (#272) ─────────────────────────────────────
+// El huésped canceló desde la web. `{refund_line}` la arma el usecase según el estado REAL del
+// reembolso (hecho / pendiente / sin reembolso) para no prometer plata que Stripe no devolvió.
+
+const CANCELLED_GUEST_ES = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva cancelada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
+    <p>Tu reserva del <strong>{checkin_date}</strong> al <strong>{checkout_date}</strong> ({rooms_count} habitación/es) quedó cancelada el {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Total de la reserva</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Penalidad por cancelación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Reembolso</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">{refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
+    <p style="font-size:13px;color:#6b7280;">¿Dudas? Escribinos a {hotel_email} o llamanos al <strong>{hotel_phone}</strong>.</p>
+  </div>
+</body></html>`
+
+const CANCELLED_GUEST_EN = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Booking cancelled</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hello <strong>{guest_name}</strong>,</p>
+    <p>Your booking from <strong>{checkin_date}</strong> to <strong>{checkout_date}</strong> ({rooms_count} room/s) was cancelled on {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Booking total</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Cancellation fee</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Refund</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">{refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Locator: <strong>{locator}</strong></p>
+    <p style="font-size:13px;color:#6b7280;">Questions? Write to {hotel_email} or call us at <strong>{hotel_phone}</strong>.</p>
+  </div>
+</body></html>`
+
+const CANCELLED_GUEST_PT = `<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Reserva cancelada</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
+    <p>A sua reserva de <strong>{checkin_date}</strong> a <strong>{checkout_date}</strong> ({rooms_count} quarto/s) foi cancelada em {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Total da reserva</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Taxa de cancelamento</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Reembolso</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">{refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
+    <p style="font-size:13px;color:#6b7280;">Dúvidas? Escreva para {hotel_email} ou ligue para <strong>{hotel_phone}</strong>.</p>
+  </div>
+</body></html>`
+
+// ─── reservation_cancelled_staff (#272) ─────────────────────────────────────
+// Aviso al buzón del hotel (`hotels.email`). La campanita y el push ya salieron por el connector
+// `bookingengine-notificaciones`; acá va el correo con el estado del reembolso y el link al panel.
+
+const CANCELLED_STAFF_ES = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Cancelación desde la web</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p><strong>{guest_name}</strong> canceló su reserva desde la web el {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Estadía</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} → {checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Habitaciones</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{rooms_count}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Total</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Penalidad</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Reembolso</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">Estado: {refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong> · Reserva {reservation_id}</p>
+    <p><a href="{reservation_link}" style="color:#1a2b4c;font-weight:bold;">Abrir la reserva en el panel</a></p>
+  </div>
+</body></html>`
+
+const CANCELLED_STAFF_EN = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Web cancellation</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p><strong>{guest_name}</strong> cancelled their booking from the website on {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Stay</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} → {checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Rooms</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{rooms_count}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Total</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Cancellation fee</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Refund</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">Status: {refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Locator: <strong>{locator}</strong> · Booking {reservation_id}</p>
+    <p><a href="{reservation_link}" style="color:#1a2b4c;font-weight:bold;">Open the booking in the panel</a></p>
+  </div>
+</body></html>`
+
+const CANCELLED_STAFF_PT = `<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Cancelamento pela web</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p><strong>{guest_name}</strong> cancelou a sua reserva pelo site em {cancelled_at}.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Estadia</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} → {checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Quartos</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{rooms_count}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Total</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Taxa de cancelamento</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{cancellation_fee_text}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Reembolso</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;color:#1a2b4c;">{refund_amount_text}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:14px;color:#4b5563;">Estado: {refund_line}</p>
+    <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong> · Reserva {reservation_id}</p>
+    <p><a href="{reservation_link}" style="color:#1a2b4c;font-weight:bold;">Abrir a reserva no painel</a></p>
+  </div>
+</body></html>`
 
 // ─── checkin_welcome ────────────────────────────────────────────────────────
 
@@ -1080,6 +1229,16 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<Not
     es: { subject: 'Reserva pendiente de pago — {hotel_name}', body: PRESALE_ES },
     en: { subject: 'Booking pending payment — {hotel_name}', body: PRESALE_EN },
     pt: { subject: 'Reserva pendente de pagamento — {hotel_name}', body: PRESALE_PT },
+  },
+  reservation_cancelled_guest: {
+    es: { subject: 'Reserva cancelada — {hotel_name}', body: CANCELLED_GUEST_ES },
+    en: { subject: 'Booking cancelled — {hotel_name}', body: CANCELLED_GUEST_EN },
+    pt: { subject: 'Reserva cancelada — {hotel_name}', body: CANCELLED_GUEST_PT },
+  },
+  reservation_cancelled_staff: {
+    es: { subject: 'Cancelación web · {guest_name} — {hotel_name}', body: CANCELLED_STAFF_ES },
+    en: { subject: 'Web cancellation · {guest_name} — {hotel_name}', body: CANCELLED_STAFF_EN },
+    pt: { subject: 'Cancelamento web · {guest_name} — {hotel_name}', body: CANCELLED_STAFF_PT },
   },
   checkin_welcome: {
     es: { subject: '¡Bienvenido a {hotel_name}, {guest_name}!', body: CHECKIN_ES },

@@ -133,7 +133,13 @@ export interface PaymentGateway {
  * — un contrato que miente.
  */
 export interface RefundableGateway extends PaymentGateway {
-  refund(providerRef: string, amountMinor?: number): Promise<RefundResult>
+  /**
+   * #272: `idempotencyKey` es la clave de idempotencia DEL PROVEEDOR para la devolución (Stripe la manda como
+   * header `Idempotency-Key`; PayPal como `PayPal-Request-Id`). Un reintento con la MISMA clave devuelve el
+   * reembolso original en vez de sacar plata dos veces — sin ella, "Stripe devolvió pero el asiento no se
+   * grabó" seguido de "Reintentar" reembolsaba dos veces. Opcional: quien no la pase sigue como antes.
+   */
+  refund(providerRef: string, amountMinor?: number, idempotencyKey?: string): Promise<RefundResult>
   voidCharge(providerRef: string): Promise<void>
 }
 

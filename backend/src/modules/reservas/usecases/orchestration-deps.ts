@@ -14,6 +14,7 @@ import type { ReservationMoneyPort } from './money-port'
 import type { PaymentRequestsCeilingPort } from './ceiling-guard'
 import type { ManualPaymentPort } from './mark-paid'
 import type { ReservationInvoicingPort } from './issue-invoice'
+import type { RetryWebRefundPort } from './retry-refund'
 import type { ApprovalRefundPort } from './reject'
 
 export interface ReservasOrchestrationDeps {
@@ -43,4 +44,6 @@ export interface ReservasOrchestrationDeps {
   closeApprovalNotifications?: (hotelId: string, reservationId: string) => Promise<void>
   /** #253 (REQ-FDR-02) — connectors/reservas-facturas.ts: factura desde la reserva (folio abierto → folios; sin folio → facturas). */
   invoicing?: ReservationInvoicingPort
+  /** #272 — connectors/bookingengine-refunds.ts: reintenta en Stripe el reembolso de una cancelación web (POST /api/reservas/:id/retry-refund). Recibe `actor` (quién apretó "Reintentar") para que `payments` lo asiente a su nombre. */
+  retryWebRefund?: RetryWebRefundPort
 }

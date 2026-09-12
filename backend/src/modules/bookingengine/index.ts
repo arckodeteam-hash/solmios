@@ -143,6 +143,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         hotelAmenitiesRepo,
         // PG-7.5 — registry para la página hospedada de CardNet (/api/pay/go). Al final.
         registry,
+        // #272 — `Groups` para la cancelación pública en cascada. Al final.
+        new OrmRepository<any>(orm, 'Groups'),
       )
 
       // Admin routes (protegidas con auth)
