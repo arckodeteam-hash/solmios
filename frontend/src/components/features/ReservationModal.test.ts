@@ -21,7 +21,13 @@ vi.mock('@/services/Reservation.service', () => ({
     sendLockCodeEmail: vi.fn(),
     // Requerimiento 13 — hermanas de una reserva de varias habitaciones (mismo groupId).
     list: vi.fn(),
+    // REQ-FDR-02 (#254) — POST /reservas/:id/invoice desde el botón Facturar.
+    issueInvoice: vi.fn(),
   },
+}))
+// REQ-FDR-03 (#254) — Imprimir / PDF / Email de la tarjeta "Facturas" (vía useInvoiceActions).
+vi.mock('@/services/Billing.service', () => ({
+  BillingService: { print: vi.fn(), downloadPdf: vi.fn(), emailInvoice: vi.fn() },
 }))
 vi.mock('@/services/Payments.service', () => ({
   PaymentsService: { create: vi.fn(), update: vi.fn(), createStripeCheckout: vi.fn() },
@@ -33,11 +39,16 @@ vi.mock('@/services/Platform.service', () => ({ ConfigService: { get: vi.fn() } 
 vi.mock('@/services/Hotel.service', () => ({ HotelService: { settings: vi.fn() } }))
 vi.mock('@/services/Room.service', () => ({ RoomService: { list: vi.fn() } }))
 vi.mock('@/services/TTLock.service', () => ({ TTLockService: { listDevices: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+// #254: el modal ya NO navega a Facturación desde "Facturar" — si alguien vuelve a importar
+// vue-router acá, el mount revienta sin router y este test lo delata.
+const routerPush = vi.fn()
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerPush }) }))
 
+const toastSuccess = vi.fn()
+const toastError = vi.fn()
 const toastWarning = vi.fn()
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: toastWarning }),
+  useToast: () => ({ success: toastSuccess, error: toastError, info: vi.fn(), warning: toastWarning }),
 }))
 
 let permissions: string[] = []
@@ -57,7 +68,9 @@ import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { ConfigService } from '@/services/Platform.service'
 import { HotelService } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
-import type { ReservationDetail, PaymentAttemptView } from '@/types'
+import { BillingService } from '@/services/Billing.service'
+import { ApiError } from '@/services/http'
+import type { ReservationDetail, PaymentAttemptView, ReservationInvoiceView } from '@/types'
 
 const ALL = ['*:*']
 const READ_ONLY = ['reservations:view']
@@ -625,6 +638,120 @@ describe('ReservationModal', () => {
 
       expect(modalText()).not.toContain('4242')
       expect(document.body.querySelector('input[placeholder="PIN"]')).not.toBeNull()
+    })
+  })
+
+  // ── Facturas (REQ-FDR-02/03, #254) ─────────────────────────────────────────────────────────
+  // La tarjeta "Facturas" muestra lo que el backend ya emitió (`d.invoices`) con las mismas
+  // acciones que /panel/billing, y "Facturar" emite DE VERDAD (POST /reservas/:id/invoice) en vez
+  // de mandar al listado global.
+  describe('facturas', () => {
+    const BILLING_VIEW = ['reservations:view', 'billing:view']
+    const BILLING_CREATE = ['reservations:view', 'billing:view', 'billing:create']
+
+    function invoiceFixture(over: Partial<ReservationInvoiceView> = {}): ReservationInvoiceView {
+      return {
+        id: 'inv1', number: 'F-0001', type: 'invoice', status: 'paid', amount: 200, taxes: 0,
+        amountPaid: 200, balance: 0, currency: 'USD', issuedAt: '2026-09-11T00:00:00.000Z', ncf: null,
+        ...over,
+      }
+    }
+    const rows = () => Array.from(document.body.querySelectorAll<HTMLElement>('[data-testid="invoice-row"]'))
+    /** El "Facturar" del ConfirmModal: el único sin data-testid (header y tarjeta vacía lo llevan). */
+    const confirmButton = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find(b => b.textContent?.trim() === 'Facturar' && !b.dataset.testid)
+    const byTestId = (id: string) => document.body.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)
+
+    it('lista la factura con número, estado "Pagada" y las acciones Imprimir / PDF / Email', async () => {
+      vi.mocked(BillingService.print).mockResolvedValue('<html></html>' as never)
+      await open(detailFixture({ invoices: [invoiceFixture()] }), BILLING_VIEW)
+
+      expect(rows()).toHaveLength(1)
+      expect(rows()[0].textContent).toContain('F-0001')
+      expect(rows()[0].textContent).toContain('Pagada')
+      expect(byTestId('invoice-print')).not.toBeNull()
+      expect(byTestId('invoice-pdf')).not.toBeNull()
+      expect(byTestId('invoice-email')).not.toBeNull()
+
+      byTestId('invoice-print')!.click()
+      await flushPromises()
+      expect(vi.mocked(BillingService.print)).toHaveBeenCalledWith('inv1')
+    })
+
+    it('una nota de crédito se ve como tal y con el monto en negativo', async () => {
+      await open(detailFixture({
+        invoices: [invoiceFixture({ id: 'nc1', number: 'NC-0001', type: 'credit_note', amount: 50, amountPaid: 0, balance: 0 })],
+      }), BILLING_VIEW)
+
+      const row = rows()[0]
+      expect(row.textContent).toContain('Nota de crédito')
+      expect(row.textContent).toMatch(/-US\$\s?50,00/)
+    })
+
+    it('sin factura: lo dice y ofrece "Facturar" sólo con billing:create', async () => {
+      await open(detailFixture({ invoices: [] }), BILLING_CREATE)
+      expect(modalText()).toContain('Esta reserva todavía no tiene factura.')
+      expect(byTestId('invoice-issue-empty')).not.toBeNull()
+
+      wrapper!.unmount()
+      document.body.innerHTML = ''
+      await open(detailFixture({ invoices: [] }), BILLING_VIEW)
+      expect(modalText()).toContain('Esta reserva todavía no tiene factura.')
+      expect(byTestId('invoice-issue-empty')).toBeNull()
+    })
+
+    it('Facturar (header): confirma, emite por POST /reservas/:id/invoice y recarga el detalle', async () => {
+      vi.mocked(ReservationService.issueInvoice).mockResolvedValue({ invoiceId: 'inv-new', source: 'reservation' })
+      await open(detailFixture({ invoices: [] }), BILLING_CREATE)
+
+      byTestId('invoice-issue-button')!.click()
+      await flushPromises()
+      expect(modalText()).toContain('Se emitirá la factura')
+      expect(vi.mocked(ReservationService.issueInvoice)).not.toHaveBeenCalled()
+
+      // El detalle recargado ya trae la factura (así se ve la fila sin cerrar el modal).
+      vi.mocked(ReservationService.getById).mockResolvedValue(detailFixture({ invoices: [invoiceFixture({ id: 'inv-new', number: 'F-0002' })] }))
+      confirmButton()!.click()
+      await flushPromises()
+      await flushPromises()
+
+      expect(vi.mocked(ReservationService.issueInvoice)).toHaveBeenCalledWith('res-1')
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(toastSuccess).toHaveBeenCalledWith('Factura emitida')
+      expect(wrapper!.emitted('changed')).toBeTruthy()
+      expect(rows()[0].textContent).toContain('F-0002')
+      expect(routerPush).not.toHaveBeenCalled()
+    })
+
+    it('409 (ya tenía factura): avisa "Ya tiene factura", recarga y NO lo trata como error', async () => {
+      vi.mocked(ReservationService.issueInvoice).mockRejectedValue(new ApiError(409, 'ya tiene factura'))
+      await open(detailFixture({ invoices: [] }), BILLING_CREATE)
+
+      byTestId('invoice-issue-button')!.click()
+      await flushPromises()
+      vi.mocked(ReservationService.getById).mockResolvedValue(detailFixture({ invoices: [invoiceFixture()] }))
+      confirmButton()!.click()
+      await flushPromises()
+      await flushPromises()
+
+      expect(toastWarning).toHaveBeenCalledWith('Ya tiene factura')
+      expect(toastError).not.toHaveBeenCalled()
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(rows()[0].textContent).toContain('F-0001')
+    })
+
+    it('con factura existente, Facturar no vuelve a emitir ni navega: muestra la que hay', async () => {
+      await open(detailFixture({ invoices: [invoiceFixture()] }), BILLING_CREATE)
+      byTestId('invoice-issue-button')!.click()
+      await flushPromises()
+      expect(modalText()).not.toContain('Se emitirá la factura')
+      expect(vi.mocked(ReservationService.issueInvoice)).not.toHaveBeenCalled()
+      expect(routerPush).not.toHaveBeenCalled()
+    })
+
+    it('sin billing:create no hay botón Facturar en el header (antes bastaba billing:view)', async () => {
+      await open(detailFixture({ invoices: [] }), BILLING_VIEW)
+      expect(byTestId('invoice-issue-button')).toBeNull()
     })
   })
 
