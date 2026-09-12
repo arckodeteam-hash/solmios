@@ -43,9 +43,9 @@ import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from '.
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
-import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
-import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
-import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
+import { normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
+import { CRIB_AMENITY_KEY, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, roomsOfferCrib, type RoomAmenityLine } from './public-room-amenities'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
@@ -71,19 +71,18 @@ export interface RoomLineInput {
    *  MR-10 (#275, Opción A): una línea con `children` plano y sin edades YA NO cotiza por adultos
    *  únicamente — se le sintetizan edades a `maxChildAge` y pasa por el mismo motor. */
   childrenAges?: number[]
-  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — a diferencia de `upsells`
-   *  (global al carrito, ver public-booking.ts), esto SÍ es por línea: cada habitación del grupo
-   *  pide su propia cuna para SU bebé, no la del grupo entero. Gateado server-side contra los
-   *  bebés de ESTA línea Y `childPolicy.cribAvailable`, igual que el flujo de 1 habitación. */
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación) — a
+   *  diferencia de `upsells` (global al carrito, ver public-booking.ts), esto SÍ es por línea:
+   *  cada habitación del grupo pide su propia cuna para SU bebé, no la del grupo entero. Gateado
+   *  server-side contra los bebés de ESTA línea Y que el tipo de ESTA línea ofrezca `custom:cuna`
+   *  (`CRIB_AMENITY_KEY`), igual que el flujo de 1 habitación. "Sí" fuerza esa key en
+   *  `roomAmenities` de la línea (precio real por unidad); "No" la quita aunque venga en el body.
+   *  (#292: `childAmenities` por línea ya no se lee — el catálogo global se dio de baja.) */
   needsCrib?: boolean
-  /** REQ-01 (#233) — amenidades para niños/bebés de ESTA línea (`[{id}]` del catálogo
-   *  `child_amenities`). Por línea, igual que la cuna: cada habitación elige las suyas para SUS
-   *  menores. Gateado server-side contra los menores de ESTA línea Y `childPolicy.acceptChildren`;
-   *  cada unidad física de la línea las lleva (Σ price × quantity de la línea). */
-  childAmenities?: Array<{ id: string }>
   /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
    *  por línea. Se prefieren las unidades del tipo que las ofrecen y cada unidad física elegida
-   *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). */
+   *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). `custom:cuna`
+   *  se filtra acá (la gobierna `needsCrib`, ver arriba). */
   roomAmenities?: Array<{ key: string }>
 }
 
@@ -109,19 +108,18 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
       ? r.childrenAges.map((a: unknown) => Number(a)).filter((a: number) => Number.isFinite(a) && a >= 0)
       : []
     // Tarea 22 — se normaliza acá igual que el resto; el gateo por bebé (¿esta línea tiene
-    // alguno?) Y por `childPolicy.cribAvailable` pasa más abajo, cuando ya se conoce la
-    // composición de CADA línea.
+    // alguno?) Y por oferta de `custom:cuna` del tipo (#292) pasa más abajo, cuando ya se conoce
+    // la composición de CADA línea y sus unidades libres.
     const needsCrib = r?.needsCrib === true
-    // REQ-01 (#233) — se conservan los ids únicos; el gateo por menores de la línea y la
-    // validación contra el catálogo pasan más abajo, cuando se conoce la composición.
-    const childAmenities = normalizeChildAmenityIds(r?.childAmenities).map((id) => ({ id }))
     // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
-    const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities).map((key) => ({ key }))
+    // #292 — `custom:cuna` NO entra por acá: su única fuente de verdad es `needsCrib`.
+    const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities)
+      .filter((key) => key !== CRIB_AMENITY_KEY)
+      .map((key) => ({ key }))
     if (!roomType) continue
     out.push({
       roomType, adults, children, quantity, ...(childrenAges.length > 0 ? { childrenAges } : {}),
       ...(needsCrib ? { needsCrib } : {}),
-      ...(childAmenities.length > 0 ? { childAmenities } : {}),
       ...(roomAmenities.length > 0 ? { roomAmenities } : {}),
     })
   }
@@ -260,12 +258,9 @@ export async function createPublicBookingGroup(
     // igual que crib: cada habitación puede tener una cantidad de adultos distinta, así que el
     // "valor de un adulto" (y por ende si el % terminó aplicando) es por línea.
     childrenRatePercentApplied: number | null
-    // REQ-01 (#233) — snapshot de amenidades infantiles de la LÍNEA (quantity = unidades de la
-    // línea) y su total; cada fila física persiste su propio snapshot con quantity 1.
-    childAmenities: ChildAmenityLine[]
-    childAmenitiesTotal: number
     // REQ-01 (#290) — snapshot de amenidades de habitación POR UNIDAD FÍSICA elegida (cada una
-    // cobra el precio de SUS filas `RoomAmenities`); `roomAmenitiesTotal` es la Σ de la línea.
+    // cobra el precio de SUS filas `RoomAmenities`, cuna incluida cuando `needsCrib`, #292);
+    // `roomAmenitiesTotal` es la Σ de la línea.
     roomAmenitiesByRoom: Map<string, RoomAmenityLine[]>
     roomAmenitiesTotal: number
   }
@@ -276,17 +271,6 @@ export async function createPublicBookingGroup(
   const hotelUpsells: any[] | null = Array.isArray(upsells) && upsells.length > 0 && extraDeps?.upsells
     ? (((await extraDeps.upsells.findMany({ hotelId })) as any[]) ?? [])
     : null
-
-  // REQ-01 (#233) — catálogo de amenidades infantiles del hotel, UNA lectura para todo el grupo
-  // (fuera del loop de líneas). Solo si alguna línea pidió alguna; sin repo cableado no se puede
-  // validar ni cotizar → se ignoran con warn (mismo criterio que `upsells` sin repo).
-  const anyLineHasChildAmenities = lines.some((l) => (l.childAmenities?.length ?? 0) > 0)
-  let childAmenitiesCatalog: any[] | null = null
-  if (anyLineHasChildAmenities && extraDeps?.childAmenities) {
-    childAmenitiesCatalog = ((await extraDeps.childAmenities.findMany({ hotelId })) as any[]) ?? []
-  } else if (anyLineHasChildAmenities && !extraDeps?.childAmenities) {
-    logger?.warn('createPublicBookingGroup: childAmenities en rooms[] sin extraDeps.childAmenities cableado — se ignoran (no se puede validar ni cotizar)', { hotelId })
-  }
 
   for (const [lineIndex, line] of lines.entries()) {
     // MR-10 (#275, Opción A): edades de ESTA línea — las declaradas, o sintetizadas a
@@ -363,14 +347,33 @@ export async function createPublicBookingGroup(
       }
     }
 
+    // ─── Cuna (Tarea 22, simplificada 2026-09-09; #292 por habitación) — POR LÍNEA ───────────
+    // Mismo criterio de defensa en profundidad que public-booking.ts: sin al menos un bebé en
+    // ESTA línea, se fuerza "no pedida" sin importar el body. La segunda mitad del gate — ¿el
+    // tipo de ESTA línea (alguna unidad libre) ofrece `custom:cuna`? — se cierra acá abajo con el
+    // catálogo `RoomAmenities` de las candidatas. Sí/No únicamente — `cribCount` es 1/0 espejo
+    // de `needsCrib`, nunca una cantidad elegible.
+    const lineBabies = composition.babies
+    const lineCribRequested = lineBabies > 0 && line.needsCrib === true
+
     // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas por
-    // ESTA línea (orden estable, mismo criterio que public-booking.ts). Sin keys no se lee nada.
+    // ESTA línea (orden estable, mismo criterio que public-booking.ts). Sin keys (ni cuna
+    // pedida) no se lee nada. #292 — si la línea pide cuna y el tipo la ofrece, `custom:cuna`
+    // entra a las keys de la línea (se prefieren unidades con cuna y cada una cobra SU precio);
+    // si no, la línea queda sin cuna (la key ya se filtró en `normalizeRoomLines`).
     const lineRoomAmenityKeys = (line.roomAmenities ?? []).map((a) => a.key)
     let lineAmenitiesByRoom = new Map<string, any[]>()
-    if (lineRoomAmenityKeys.length > 0) {
+    let lineNeedsCrib = false
+    if (lineRoomAmenityKeys.length > 0 || lineCribRequested) {
       lineAmenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
-      freeOfType = preferRoomsOffering(freeOfType, lineAmenitiesByRoom, lineRoomAmenityKeys)
+      lineNeedsCrib = lineCribRequested && roomsOfferCrib(lineAmenitiesByRoom, freeOfType.map((r: any) => r.id))
+      if (lineNeedsCrib) lineRoomAmenityKeys.push(CRIB_AMENITY_KEY)
+      else if (lineCribRequested) {
+        logger?.warn('createPublicBookingGroup: cuna pedida pero ninguna unidad libre del tipo ofrece custom:cuna — la línea se crea sin cuna', { hotelId, roomType: line.roomType })
+      }
+      if (lineRoomAmenityKeys.length > 0) freeOfType = preferRoomsOffering(freeOfType, lineAmenitiesByRoom, lineRoomAmenityKeys)
     }
+    const lineCribCount = lineNeedsCrib ? 1 : 0
     const chosen = freeOfType.slice(0, line.quantity)
     for (const r of chosen) claimedIds.add(r.id)
 
@@ -407,31 +410,6 @@ export async function createPublicBookingGroup(
         )
       : round2(fallbackNightly * nights)
 
-    // ─── Cuna (Tarea 22, simplificada 2026-09-09) — gateo por bebé Y por config, POR LÍNEA ─────
-    // Mismo criterio de defensa en profundidad que public-booking.ts: sin al menos un bebé en
-    // ESTA línea Y `childPolicy.cribAvailable`, se fuerza "no pedida" sin importar el body.
-    // Sí/No únicamente — `cribCount` es 1/0 espejo de `needsCrib`, nunca una cantidad elegible.
-    const lineBabies = composition.babies
-    const lineNeedsCrib = lineBabies > 0 && childPolicy?.cribAvailable === true && line.needsCrib === true
-    const lineCribCount = lineNeedsCrib ? 1 : 0
-
-    // ─── REQ-01 (#233) — Amenidades infantiles, POR LÍNEA — gateo por menores Y por política ──
-    // Sin al menos un menor declarado en ESTA línea (con edades, que es lo que resuelve la
-    // política) Y `childPolicy.acceptChildren`, se descartan sin importar el body. Cada unidad
-    // física de la línea lleva las amenidades → Σ price × line.quantity.
-    const lineChildAmenityIds = (line.childAmenities ?? []).map((a) => a.id)
-    const lineMinors = composition.payingChildren + composition.freeChildren
-    const lineChildAmenitiesAllowed = childPolicy?.acceptChildren === true && lineMinors > 0
-    let lineChildAmenities: ChildAmenityLine[] = []
-    let lineChildAmenitiesTotal = 0
-    if (lineChildAmenityIds.length > 0 && !lineChildAmenitiesAllowed) {
-      logger?.warn('createPublicBookingGroup: childAmenities ignoradas en una línea sin menores declarados o con niños no aceptados', { hotelId, roomType: line.roomType })
-    } else if (lineChildAmenityIds.length > 0 && childAmenitiesCatalog) {
-      const resolved = resolveChildAmenityLines(childAmenitiesCatalog, lineChildAmenityIds, hotelId, line.quantity, logger)
-      lineChildAmenities = resolved.lines
-      lineChildAmenitiesTotal = resolved.total
-    }
-
     resolvedLines.push({
       roomType: line.roomType,
       adults: composition.effectiveAdults,
@@ -446,7 +424,6 @@ export async function createPublicBookingGroup(
       upsellPersonsPerUnit: composition.effectiveAdults + composition.payingChildren + (composition.freeChildren - composition.babies),
       needsCrib: lineNeedsCrib, cribCount: lineCribCount,
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
-      childAmenities: lineChildAmenities, childAmenitiesTotal: lineChildAmenitiesTotal,
       roomAmenitiesByRoom, roomAmenitiesTotal: round2(lineRoomAmenitiesTotal),
     })
   }
@@ -454,8 +431,6 @@ export async function createPublicBookingGroup(
   const roomSubtotal = round2(
     resolvedLines.reduce((s, l) => s + l.perUnitPrice * l.roomIds.length, 0),
   )
-  // REQ-01 (#233) — Σ de las amenidades infantiles de TODAS las líneas (cada una ya × su quantity).
-  const childAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.childAmenitiesTotal, 0))
   // REQ-01 (#290) — Σ de las amenidades de habitación de TODAS las unidades de todas las líneas.
   const roomAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.roomAmenitiesTotal, 0))
 
@@ -518,7 +493,7 @@ export async function createPublicBookingGroup(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
+    const subtotal = roomSubtotal + upsellsTotal + roomAmenitiesTotal
     const result = await validatePromoCode({ promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal)
     if (!result.valid) {
       return { status: 400, body: { error: 'promo_invalid', promoReason: result.reason ?? 'not_found' } }
@@ -529,7 +504,7 @@ export async function createPublicBookingGroup(
   }
 
   // Tarea 24 (#88): mismo lector y misma cuenta que public-booking.ts (impuesto por impuesto).
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + roomAmenitiesTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -544,7 +519,8 @@ export async function createPublicBookingGroup(
     // MR-10 (#275) — por línea; se persiste en el `priceBreakdown` de la LÍDER y sale en la
     // confirmación pública del grupo.
     upsells: upsellPricedLines,
-    childAmenitiesTotal,
+    // #292 — siempre 0 (ver `TotalBreakdown.childAmenitiesTotal`).
+    childAmenitiesTotal: 0,
     roomAmenitiesTotal,
     taxes,
     taxBreakdown,
@@ -561,14 +537,8 @@ export async function createPublicBookingGroup(
   }
   if (promoCode) notesParts.push(`Promo: ${promoCode}${promoReason ? ` (${promoReason})` : ''}`)
   if (upsellSummary.length > 0) notesParts.push(`Upsells: ${upsellSummary.join(', ')}`)
-  // REQ-01 (#233) — vistazo rápido por tipo; el detalle estructurado (snapshot con precio) vive
-  // en `childAmenities` de CADA fila.
-  const childAmenitiesSummary = resolvedLines
-    .filter((l) => l.childAmenities.length > 0)
-    .map((l) => `${l.roomType}: ${l.childAmenities.map((a) => `${a.name}=${a.total.toFixed(2)}`).join(', ')}`)
-  if (childAmenitiesSummary.length > 0) notesParts.push(`Amenidades niños: ${childAmenitiesSummary.join('; ')}`)
   // REQ-01 (#290) — vistazo rápido por tipo (Σ de la línea); el snapshot por unidad vive en
-  // `roomAmenities` de CADA fila.
+  // `roomAmenities` de CADA fila. La cuna (#292) aparece acá con su precio.
   const roomAmenitiesSummary = resolvedLines
     .filter((l) => Array.from(l.roomAmenitiesByRoom.values()).some((ls) => ls.length > 0))
     .map((l) => {
@@ -639,14 +609,15 @@ export async function createPublicBookingGroup(
             // Tarea "Cobro % niños" — % REALMENTE usado para cotizar ESTA línea (auditoría, mismo
             // criterio que public-booking.ts).
             childrenRatePercentApplied: line.childrenRatePercentApplied,
-            // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — ya gateados/
-            // validados por línea más arriba; cada unidad física de la línea recibe la MISMA
-            // solicitud, igual criterio que `childrenAges` un poco más arriba.
+            // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación)
+            // — ya gateados por línea más arriba (bebé + el tipo ofrece `custom:cuna`); cada
+            // unidad física de la línea recibe la MISMA solicitud, igual criterio que
+            // `childrenAges` un poco más arriba. Espejo de la línea de cuna en `roomAmenities`.
             needsCrib: line.needsCrib, cribCount: line.cribCount,
-            // REQ-01 (#233) — cada unidad física lleva SU snapshot (quantity 1, total = price) y
-            // SU total: el de la línea es × quantity, el de la fila es el de una habitación.
-            childAmenities: line.childAmenities.map((a) => ({ ...a, quantity: 1, total: a.price })),
-            childAmenitiesTotal: round2(line.childAmenities.reduce((s, a) => s + a.price, 0)),
+            // #292 — el catálogo global de amenidades infantiles se dio de baja: las columnas
+            // quedan (reservas históricas + lectores) pero una reserva nueva las escribe vacías.
+            childAmenities: [],
+            childAmenitiesTotal: 0,
             // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
             roomAmenities: line.roomAmenitiesByRoom.get(roomId) ?? [],
             roomAmenitiesTotal: round2((line.roomAmenitiesByRoom.get(roomId) ?? []).reduce((s, a) => s + a.total, 0)),
@@ -675,16 +646,15 @@ export async function createPublicBookingGroup(
       }
 
       // #269 — TODOS los extras pagados online del grupo cuelgan de la LÍDER (la primera creada,
-      // la que lleva `priceBreakdown` y la que Stripe cobra): upsells del grupo + amenidades
-      // infantiles de cada línea (× su quantity) + amenidades de habitación de cada unidad. Las
-      // hermanas no reciben addons — el cobro es uno solo y así se postea al folio una sola vez.
+      // la que lleva `priceBreakdown` y la que Stripe cobra): upsells del grupo + amenidades de
+      // habitación de cada unidad (cuna incluida). Las hermanas no reciben addons — el cobro es
+      // uno solo y así se postea al folio una sola vez.
       // Misma tx que las reservas; `notes`/`priceBreakdown` no cambian.
       const leader = reservations[0]
       if (leader) {
         const addonRows = buildBookingEngineAddons({
           reservationId: leader.id, hotelId, taxRate: totalTaxRateOf(hotelTaxes),
           upsells: upsellLines,
-          childAmenities: resolvedLines.flatMap((l) => l.childAmenities),
           roomAmenities: resolvedLines.flatMap((l) => Array.from(l.roomAmenitiesByRoom.values()).flat()),
         })
         for (const row of addonRows) await tx.create('ReservationAddons', row)

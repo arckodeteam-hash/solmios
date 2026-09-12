@@ -1,11 +1,13 @@
 // bookingengine/tests/public-booking-addons.test.ts — MR-04 (#269): los extras pagados online
-// (upsells, amenidades infantiles, amenidades de habitación) se materializan como filas
-// `ReservationAddons` (source booking_engine) en la MISMA tx que crea la reserva.
+// (upsells, amenidades de habitación) se materializan como filas `ReservationAddons` (source
+// booking_engine) en la MISMA tx que crea la reserva. (#292: el catálogo global de amenidades
+// infantiles se dio de baja — la amenidad de estos casos es una custom de la habitación.)
 //
 // Cubre:
-//  (a) single: 1 upsell (30) + 1 amenidad infantil (10) + habitación 100 × 1 noche, tax 18 % →
-//      2 filas, todas `source:'booking_engine'` y `reservationId` de la reserva, Σ(amount×qty)=40,
-//      `taxRate` 18; `Reservations.totalAmount` sigue siendo 165.20 (no se cobra dos veces).
+//  (a) single: 1 upsell (30) + 1 amenidad de habitación (10) + habitación 100 × 1 noche, tax 18 %
+//      → 2 filas, todas `source:'booking_engine'` y `reservationId` de la reserva,
+//      Σ(amount×qty)=40, `taxRate` 18; `Reservations.totalAmount` sigue siendo 165.20 (no se
+//      cobra dos veces).
 //  (b) sin extras → 0 filas.
 //  (c) grupo: upsell + amenidad → TODOS los addons cuelgan de la líder (`Reservations[0]`), las
 //      hermanas con 0.
@@ -17,10 +19,11 @@ import { buildBookingEngineAddons, totalTaxRateOf, BOOKING_ENGINE_ADDON_KINDS } 
 
 const HOTEL_ID = 'h1'
 
-/** Mismo ORM en memoria que `public-booking-child-amenities.test.ts`. */
-function makeDb(seed: { rooms?: any[]; reservations?: any[]; promoCodes?: any[] } = {}) {
+/** Mismo ORM en memoria que `public-booking-room-amenities.test.ts`. */
+function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; reservations?: any[]; promoCodes?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
+    RoomAmenities: seed.roomAmenities ?? [],
     Reservations: seed.reservations ?? [],
     ReservationAddons: [],
     RoomBlocks: [],
@@ -90,9 +93,8 @@ function repoOf(rows: any[]) {
   return { findMany: async (f: any = {}) => rows.filter((r) => Object.entries(f).every(([k, v]) => r[k] === v)) } as any
 }
 
-const CHILD_CATALOG = [
-  { id: 'ca-cuna', hotelId: HOTEL_ID, name: 'Cuna extra', price: 10, active: true, sortOrder: 0 },
-]
+/** Amenidad PERSONALIZADA de habitación (REQ-01 #290) a 10, para la room dada. */
+const bedExtra = (roomId: string) => ({ id: `${roomId}-cama`, roomId, amenityKey: 'custom:cama_extra', name: 'Cama extra', price: 10, isActive: true })
 const UPSELLS = [
   { id: 'u-transfer', hotelId: HOTEL_ID, name: 'Transfer', price: 30, kind: 'per_stay', active: true },
   // MR-10 (#275) — `per_person` para probar cantidad > 1 (per_stay ya no la admite).
@@ -101,7 +103,7 @@ const UPSELLS = [
 ]
 
 function deps() {
-  return { config: configRepo(), childAmenities: repoOf(CHILD_CATALOG), upsells: repoOf(UPSELLS) } as any
+  return { config: configRepo(), upsells: repoOf(UPSELLS) } as any
 }
 
 const lineTotal = (rows: any[]) => rows.reduce((s, r) => s + Number(r.amount) * Number(r.quantity), 0)
@@ -110,17 +112,18 @@ describe('createPublicBookingDirect — extras pagados online como ReservationAd
   function singleRoomDb() {
     return makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'family', capacity: 4, basePrice: 100, status: 'available' }],
+      roomAmenities: [bedExtra('r1')],
     })
   }
 
-  it('(a) 1 upsell (30) + 1 amenidad infantil (10) → 2 filas booking_engine, Σ 40, taxRate 18, totalAmount 165.20', async () => {
+  it('(a) 1 upsell (30) + 1 amenidad de habitación (10) → 2 filas booking_engine, Σ 40, taxRate 18, totalAmount 165.20', async () => {
     const { orm, tables } = singleRoomDb()
     const res = await createPublicBookingDirect(
       orm,
       {
         ...BASE_BODY, roomType: 'family', adults: 2, childrenAges: [5],
         upsells: [{ id: 'u-transfer', quantity: 1 }, { id: 'u-off', quantity: 1 }],
-        childAmenities: [{ id: 'ca-cuna' }],
+        roomAmenities: [{ key: 'custom:cama_extra' }],
       },
       undefined, undefined, undefined, undefined, undefined, deps(),
     )
@@ -130,7 +133,8 @@ describe('createPublicBookingDirect — extras pagados online como ReservationAd
     const reservation = tables.Reservations[0]
     expect(reservation.totalAmount).toBe(165.2)
     expect(reservation.priceBreakdown.upsellsTotal).toBe(30)
-    expect(reservation.priceBreakdown.childAmenitiesTotal).toBe(10)
+    expect(reservation.priceBreakdown.roomAmenitiesTotal).toBe(10)
+    expect(reservation.priceBreakdown.childAmenitiesTotal).toBe(0)
     expect(reservation.notes).toContain('Upsells: Transfer×1=30.00')
 
     const addons = tables.ReservationAddons
@@ -147,7 +151,7 @@ describe('createPublicBookingDirect — extras pagados online como ReservationAd
     expect(lineTotal(addons)).toBe(40)
     const byKind = Object.fromEntries(addons.map((a: any) => [a.kind, a]))
     expect(byKind.upsell).toMatchObject({ description: 'Transfer', quantity: 1, amount: 30, unitPrice: 30 })
-    expect(byKind.child_amenity).toMatchObject({ description: 'Cuna extra', quantity: 1, amount: 10, unitPrice: 10 })
+    expect(byKind.room_amenity).toMatchObject({ description: 'Cama extra', quantity: 1, amount: 10, unitPrice: 10 })
   })
 
   it('(a2) upsell con quantity 2 → una fila con quantity 2 y amount unitario', async () => {
@@ -202,6 +206,7 @@ describe('createPublicBookingGroup — addons en la reserva LÍDER (#269)', () =
         { id: 'r-b1', hotelId: HOTEL_ID, type: 'family', capacity: 4, basePrice: 100, status: 'available' },
         { id: 'r-b2', hotelId: HOTEL_ID, type: 'family', capacity: 4, basePrice: 100, status: 'available' },
       ],
+      roomAmenities: [bedExtra('r-b1'), bedExtra('r-b2')],
     })
   }
 
@@ -213,7 +218,7 @@ describe('createPublicBookingGroup — addons en la reserva LÍDER (#269)', () =
         ...BASE_BODY,
         rooms: [
           { roomType: 'double', adults: 2, quantity: 1 },
-          { roomType: 'family', adults: 2, quantity: 2, childrenAges: [5], childAmenities: [{ id: 'ca-cuna' }] },
+          { roomType: 'family', adults: 2, quantity: 2, childrenAges: [5], roomAmenities: [{ key: 'custom:cama_extra' }] },
         ],
         upsells: [{ id: 'u-transfer', quantity: 1 }],
       },
@@ -228,18 +233,19 @@ describe('createPublicBookingGroup — addons en la reserva LÍDER (#269)', () =
     expect(tables.Groups[0].totalAmount).toBe(389.4)
 
     const addons = tables.ReservationAddons
-    expect(addons).toHaveLength(2)
+    // 1 upsell + 1 amenidad por UNIDAD física (cada una resuelve contra SUS filas `RoomAmenities`).
+    expect(addons).toHaveLength(3)
     for (const a of addons) {
       expect(a.reservationId).toBe(leader.id)
       expect(a.source).toBe('booking_engine')
       expect(a.taxRate).toBe(18)
     }
-    // Σ addons = upsellsTotal + childAmenitiesTotal del grupo.
+    // Σ addons = upsellsTotal + roomAmenitiesTotal del grupo.
     expect(lineTotal(addons)).toBe(50)
-    const byKind = Object.fromEntries(addons.map((a: any) => [a.kind, a]))
-    expect(byKind.upsell).toMatchObject({ description: 'Transfer', quantity: 1, amount: 30 })
-    // La amenidad de la línea con quantity 2 va como UNA fila × 2 (unitario 10).
-    expect(byKind.child_amenity).toMatchObject({ description: 'Cuna extra', quantity: 2, amount: 10, unitPrice: 10 })
+    expect(addons.filter((a: any) => a.kind === 'upsell')[0]).toMatchObject({ description: 'Transfer', quantity: 1, amount: 30 })
+    const bedRows = addons.filter((a: any) => a.kind === 'room_amenity')
+    expect(bedRows).toHaveLength(2)
+    for (const r of bedRows) expect(r).toMatchObject({ description: 'Cama extra', quantity: 1, amount: 10, unitPrice: 10 })
     for (const sibling of tables.Reservations.slice(1)) {
       expect(addons.filter((a: any) => a.reservationId === sibling.id)).toHaveLength(0)
     }

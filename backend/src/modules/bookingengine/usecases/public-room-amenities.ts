@@ -6,16 +6,22 @@
 // `amenities/usecases/room-amenity-items.ts`). Las keys fijas del catálogo siguen siendo
 // features gratuitas y NO pasan por acá.
 //
-// Replica el patrón de `childAmenities` (#233), con una diferencia central: el catálogo NO es del
-// hotel sino de CADA habitación física, y el huésped elige un TIPO (no una unidad). Por eso:
+// El catálogo NO es del hotel sino de CADA habitación física, y el huésped elige un TIPO (no una
+// unidad). Por eso:
 //   - `GET /api/public/hotels/:slug/room-amenities` expone, por `roomType`, la UNIÓN (por key)
 //     de las custom activas de sus rooms vendibles, con el precio MÍNIMO entre ellas.
 //   - Al crear la reserva, el backend PREFIERE las rooms del tipo que ofrecen TODAS las keys
 //     pedidas (`preferRoomsOffering`) y cobra el precio REAL de la habitación asignada
 //     (`resolveRoomAmenityLines` contra las filas de ESA room). Una key que la room asignada no
-//     ofrece se ignora con `logger.warn` (mismo criterio que childAmenities: el huésped no tiene
-//     la culpa de un catálogo stale; mejor crear la reserva sin ese extra).
+//     ofrece se ignora con `logger.warn` (el huésped no tiene la culpa de un catálogo stale;
+//     mejor crear la reserva sin ese extra).
 //   - NUNCA se toma el precio del body.
+//
+// #292 — La CUNA es una de estas amenidades: `CRIB_AMENITY_KEY` (`custom:cuna`, la que el admin
+// de habitaciones ya sugiere). No existe más el toggle global del hotel ni el catálogo
+// `child_amenities`: "¿Necesita cuna?" se ofrece sólo si el tipo publica esa key
+// (`roomsOfferCrib`), y decir "sí" equivale a pedir esa key en `roomAmenities` — el precio real
+// lo cobra `resolveRoomAmenityLines` contra la unidad asignada, como cualquier otra custom.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { isCustomAmenityKey } from '../../amenities/usecases/room-amenity-items'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
@@ -41,6 +47,10 @@ export interface PublicRoomAmenity {
   name: string
   price: number
 }
+
+/** #292 — key de la amenidad personalizada "cuna" (`RoomAmenities.amenityKey`). Es la que decide
+ *  si un tipo ofrece cuna y la línea que se cobra cuando el huésped la pide (`needsCrib`). */
+export const CRIB_AMENITY_KEY = 'custom:cuna'
 
 const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
@@ -117,6 +127,13 @@ export function preferRoomsOffering(candidates: any[], amenitiesByRoom: Map<stri
   const offering = candidates.filter((r) => roomOffersAll(amenitiesByRoom.get(r.id) ?? [], keys))
   const rest = candidates.filter((r) => !roomOffersAll(amenitiesByRoom.get(r.id) ?? [], keys))
   return [...offering, ...rest]
+}
+
+/** #292 — ¿alguna de las rooms dadas (las vendibles/libres del tipo) ofrece la cuna, es decir tiene
+ *  una fila `RoomAmenities` ACTIVA con `CRIB_AMENITY_KEY`? Es el gate server-side de `needsCrib`:
+ *  sin una unidad que la publique, la cuna no se puede pedir por más que el body lo diga. */
+export function roomsOfferCrib(amenitiesByRoom: Map<string, any[]>, roomIds: string[]): boolean {
+  return roomIds.some((id) => roomOffersAll(amenitiesByRoom.get(id) ?? [], [CRIB_AMENITY_KEY]))
 }
 
 /** Agrupa filas `RoomAmenities` por `roomId` (una lectura, N habitaciones). */
