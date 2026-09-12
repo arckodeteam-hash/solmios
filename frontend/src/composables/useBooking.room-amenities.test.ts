@@ -174,7 +174,7 @@ describe('useBooking — amenidades de la habitación: carrito, snapshot y total
     ])
   })
 
-  it('(b) addComposedRoom (composer) arma la línea con el snapshot y resetea la tarjeta', async () => {
+  it('(b) addComposedRoom (composer) arma la línea con el snapshot y la tarjeta conserva lo tildado (#343)', async () => {
     const store = seedStore()
     const { toggleRoomAmenity, addComposedRoom, composer } = useGuestComposer()
     const room = rt('double')
@@ -183,7 +183,8 @@ describe('useBooking — amenidades de la habitación: carrito, snapshot y total
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cama-extra', name: 'Cama extra', price: 15 }])
     expect(store.roomAmenitiesTotal).toBe(15)
-    expect(composer(room).roomAmenityKeys).toBeUndefined()
+    // #343 — la Cama sigue tildada en la tarjeta: lo visible es exactamente lo que se agregó.
+    expect(composer(room).roomAmenityKeys).toEqual(['custom:cama-extra'])
     // El snapshot queda fijo aunque el catálogo cambie después.
     store.roomAmenities = { double: [{ key: 'custom:cama-extra', name: 'Cama extra premium', price: 99 }] }
     expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cama-extra', name: 'Cama extra', price: 15 }])
