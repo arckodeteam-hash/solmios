@@ -1152,6 +1152,12 @@ async function createTablesBlock3(): Promise<void> {
   // de `payment-requests` en cualquier base ya desplegada).
   await addColumnIfMissing("payments", "reservationId", "TEXT")
   await exec(`CREATE INDEX IF NOT EXISTS idx_payments_reservation ON payments(hotelId, reservationId)`)
+
+  // MR-08 (#273) — un huésped = una ficha: los POST públicos y el panel buscan en `guests` por
+  // (hotelId, email) antes de crear. NO es UNIQUE a propósito: las bases existentes tienen fichas
+  // duplicadas de antes del dedupe; `scripts/merge-duplicate-guests.ts --apply` las fusiona
+  // (paso post-deploy opcional, ver CLAUDE.md).
+  await exec(`CREATE INDEX IF NOT EXISTS idx_guests_hotel_email ON guests(hotelId, email)`)
   const backfilledReservations = await backfillPaymentsReservationId(db)
   if (backfilledReservations > 0) {
     console.log(`payments.reservationId: ${backfilledReservations} fila(s) reconstruida(s) desde metadata`)
