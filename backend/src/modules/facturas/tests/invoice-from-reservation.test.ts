@@ -247,6 +247,17 @@ describe('invoiceFromReservation — reserva pagada online, sin folio (#253)', (
     expect(audits[0].action).toBe('invoice.issued_from_reservation')
   })
 
+  it('registra issuedBy con el id del usuario que emite (CA 24 de #298)', async () => {
+    const emisor: CurrentUser = { id: 'u-recepcion', hotelId: 'h1', role: 'staff' }
+    const { deps, repo } = setup({ payments: [stripePayment()] })
+    const result = await invoiceFromReservation(deps as any, 'h1', { reservationId: 'r1' }, emisor)
+
+    // Lo que quedó persistido en el repo Y lo que devuelve el usecase llevan el emisor.
+    expect(repo.rows).toHaveLength(1)
+    expect(repo.rows[0].issuedBy).toBe('u-recepcion')
+    expect(result.invoice.issuedBy).toBe('u-recepcion')
+  })
+
   it('si el vínculo falla después de emitir, propaga el error (la factura ya consumió numerador)', async () => {
     const payments = [stripePayment()]
     const port = makePaymentPort(payments)

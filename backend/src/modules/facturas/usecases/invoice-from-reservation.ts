@@ -119,6 +119,7 @@ export async function invoiceFromReservation(
     items,
     amountPaid,
     paymentMethod: singleMethodOf(linkable),
+    issuedBy: user.id,
   } as CreateFacturasDTO, hotelId)
 
   // `createInvoice` compara `amountPaid >= amount` sin tolerancia; el criterio del dominio es con
