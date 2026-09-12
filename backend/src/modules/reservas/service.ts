@@ -1,7 +1,6 @@
 // reservas/service.ts — Facade pública del módulo. Casos de uso, sin HTTP ni imports de otros módulos.
 // Depende de RepositoryAdapter<ReservasDTO> (no del ORM directo); lógica en ./usecases/.
-import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
-import { OrmRepository } from 'arckode-framework'
+import { OrmRepository, type RepositoryAdapter, type Logger, type CacheAdapter, type Auth } from 'arckode-framework'
 import type { StorageService, FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from './types'
 import type { ReservasSockets } from './sockets'
@@ -123,15 +122,12 @@ export class ReservasService {
   async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
   /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
   /** #262 (REQ-HAC-07) — el cron de pre-llegada asigna la sugerida con usuario `system` (roomAssignedBy + audit); ver usecases/auto-assign-room.ts. */ autoAssignRoom(id: string, hotelId: string) { return autoAssignSuggestedRoom(this.roomAssignmentDeps(), id, hotelId) }
-
   async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> { return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger }) } // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
-
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
   /** Saldo de la cuenta abierta — lo consulta la guarda de deuda del checkout. */
   openFolioBalance(rid: string, user: unknown): Promise<OpenFolioBalanceResult | null> { return openFolioBalance(this.orchestrationDeps.folioReader, rid, user) }
 
   settleFolioForCheckout(r: SettleReservation, settle: SettleInput | null | undefined, user: SettleActor): Promise<SettleResult | null> { return settleFolioForCheckoutUsecase(this.orchestrationDeps.settleFolio, r, settle, user) }
-
   /** Lo COBRADO, derivado de `payments` (GH-0.2) — ver shared/usecases/reservation-paid.ts. */
   paidSource(): PaidSource { return paidSourceFrom(this.queries.paidRepos) }
 
@@ -199,7 +195,5 @@ export class ReservasService {
     return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)
   }
   /** #336: enlace del check-in digital por email. `messageLogRepo` lo inyecta setEmailDeps; sin él cae al OrmRepository, como lock-code-email. */
-  async sendCheckinLinkEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string; checkinUrl: string }> {
-    return sendCheckinLinkEmailUsecase({ reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo, emailSender: this.emailSender, messageLogRepo: this.messageLogRepo ?? new OrmRepository<any>(deps.orm, 'MessageLogs'), publicUrl: process.env.PUBLIC_URL ?? '', logger: this.logger }, id, user)
-  }
+  async sendCheckinLinkEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string; checkinUrl: string }> { return sendCheckinLinkEmailUsecase({ reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo, emailSender: this.emailSender, messageLogRepo: this.messageLogRepo ?? new OrmRepository<any>(deps.orm, 'MessageLogs'), publicUrl: process.env.PUBLIC_URL ?? '', logger: this.logger }, id, user) }
 }
