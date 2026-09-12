@@ -21,7 +21,7 @@ interface HarnessOptions {
   lockCodes?: any[]
   guests?: any[]
   templates?: any[]
-  emailService?: 'ok' | 'throws' | 'none'
+  emailService?: 'ok' | 'throws' | 'none' | 'slow'
   whatsapp?: 'ok' | 'throws' | 'none'
   publicUrl?: string
 }
@@ -53,6 +53,7 @@ function harness(over: HarnessOptions = {}) {
   const emailService = over.emailService === 'none' ? null : {
     enqueue: async (input: any) => {
       if (over.emailService === 'throws') throw new Error('SMTP caído')
+      if (over.emailService === 'slow') await new Promise(r => setTimeout(r, 30))
       emails.push(input)
       return `q-${emails.length}`
     },
@@ -248,6 +249,18 @@ describe('room-info-cron (#297)', () => {
     expect(rechazo.logs()[0].status).toBe('failed')
     expect(rechazo.logs()[0].errorMessage).toBe('Meta: meta rechazó')
     expect(rechazo.logs()[0].templateId).toBe('wt1')
+  })
+
+  it('dos ticks solapados → un solo envío: el segundo se va mientras el primero sigue en curso', async () => {
+    // Sin esta guarda los dos leen "pending" antes de que el primero escriba su log y el
+    // huésped recibiría el código dos veces (y el hotel pagaría dos conversaciones a Meta).
+    const h = harness({ emailService: 'slow' })
+    const [a, b] = await Promise.all([h.cron(hoursBefore(11)), h.cron(hoursBefore(11))])
+    expect(a.sent + b.sent).toBe(1)
+    expect(h.emails).toHaveLength(1)
+    expect(h.logs()).toHaveLength(1)
+    // Terminado el primero, el cron vuelve a correr normalmente (y deduplica por huella).
+    expect((await h.cron(hoursBefore(10))).sent).toBe(0)
   })
 
   it('(k) reserva pending (sin pagar) → nada', async () => {

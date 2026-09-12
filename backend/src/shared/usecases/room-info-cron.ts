@@ -200,12 +200,25 @@ export function createRoomInfoCron(deps: RoomInfoCronDeps): (now?: Date) => Prom
     }
   }
 
+  /**
+   * Un tick a la vez. El dedup es leer-y-después-escribir sobre `message_logs` (sin índice
+   * único): si una corrida tarda más que el intervalo (muchos hoteles, Meta/SMTP lentos), dos
+   * ticks solapados leerían "pending" los dos y el huésped recibiría el código de la puerta dos
+   * veces — y el hotel pagaría dos conversaciones a Meta. El que llega mientras otro corre se va.
+   */
+  let running = false
+
   return async (now: Date = new Date()): Promise<RoomInfoCronResult> => {
     const result: RoomInfoCronResult = { sent: 0, failed: 0, skipped: 0 }
     if (isRoomInfoNoticeDisabled(deps.env ?? process.env)) {
       logger.info('room-info-cron: desactivado por ROOM_INFO_NOTICE_DISABLED=1')
       return result
     }
+    if (running) {
+      logger.warn('room-info-cron: tick anterior todavía en curso, se saltea')
+      return result
+    }
+    running = true
     try {
       const hotels = ((await orm.findMany('Hotels', {})) ?? []) as any[]
       for (const hotel of hotels) {
@@ -272,6 +285,8 @@ export function createRoomInfoCron(deps: RoomInfoCronDeps): (now?: Date) => Prom
     } catch (e) {
       logger.error('room-info-cron falló', { error: (e as Error).message })
       return result
+    } finally {
+      running = false
     }
   }
 }
