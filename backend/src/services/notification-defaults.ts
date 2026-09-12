@@ -4,7 +4,7 @@
 // vive en auto_messages; este archivo es el fallback. Versionado con git, testeable sin DB.
 // Las variables {key} se interpolan con renderTemplate() de email-service (6.1.2).
 
-export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
+export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_new_ota_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
 
 export interface NotificationDefault {
@@ -859,6 +859,125 @@ const NEW_STAFF_PT = `<!DOCTYPE html>
 </body>
 </html>`
 
+// ─── reservation_new_ota_staff ──────────────────────────────────────────────
+// Aviso al STAFF por reserva entrada desde una OTA vía Channex (#246/#267). Misma tabla que `reservation_new_staff`
+// pero SIN "Estado del pago": la ingestión de Channex (`canales/usecases/booking-ingestion.ts`) no recibe ningún
+// dato de cobro (ni payment_collect ni tarjeta), así que decir "Pendiente de pago" o "Cobrada" sería inventar. El
+// cobro lo rige el canal; el correo lo dice y manda a la extranet. Tampoco cuna/edades/régimen: la OTA no los trae.
+// Variables: title, hotel_name, channel_name, guest_name, guest_email, guest_phone, checkin_date, checkout_date, room,
+// adults, children, details, total_amount, panel_link, platform_name.
+
+const NEW_OTA_STAFF_ES = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Entró una reserva desde {channel_name}. Estos son los datos:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Huésped</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Nombre</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Teléfono</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estancia</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Canal</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{channel_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adultos / Niños</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total informado por el canal</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:13px;color:#4b5563;">El cobro lo gestiona {channel_name} según las condiciones de la reserva: verificá en la extranet del canal si ya está cobrada o se paga en el hotel.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Notas</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Abrir la reserva en el panel</a></p>
+    <p style="font-size:12px;color:#6b7280;">Si el botón no funciona, copiá y pegá este enlace:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const NEW_OTA_STAFF_EN = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">A booking came in from {channel_name}. Here are the details:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Guest</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Name</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Phone</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Stay</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Channel</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{channel_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Room</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adults / Children</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total reported by the channel</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:13px;color:#4b5563;">Payment is handled by {channel_name} under the booking's terms: check the channel extranet to see whether it is already collected or payable at the hotel.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Notes</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Open the booking in the panel</a></p>
+    <p style="font-size:12px;color:#6b7280;">If the button doesn't work, copy and paste this link:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Sent by {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const NEW_OTA_STAFF_PT = `<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Entrou uma reserva por {channel_name}. Estes são os dados:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Hóspede</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Nome</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Telefone</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estadia</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Canal</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{channel_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Quarto</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adultos / Crianças</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total informado pelo canal</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <p style="font-size:13px;color:#4b5563;">O pagamento é gerido por {channel_name} conforme as condições da reserva: verifique na extranet do canal se já está cobrada ou se paga no hotel.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Notas</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Abrir a reserva no painel</a></p>
+    <p style="font-size:12px;color:#6b7280;">Se o botão não funcionar, copie e cole este link:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
 // ─── reservation_received_unpaid ────────────────────────────────────────────
 // Al HUÉSPED cuando el motor web no tiene pasarela de pago (#267): recibimos el pedido, el hotel lo contacta
 // para coordinar el pago. Variables: guest_name, hotel_name, hotel_phone, hotel_email, checkin_date, checkout_date,
@@ -1001,6 +1120,11 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<Not
     es: { subject: '[{platform_name}] {title}', body: NEW_STAFF_ES },
     en: { subject: '[{platform_name}] {title}', body: NEW_STAFF_EN },
     pt: { subject: '[{platform_name}] {title}', body: NEW_STAFF_PT },
+  },
+  reservation_new_ota_staff: {
+    es: { subject: '[{platform_name}] {title}', body: NEW_OTA_STAFF_ES },
+    en: { subject: '[{platform_name}] {title}', body: NEW_OTA_STAFF_EN },
+    pt: { subject: '[{platform_name}] {title}', body: NEW_OTA_STAFF_PT },
   },
   reservation_received_unpaid: {
     es: { subject: 'Recibimos tu pedido de reserva — {hotel_name}', body: RECEIVED_UNPAID_ES },

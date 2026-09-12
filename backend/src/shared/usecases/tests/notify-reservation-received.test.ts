@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
+import { getCodeDefault } from '../../../services/notification-defaults'
+import { renderTemplate } from '../../../services/notification-renderer'
 import {
   findReservationViewers,
   notifyReservationPaid,
@@ -341,6 +343,39 @@ describe('notifyReservationReceived — OTA', () => {
     expect(h.created[0].metadata.origin).toBe('ota')
     expect(h.notified[0].variables.title).toContain('Nueva reserva de Booking.com')
     expect(h.notified[0].relatedType).toBe('reservation:ota')
+  })
+
+  // La ingestión de Channex no trae dato de cobro: el correo al staff no puede decir "Pendiente
+  // de pago" (la OTA suele haber cobrado) ni "Entró una reserva desde el motor web".
+  it('el correo va por la plantilla OTA: nombra al canal en el cuerpo y no afirma estado del pago', async () => {
+    const h = harness()
+    await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1', ota: 'Booking.com' }, 'ota')
+    expect(h.notified).toHaveLength(1)
+    const mail = h.notified[0]
+    expect(mail.event).toBe('reservation_new_ota_staff')
+    expect(mail.variables.channel_name).toBe('Booking.com')
+    expect(mail.variables.payment_status).toBe('')
+
+    const body = renderTemplate(getCodeDefault(mail.event, mail.language).body, mail.variables)
+    expect(body).toContain('Entró una reserva desde Booking.com')
+    expect(body).toContain('El cobro lo gestiona Booking.com')
+    expect(body).not.toContain('motor web')
+    expect(body).not.toContain('Estado del pago')
+    expect(body).not.toContain('Pendiente de pago')
+    expect(body).toContain('Ana Pérez')
+    expect(body).toContain('150.00 USD')
+    expect(body).not.toContain('{')
+  })
+
+  it('el motor web sigue con reservation_new_staff y su estado del pago', async () => {
+    const h = harness()
+    await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1' }, 'web')
+    const mail = h.notified[0]
+    expect(mail.event).toBe('reservation_new_staff')
+    expect(mail.variables.channel_name).toBe('')
+    const body = renderTemplate(getCodeDefault(mail.event, mail.language).body, mail.variables)
+    expect(body).toContain('Entró una reserva desde el motor web')
+    expect(body).toContain('Pendiente de pago')
   })
 
   it('sin nombre de OTA en el payload usa el canal de la fila', async () => {

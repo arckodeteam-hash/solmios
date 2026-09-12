@@ -5,7 +5,9 @@
 // todas best-effort:
 //   1) campanita (`notifications`) a cada usuario del hotel que puede VER reservas,
 //   2) correo al buzón del hotel (`hotels.email`; si está vacío, al primer hotel_admin activo con
-//      email) por la plantilla `reservation_new_staff` con el estado del pago (#267),
+//      email) por la plantilla `reservation_new_staff` con el estado del pago (#267) — o por
+//      `reservation_new_ota_staff` si vino de una OTA: ahí el cobro lo rige el canal y la ingestión
+//      de Channex no trae ningún dato de pago, así que no se afirma nada sobre él,
 //   3) push al teléfono de cada uno de esos usuarios, si hay Firebase.
 //
 // Quién recibe se decide con los permisos EFECTIVOS: la fila `roles` del hotel si existe (el hotel
@@ -18,6 +20,7 @@
 import { getRolePermissions, hasPermission, type Permission } from '../permissions'
 import type { PlatformIdentity } from '../utils/platform-identity'
 import type { NotificationInput } from '../../services/email-sender'
+import type { NotificationEvent } from '../../services/notification-defaults'
 import type { NotificacionesPort, PushPort, RoomsPort } from './notify-task-assigned'
 
 /**
@@ -294,6 +297,9 @@ async function loadSummary(deps: ReservationNotifyDeps, ref: ReservationRef): Pr
   }
 }
 
+/** Plantillas de correo al staff (`notification-defaults.ts`): una por origen de la reserva. */
+type StaffEmailEvent = Extract<NotificationEvent, 'reservation_new_staff' | 'reservation_new_ota_staff'>
+
 interface Announcement {
   title: string
   message: string
@@ -301,11 +307,18 @@ interface Announcement {
   metadata: Record<string, unknown>
   relatedType: string
   /**
-   * Texto del estado del pago que va en el correo al hotel (`{payment_status}`). Junto con
-   * `summary` habilita la plantilla `reservation_new_staff` (#267); un aviso sin estos dos (el
-   * recordatorio de aprobación vencida, #271 MR-06) sale con el HTML crudo de `html`.
+   * Plantilla del correo al hotel. Junto con `summary` habilita el camino por plantilla (#267);
+   * un aviso sin estos dos (el recordatorio de aprobación vencida, #271 MR-06) sale con el HTML
+   * crudo de `html`.
+   */
+  event?: StaffEmailEvent
+  /**
+   * Texto del estado del pago (`{payment_status}`). Sólo lo llevan los avisos del motor web: la
+   * OTA no informa cobro y el correo no lo inventa (queda `undefined` → sin línea de estado).
    */
   paymentStatus?: string
+  /** Nombre del canal (`{channel_name}`) cuando la reserva vino de una OTA. */
+  channelName?: string
   summary?: ReservationSummary
 }
 
@@ -350,7 +363,6 @@ function templateVariables(
   ref: ReservationRef,
   a: Announcement,
   s: ReservationSummary,
-  paymentStatus: string,
   hotelName: string,
   platformName: string,
 ): NotificationInput['variables'] {
@@ -372,7 +384,8 @@ function templateVariables(
     regime: row.regime ? String(row.regime) : '—',
     details: detailsFromNotes(row.notes),
     total_amount: s.total,
-    payment_status: paymentStatus,
+    payment_status: a.paymentStatus ?? '',
+    channel_name: a.channelName ?? '',
     panel_link: absolutePanelLink(ref.id),
     platform_name: platformName,
   }
@@ -417,19 +430,19 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
       const identity = await deps.platformIdentity().catch(() => null)
       const platformName = identity?.platformName?.trim() ?? ''
       try {
-        if (a.summary && a.paymentStatus !== undefined && typeof deps.emailSender.enqueueNotification === 'function') {
-          // Plantilla `reservation_new_staff` (editable por hotel en auto_messages, default en código).
+        if (a.summary && a.event && typeof deps.emailSender.enqueueNotification === 'function') {
+          // Plantilla por origen (editable por hotel en auto_messages, default en código).
           await deps.emailSender.enqueueNotification({
             to,
             hotelId: ref.hotelId,
-            event: 'reservation_new_staff',
+            event: a.event,
             language: 'es',
-            variables: templateVariables(ref, a, a.summary, a.paymentStatus, String(hotel?.name || '').trim(), platformName),
+            variables: templateVariables(ref, a, a.summary, String(hotel?.name || '').trim(), platformName),
             relatedType: a.relatedType,
             relatedId: ref.id,
           })
         } else {
-          // HTML crudo: inyectores que sólo exponen `enqueue`, y los avisos sin `summary`/`paymentStatus`
+          // HTML crudo: inyectores que sólo exponen `enqueue`, y los avisos sin `summary`/`event`
           // (aprobación vencida), que no llevan plantilla y salen como antes de #267.
           const html = [
             `<p><strong>${esc(a.title)}</strong></p>`,
@@ -518,13 +531,20 @@ export async function notifyReservationReceived(
       s.row,
     )
 
+    // OTA: plantilla propia y SIN estado del pago — la ingestión de Channex no sabe si el canal
+    // ya cobró (`canales/usecases/booking-ingestion.ts` no recibe dato de cobro) y "Pendiente de
+    // pago" sobre una reserva que Booking ya cobró mandaba a recepción a reclamarle al huésped.
+    const staff: Pick<Announcement, 'event' | 'paymentStatus' | 'channelName'> = origin === 'ota'
+      ? { event: 'reservation_new_ota_staff', channelName: otaName }
+      : { event: 'reservation_new_staff', paymentStatus: paymentStatusFor(opts) }
+
     return await deliver(deps, reservation, {
       title,
       message: summaryMessage(s),
       html: summaryHtml(s),
       metadata: { link: reservationPanelLink(reservation.id), reservationId: reservation.id, origin },
       relatedType: `reservation:${origin}`,
-      paymentStatus: paymentStatusFor(opts),
+      ...staff,
       summary: s,
     })
   } catch (e) {
@@ -566,6 +586,7 @@ export async function notifyReservationPaid(
       html,
       metadata: { link: reservationPanelLink(reservation.id), reservationId: reservation.id, provider },
       relatedType: 'reservation:paid',
+      event: 'reservation_new_staff',
       paymentStatus: PAYMENT_STATUS_PAID,
       summary: s,
     })
