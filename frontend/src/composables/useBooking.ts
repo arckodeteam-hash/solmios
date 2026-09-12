@@ -391,6 +391,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
   // ─── Estado de la máquina ─────────────────────────────────────────────────────
   const status = ref<BookingStatus>('idle')
   const error = ref<string | null>(null)
+  // #267 — localizador (8 chars del reservationId) cuando la reserva se creó SIN pasarela:
+  // PayStep lo muestra como aviso "recibimos tu pedido" en lugar de un error rojo.
+  const receivedUnpaidLocator = ref<string | null>(null)
 
   // ─── Multi-moneda (D10, task 2.15) ────────────────────────────────────────────
   // `currencyPreference` es lo que el usuario eligió en el switcher ('' = auto/detect).
@@ -673,6 +676,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     if (typeof opts?.rooms === 'number' && Number.isFinite(opts.rooms)) rooms.value = Math.max(1, opts.rooms)
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
   }
 
   /** Step 0 → 1: dispara GET /rates. Idempotente: si ya hay rates para las mismas fechas
@@ -1111,6 +1115,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
     isSubmitting.value = true
     error.value = null
+    receivedUnpaidLocator.value = null
     if (!idempotencyKey.value) idempotencyKey.value = genIdempotencyKey()
     try {
       const base = window.location.origin
@@ -1220,11 +1225,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
         window.location.href = res.checkoutUrl
         return
       }
-      // Sin checkoutUrl: Stripe no configurado o gateway caído. Reserva creada pending.
+      // Sin checkoutUrl: Stripe no configurado o gateway caído (`res.paymentError`). La reserva
+      // existe (pending) y el backend (#267) ya le mandó al huésped el correo "recibimos tu
+      // pedido"; el hotel lo contacta para coordinar el pago. NO es un error: se deja
+      // status='failed' sólo para que el widget quede en PayStep, y PayStep muestra el
+      // localizador en vez del texto rojo.
       status.value = 'failed'
-      error.value = res.paymentError
-        ? `Tu reserva quedó creada pero el pago no se pudo iniciar (${res.paymentError}). Te contactaremos.`
-        : 'Tu reserva quedó creada pero el pago online no está disponible. Te contactaremos.'
+      error.value = null
+      receivedUnpaidLocator.value = String(res.reservationId).slice(0, 8)
     } catch (e) {
       status.value = 'failed'
       error.value = errMessage(e, 'No se pudo crear la reserva. Probá de nuevo.')
@@ -1272,6 +1280,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     promoLoading.value = false
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
     reservation.value = null
     isSubmitting.value = false
     idempotencyKey.value = ''
@@ -1305,6 +1314,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     promoLoading,
     status,
     error,
+    receivedUnpaidLocator,
     reservation,
     isSubmitting,
     idempotencyKey,

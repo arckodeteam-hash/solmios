@@ -14,6 +14,7 @@
 // "flexible" mientras la política real (la que el backend aplica al cancelar) era estricta.
 // PayStep.vue tenía exactamente ese patrón peligroso hasta este fix.
 import { describe, it, expect, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { vi } from 'vitest'
@@ -332,5 +333,69 @@ describe('PayStep — desglose impuesto por impuesto y extras por separado (#88)
     await w.vm.$nextTick()
     expect(w.find('[data-testid="final-total"]').text()).toContain('318,60')
     expect(w.findAll('[data-testid="tax-line"]')[0]!.text()).toContain('48,60')
+  })
+})
+
+// ─── #267: reserva creada SIN pasarela → aviso "recibimos tu pedido", no error rojo ─────────
+
+describe('PayStep — sin pasarela (#267)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(BookingService.createBooking).mockReset()
+  })
+
+  it('con localizador seteado muestra el aviso con el localizador, sin texto rojo y sin botón de pagar', async () => {
+    const w = render(null)
+    const store = useBookingStore()
+    store.status = 'failed'
+    store.receivedUnpaidLocator = 'abc12345'
+    await nextTick()
+
+    const notice = w.find('[data-testid="received-unpaid"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('Recibimos tu pedido de reserva')
+    expect(notice.text()).toContain('el hotel te contactará para coordinar el pago')
+    expect(notice.text()).toContain('Tu localizador')
+    expect(notice.find('span.font-mono').text()).toBe('abc12345')
+    expect(w.find('[data-testid="pay-error"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Tu reserva quedó creada pero')
+    // El botón de "Reservar y pagar" desaparece: reintentar no tiene sentido.
+    expect(w.text()).not.toContain('Reservar y pagar')
+    w.unmount()
+  })
+
+  it('[en] el aviso sale en inglés', async () => {
+    const w = render(null, null, 'en')
+    const store = useBookingStore()
+    store.status = 'failed'
+    store.receivedUnpaidLocator = 'abc12345'
+    await nextTick()
+
+    const notice = w.find('[data-testid="received-unpaid"]')
+    expect(notice.text()).toContain('We received your booking request')
+    expect(notice.text()).toContain('the hotel will contact you to arrange the payment')
+    expect(notice.text()).toContain('Your booking reference')
+    expect(notice.text()).toContain('abc12345')
+    w.unmount()
+  })
+
+  it('flujo real: POST sin checkoutUrl deja el localizador (8 chars del id) y NO setea error', async () => {
+    vi.mocked(BookingService.createBooking).mockResolvedValue({
+      reservationId: 'abcdef12-3456-7890-abcd-ef1234567890', accessToken: 't1', checkoutUrl: null,
+      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, taxBreakdown: [], total: 200 },
+    })
+    const w = render(null)
+    const store = useBookingStore()
+    store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
+    await w.get('input[data-testid="accept-terms"]').setValue(true)
+    await (w.vm as unknown as { onPay: () => Promise<void> }).onPay()
+    await nextTick()
+
+    expect(store.status).toBe('failed')
+    expect(store.error).toBeNull()
+    expect(store.receivedUnpaidLocator).toBe('abcdef12')
+    expect(w.find('[data-testid="received-unpaid"]').text()).toContain('abcdef12')
+    expect(w.find('[data-testid="pay-error"]').exists()).toBe(false)
+    w.unmount()
   })
 })
