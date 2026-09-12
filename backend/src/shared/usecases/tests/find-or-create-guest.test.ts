@@ -45,11 +45,22 @@ describe('findOrCreateGuest', () => {
   })
 
   it('(a bis) ficha vieja guardada con mayúsculas se reusa igual', async () => {
-    const w = makeGuests([{ id: 'g-old', hotelId: 'h1', name: 'Ana', email: 'Ana@Mail.com', phone: '' }])
-    const r = await findOrCreateGuest({ guests: w.port }, { hotelId: 'h1', name: 'Ana', email: 'Ana@Mail.com' })
+    const w = makeGuests([{ id: 'g-old', hotelId: 'h1', name: 'Ana', email: 'ANA@MAIL.COM', phone: '' }])
+    const r = await findOrCreateGuest({ guests: w.port }, { hotelId: 'h1', name: 'Ana', email: 'ana@mail.com' })
     expect(r.created).toBe(false)
     expect(r.guest.id).toBe('g-old')
     expect(w.rows.length).toBe(1)
+    // Y al revés: tipeado con otra capitalización distinta de la guardada y de la normalizada.
+    const r2 = await findOrCreateGuest({ guests: w.port }, { hotelId: 'h1', name: 'Ana', email: ' Ana@Mail.Com' })
+    expect(r2.guest.id).toBe('g-old')
+    expect(w.rows.length).toBe(1)
+  })
+
+  it('un error de lectura se propaga: no se crea una ficha "porque no existe"', async () => {
+    const w = makeGuests()
+    const port = { ...w.port, findOne: async () => { throw new Error('db down') } }
+    await expect(findOrCreateGuest({ guests: port }, { hotelId: 'h1', name: 'Ana', email: 'ana@mail.com' })).rejects.toThrow('db down')
+    expect(w.rows.length).toBe(0)
   })
 
   it('(b) sin email coincidente, 809-555-0000 y +1 809 555 0000 son la misma ficha', async () => {

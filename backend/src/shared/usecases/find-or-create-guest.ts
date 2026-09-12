@@ -74,10 +74,14 @@ export interface FindOrCreateGuestResult {
  */
 const DEFAULT_COUNTRY = 'DO'
 
-/** Adaptador de una tx del ORM (`tx.findOne('Guests', f)`) al puerto sin modelo. */
+/**
+ * Adaptador de una tx del ORM (`tx.findOne('Guests', f)`) al puerto sin modelo. Una tx sin
+ * `findOne` (mocks viejos de los tests que solo saben `create`) no puede buscar y degrada a crear
+ * — es "no sé buscar", no "la búsqueda falló": un error real de `findOne` sí se propaga.
+ */
 export function guestsOnTx(tx: any): GuestsPort {
   const port: GuestsPort = {
-    findOne: (filter) => tx.findOne('Guests', filter),
+    findOne: typeof tx.findOne === 'function' ? (filter) => tx.findOne('Guests', filter) : async () => null,
     create: (data) => tx.create('Guests', data),
   }
   if (typeof tx.findMany === 'function') port.findMany = (filter) => tx.findMany('Guests', filter)
@@ -98,32 +102,40 @@ function isBlank(v: unknown): boolean {
   return !String(v ?? '').trim()
 }
 
-async function safeFindOne(guests: GuestsPort, filter: Record<string, any>): Promise<any | null> {
-  try { return (await guests.findOne(filter)) ?? null } catch { return null }
+// Un error de lectura NO es "no existe": tragarlo crearía una ficha duplicada en silencio, que
+// es justo lo que este helper evita. Se propaga y la tx del caller hace rollback.
+async function findOne(guests: GuestsPort, filter: Record<string, any>): Promise<any | null> {
+  return (await guests.findOne(filter)) ?? null
+}
+
+async function scanHotel(guests: GuestsPort, hotelId: string): Promise<any[]> {
+  if (typeof guests.findMany !== 'function') return []
+  return (await guests.findMany({ hotelId })) ?? []
 }
 
 async function findByEmail(guests: GuestsPort, hotelId: string, rawEmail: string, normalized: string): Promise<any | null> {
-  const exact = await safeFindOne(guests, { hotelId, email: normalized })
+  const exact = await findOne(guests, { hotelId, email: normalized })
   if (exact) return exact
-  // Fichas viejas cargadas con mayúsculas: el POST guardaba el email tal cual venía.
+  // Fichas viejas cargadas con mayúsculas: el POST guardaba el email tal cual venía. Primero el
+  // literal tipeado (barato, usa el índice); si tampoco, comparación normalizada sobre las fichas
+  // del hotel — la capitalización histórica es arbitraria y `findOne` es case-sensitive en PG.
   const asTyped = rawEmail.trim()
   if (asTyped && asTyped !== normalized) {
-    const legacy = await safeFindOne(guests, { hotelId, email: asTyped })
+    const legacy = await findOne(guests, { hotelId, email: asTyped })
     if (legacy) return legacy
   }
-  return null
+  const candidates = await scanHotel(guests, hotelId)
+  return candidates.find((g: any) => normalizeGuestEmail(g?.email) === normalized) ?? null
 }
 
 async function findByPhone(guests: GuestsPort, hotelId: string, e164: string): Promise<any | null> {
-  const plain = await safeFindOne(guests, { hotelId, phone: e164 })
+  const plain = await findOne(guests, { hotelId, phone: e164 })
   if (plain) return plain
-  const plus = await safeFindOne(guests, { hotelId, phone: `+${e164}` })
+  const plus = await findOne(guests, { hotelId, phone: `+${e164}` })
   if (plus) return plus
-  if (typeof guests.findMany !== 'function') return null
   // Los teléfonos históricos están en cualquier formato: comparar normalizados. Un `+` explícito
   // ya trae su prefijo; uno sin `+` se interpreta con el mismo país que el buscado.
-  let candidates: any[] = []
-  try { candidates = (await guests.findMany({ hotelId })) ?? [] } catch { candidates = [] }
+  const candidates = await scanHotel(guests, hotelId)
   return candidates.find((g: any) => !isBlank(g?.phone) && toE164(g.phone, DEFAULT_COUNTRY) === e164) ?? null
 }
 
