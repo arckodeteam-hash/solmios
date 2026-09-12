@@ -382,6 +382,19 @@ export interface PublicMealPlan {
   price: number
 }
 
+/**
+ * Ítem de `GET /api/public/hotels/:slug/rates` → `mealPlans[]` (MR-03, #268). Es `PublicMealPlan`
+ * + el precio YA resuelto para la búsqueda (`guests × nights`), siempre en `hotels.currency`
+ * (`chargeCurrency`), sin conversión de display. Lo construye
+ * `usecases/public-meal-plan-lines.ts:buildPublicMealPlans`.
+ */
+export interface PublicRateMealPlan extends PublicMealPlan {
+  /** `price × guests` (0 si `included`). */
+  perNight: number
+  /** `price × guests × nights` (0 si `included`). */
+  totalForStay: number
+}
+
 // ─── Amenidades para niños/bebés (REQ-01, #233 — sub-dominio de bookingengine) ──────────
 // Catálogo ABIERTO por hotel (nombre libre + precio), a diferencia de la cuna
 // (`childPolicy.cribAvailable`, Sí/No sin precio). Ver el comentario de `ChildAmenityModel`.

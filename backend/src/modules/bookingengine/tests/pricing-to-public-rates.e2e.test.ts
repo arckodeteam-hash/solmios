@@ -148,3 +148,69 @@ describe('E2E — pricing genera/guarda → el motor público cobra exactamente 
     expect(row4).toMatchObject({ available: true, price: 120 })
   })
 })
+
+// ─── MR-03 #268 — régimen (meal plan) en GET /rates ─────────────────────────────────────────
+// Mismo ORM en memoria compartido: lo que el hotelero guarda en `MealPlans` (PUT /meal-plans)
+// es lo que el motor público cotiza en `mealPlans[]`, con el total ya resuelto para
+// `guests × nights`. El widget no recalcula nada: muestra `totalForStay` tal cual.
+describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con totalForStay', () => {
+  const HOTEL_ID = 'h-mp'
+  const SLUG = 'meal-plans-test'
+
+  function seed() {
+    const { orm, tables } = makeDb()
+    tables.Hotels = [{ id: HOTEL_ID, slug: SLUG, onlineBookingStatus: 'active', currency: 'USD', taxRate: 0 }]
+    tables.Rooms = [
+      { id: 'r1', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 100, status: 'available' },
+    ]
+    tables.MealPlans = [
+      { id: 'mp-b', hotelId: HOTEL_ID, code: 'breakfast', active: true, priceMode: 'per_person_per_night', price: 10 },
+      { id: 'mp-hb', hotelId: HOTEL_ID, code: 'half_board', active: true, priceMode: 'included', price: 0 },
+      { id: 'mp-ai', hotelId: HOTEL_ID, code: 'all_inclusive', active: false, priceMode: 'per_person_per_night', price: 50 },
+      // Régimen de OTRO hotel: no puede filtrarse en la respuesta de este.
+      { id: 'mp-other', hotelId: 'h-otro', code: 'all_inclusive', active: true, priceMode: 'per_person_per_night', price: 99 },
+    ]
+    const availability = new AvailabilityUseCase(
+      noCache, repoOf(orm, 'Rooms'), repoOf(orm, 'Reservations'), repoOf(orm, 'Hotels'),
+      repoOf(orm, 'RoomBlocks'), repoOf(orm, 'SeasonAssignments'), repoOf(orm, 'RoomRates'),
+    )
+    const baseDeps = {
+      hotels: repoOf(orm, 'Hotels'),
+      availability: { checkAvailability: (q: any) => availability.check(q) },
+      config: repoOf(orm, 'Configuration'),
+    }
+    return { orm, baseDeps }
+  }
+
+  // 2 huéspedes × 3 noches.
+  const query = { checkIn: '2026-09-10', checkOut: '2026-09-13', guests: 2 }
+
+  it('lista solo los activos del hotel, en orden, con totalForStay = price × guests × nights', async () => {
+    const { orm, baseDeps } = seed()
+    const res = await getPublicRates({ ...baseDeps, mealPlans: repoOf(orm, 'MealPlans') }, SLUG, query)
+
+    expect(res.status).toBe(200)
+    expect(res.body.nights).toBe(3)
+    expect(res.body.mealPlans).toHaveLength(2)
+    expect(res.body.mealPlans.map((m: any) => m.code)).toEqual(['breakfast', 'half_board'])
+
+    const breakfast = res.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', priceMode: 'per_person_per_night', price: 10 })
+    expect(breakfast.perNight).toBe(20)        // 10 × 2 huéspedes
+    expect(breakfast.totalForStay).toBe(60)    // 10 × 2 × 3 noches
+
+    const halfBoard = res.body.mealPlans[1]
+    expect(halfBoard).toMatchObject({ code: 'half_board', priceMode: 'included', perNight: 0, totalForStay: 0 })
+
+    // Inactivo → no aparece (ni el de otro hotel).
+    expect(res.body.mealPlans.some((m: any) => m.code === 'all_inclusive')).toBe(false)
+  })
+
+  it('sin dep mealPlans (callers viejos) el body trae mealPlans: []', async () => {
+    const { baseDeps } = seed()
+    const res = await getPublicRates(baseDeps, SLUG, query)
+
+    expect(res.status).toBe(200)
+    expect(res.body.mealPlans).toEqual([])
+  })
+})

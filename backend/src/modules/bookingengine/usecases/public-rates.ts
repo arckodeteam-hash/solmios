@@ -69,6 +69,7 @@ import type { Tier } from '../../cancellation/types'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { buildOccupancyMatrix } from './occupancy-matrix'
+import { buildPublicMealPlans } from './public-meal-plan-lines'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
@@ -118,6 +119,10 @@ export interface PublicRatesDeps {
   /** Repo de `RateOverrides` — tarifa por FECHA, la capa que pisa a la temporada. Opcional: sin
    *  cablear, el motor cotiza solo por temporada (comportamiento previo). */
   rateOverrides?: RepositoryAdapter<any>
+  /** MR-03 #268 — Repo de `MealPlans` (tabla `meal_plans`) para exponer `mealPlans[]` con el
+   *  `totalForStay` de cada régimen activo. Opcional (compat con callers/tests viejos): sin
+   *  cablear, `mealPlans` degrada a `[]` y el widget solo ofrece "Solo alojamiento". */
+  mealPlans?: RepositoryAdapter<any>
 }
 
 export interface PublicRatesQuery {
@@ -320,6 +325,13 @@ export async function getPublicRates(
       cancellationSummary: deps.policies
         ? await buildCancellationSummary(deps.policies, hotel.id, hotel.cancellationType)
         : null,
+      // MR-03 #268 — Regímenes activos con `perNight`/`totalForStay` ya resueltos para
+      // `guests × nights`. SIN convertir a displayCurrency: igual que upsells (D10 en
+      // RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency), que es
+      // exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
+      mealPlans: deps.mealPlans
+        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, adults, nights)
+        : [],
     },
   }
 }
