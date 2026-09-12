@@ -193,8 +193,10 @@ describe('runApprovalReminder', () => {
       notifyThrows: true,
     })
     const out = await runApprovalReminder(w.deps, NOW)
-    expect(w.notifyCalls[0].ref.id).toBe('g-1')
+    // `notify` tiró antes de registrar la llamada: lo que se mira es a quién se le atribuye el error.
+    expect(out.reminded).toBe(0)
     expect(out.errors).toEqual([{ reservationId: 'g-1', reason: 'notificaciones caído' }])
+    for (const r of w.reservations) expect(r.approvalReminderAt).toBeNull()
   })
 
   it('update que tira → error registrado, el aviso ya salió y no se propaga', async () => {
