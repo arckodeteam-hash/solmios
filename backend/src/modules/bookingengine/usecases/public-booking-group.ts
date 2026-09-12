@@ -46,6 +46,7 @@ import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDe
 import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
+import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
@@ -65,8 +66,9 @@ export interface RoomLineInput {
   quantity: number
   /** Feature adultos+niños+edades (2026-09-02): edades declaradas para ESTA línea/habitación —
    *  cada habitación del grupo puede llevar niños distintos. Si viene, `adults`/`children` de
-   *  arriba se RECALCULAN acá contra la política del hotel (mismo criterio que public-booking.ts,
-   *  el caller legacy que solo manda `adults`/`children` como contadores sigue igual). */
+   *  arriba se RECALCULAN acá contra la política del hotel (mismo criterio que public-booking.ts).
+   *  MR-10 (#275, Opción A): una línea con `children` plano y sin edades YA NO cotiza por adultos
+   *  únicamente — se le sintetizan edades a `maxChildAge` y pasa por el mismo motor. */
   childrenAges?: number[]
   /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — a diferencia de `upsells`
    *  (global al carrito, ver public-booking.ts), esto SÍ es por línea: cada habitación del grupo
@@ -181,13 +183,21 @@ export async function createPublicBookingGroup(
     return { status: 400, body: { error: `No se pueden reservar más de ${MAX_GROUP_UNITS} habitaciones en una sola operación` } }
   }
 
-  // Feature adultos+niños+edades (2026-09-02): UNA lectura de política para todo el grupo (mismo
-  // hotel para todas las líneas). Solo se resuelve si AL MENOS una línea declaró edades — un
-  // grupo armado por un caller legacy (sin `childrenAges` en ninguna línea) no paga el costo de
-  // esta lectura extra y cotiza exactamente como antes.
-  const anyLineHasAges = lines.some((l) => (l.childrenAges?.length ?? 0) > 0)
-  const childPolicy = anyLineHasAges ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
-  if (anyLineHasAges && childPolicy && !childPolicy.acceptChildren) {
+  // Feature adultos+niños+edades (2026-09-02) + MR-10 (#275, Opción A): UNA lectura de política
+  // para todo el grupo (mismo hotel para todas las líneas). Se resuelve si AL MENOS una línea
+  // declaró niños — con edades (`childrenAges`, widget nuevo) O como contador plano (`children`,
+  // BookingModal.vue viejo, integradores). Hasta MR-10 la línea plana cotizaba por adultos
+  // únicamente (los niños nunca movían el precio) y el mismo carrito daba dos totales según la
+  // puerta de entrada; ahora, sin edades, cada niño de la línea se SINTETIZA a
+  // `childPolicy.maxChildAge` — "niño con plaza" (cuenta para precio y capacidad, nunca bebé ni
+  // libre) — y de ahí en adelante la línea recorre EXACTAMENTE el mismo camino que una con edades
+  // (ver public-booking.ts para la justificación completa). Un grupo sin ningún niño (todas las
+  // líneas con children 0 y sin edades) no paga la lectura de política.
+  const anyLineHasChildren = lines.some((l) => (l.childrenAges?.length ?? 0) > 0 || (l.children ?? 0) > 0)
+  const childPolicy = anyLineHasChildren ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
+  // Con Opción A una línea con `children` plano en un hotel que no acepta niños también recibe
+  // este 400 — antes pasaba en silencio cotizando por adultos.
+  if (anyLineHasChildren && childPolicy && !childPolicy.acceptChildren) {
     return { status: 400, body: { error: 'Este hotel no acepta niños en la reserva' } }
   }
   // Requerimiento 2 (2026-09-03) — misma política de capacidad por tipo que `public-booking.ts`,
@@ -233,6 +243,8 @@ export async function createPublicBookingGroup(
   const claimedIds = new Set<string>()
   interface ResolvedLine {
     roomType: string; adults: number; children: number; childrenAges: number[]; roomIds: string[]; perUnitPrice: number
+    /** MR-10 (#275) — personas por unidad que cuentan para `per_person`/`per_person_per_night`. */
+    upsellPersonsPerUnit: number
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — por LÍNEA, no por grupo
     // (a diferencia de los upsells genéricos de abajo): cada habitación pide lo suyo para su
     // propio bebé.
@@ -252,8 +264,10 @@ export async function createPublicBookingGroup(
   }
   const resolvedLines: ResolvedLine[] = []
 
-  const hotelUpsellsMap = Array.isArray(upsells) && upsells.length > 0 && extraDeps?.upsells
-    ? new Map(((await extraDeps.upsells.findMany({ hotelId })) as any[]).map((u) => [u.id, u]))
+  // Catálogo de upsells del hotel, UNA lectura para todo el grupo (la matemática por `kind` va
+  // más abajo, cuando ya se conocen habitaciones y personas de todas las líneas).
+  const hotelUpsells: any[] | null = Array.isArray(upsells) && upsells.length > 0 && extraDeps?.upsells
+    ? (((await extraDeps.upsells.findMany({ hotelId })) as any[]) ?? [])
     : null
 
   // REQ-01 (#233) — catálogo de amenidades infantiles del hotel, UNA lectura para todo el grupo
@@ -268,20 +282,29 @@ export async function createPublicBookingGroup(
   }
 
   for (const [lineIndex, line] of lines.entries()) {
-    const hasAges = (line.childrenAges?.length ?? 0) > 0
+    // MR-10 (#275, Opción A): edades de ESTA línea — las declaradas, o sintetizadas a
+    // `maxChildAge` (una por cada `children` plano) cuando el caller no mandó `childrenAges`.
+    const declaredAges = line.childrenAges ?? []
+    const plainChildren = Math.max(0, line.children ?? 0)
+    const lineChildrenAges: number[] = declaredAges.length > 0
+      ? declaredAges
+      : (childPolicy ? Array.from({ length: plainChildren }, () => childPolicy.maxChildAge) : [])
+    const hasAges = lineChildrenAges.length > 0
     // FIX (mismo bug que public-booking.ts, encontrado en revisión Requerimiento 2, 2026-09-03):
-    // la composición legacy tiene que contar `line.children` para que `fitsRoomCapacity` (de acá
-    // para abajo, unificado con el path de edades) siga validando capacidad física exactamente
-    // como el chequeo literal `adults+children >= room.capacity` de antes — y para que
-    // `maxChildren`, si el hotel lo configuró, también aplique a una línea sin edades.
+    // la composición tiene que contar a los niños para que `fitsRoomCapacity` (de acá para abajo,
+    // unificado con el path de edades) siga validando capacidad física como el chequeo literal
+    // `adults+children >= room.capacity` de antes — y para que `maxChildren` también aplique. Con
+    // MR-10 una línea con `children` plano ya entra por `resolveChildComposition` con las edades
+    // sintetizadas; el `else` queda solo para `children: 0` sin edades (composición trivial de
+    // adultos).
     const composition = hasAges && childPolicy
-      ? resolveChildComposition(line.adults, line.childrenAges!, childPolicy)
+      ? resolveChildComposition(line.adults, lineChildrenAges, childPolicy)
       : {
           effectiveAdults: line.adults,
-          payingChildren: Math.max(0, line.children ?? 0),
+          payingChildren: 0,
           freeChildren: 0,
           babies: 0,
-          chargeableOccupancy: line.adults + Math.max(0, line.children ?? 0),
+          chargeableOccupancy: line.adults,
         }
     // REQ-03 (#235) — tope de niños que NO consumen plaza POR HABITACIÓN (`maxFreeChildrenPerRoom`,
     // null = sin límite): se aplica a CADA línea por separado, con sus propias edades. Es regla
@@ -296,10 +319,9 @@ export async function createPublicBookingGroup(
         }
       }
     }
-    // Ocupación para PRECIO/cierre por ocupación: chargeable (adultos + niños con plaza) si la
-    // línea declaró edades, o `line.adults` tal cual para un caller legacy — mismo criterio que
-    // `public-booking.ts`.
-    const pricingOccupancy = hasAges ? composition.chargeableOccupancy : line.adults
+    // Ocupación para PRECIO/cierre por ocupación: chargeable (adultos + niños con plaza), sean
+    // edades declaradas o sintetizadas por MR-10 — mismo criterio que `public-booking.ts`.
+    const pricingOccupancy = composition.chargeableOccupancy
 
     const closedForOccupancy = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, pricingOccupancy)
     if (isRoomTypeClosed(closedForOccupancy, line.roomType)) {
@@ -312,11 +334,9 @@ export async function createPublicBookingGroup(
     }
 
     // Ocupación FÍSICA de la línea (para el mensaje de error y el fallback sin `maxAdults`/
-    // `maxChildren`): adultos + niños con plaza + niños libres si hay edades, o adults+children
-    // tal cual para un caller legacy — mismo criterio que `public-booking.ts`.
-    const totalGuestsForLine = hasAges
-      ? composition.effectiveAdults + composition.payingChildren + composition.freeChildren
-      : Math.max(1, line.adults + Math.max(0, line.children ?? 0))
+    // `maxChildren`): adultos + niños con plaza + niños libres — mismo criterio que
+    // `public-booking.ts`.
+    const totalGuestsForLine = Math.max(1, composition.effectiveAdults + composition.payingChildren + composition.freeChildren)
     let freeOfType = roomsOfType
       .filter((r: any) => isRoomSellable(r.status))
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
@@ -361,9 +381,10 @@ export async function createPublicBookingGroup(
     }
 
     const fallbackNightly = Number(chosen[0].basePrice) || 0
-    // Tarea "Cobro % niños" (2026-09-09) — POR LÍNEA, mismo criterio que public-booking.ts: solo
-    // aplica con edades reales declaradas en ESTA línea (un caller legacy sin `childrenAges` sigue
-    // cotizando exactamente como siempre).
+    // Tarea "Cobro % niños" (2026-09-09) — POR LÍNEA, mismo criterio que public-booking.ts: aplica
+    // a todo niño con plaza de ESTA línea. MR-10 (#275): también a la línea con `children` plano,
+    // porque sus niños ya se sintetizaron a `maxChildAge` (con plaza) y el % no depende de la edad
+    // exacta sino de consumir plaza.
     const lineChildrenDiscountEnabled = hasAges && childPolicy?.childrenDiscountEnabled === true
     // Auditoría (mismo motivo que public-booking.ts): el % REALMENTE usado para cotizar esta
     // línea, anclado en la reserva — no lo que diga `configuration` más adelante en el tiempo.
@@ -406,10 +427,16 @@ export async function createPublicBookingGroup(
 
     resolvedLines.push({
       roomType: line.roomType,
-      adults: hasAges ? composition.effectiveAdults : line.adults,
-      children: hasAges ? composition.payingChildren + composition.freeChildren : (line.children ?? 0),
-      childrenAges: hasAges ? line.childrenAges! : [],
+      adults: composition.effectiveAdults,
+      children: composition.payingChildren + composition.freeChildren,
+      // MR-10 (#275): con `children` plano acá van las edades SINTETIZADAS a `maxChildAge` — se
+      // persisten a propósito, porque son la base del precio que el huésped pagó (un repricing
+      // posterior volvería a cotizar por adultos sin ellas).
+      childrenAges: lineChildrenAges,
       roomIds: chosen.map((r: any) => r.id), perUnitPrice,
+      // MR-10 (#275) — personas de la línea que consumen upsells (adultos + niños con plaza +
+      // niños libres, SIN bebés), por unidad; se multiplica por `roomIds.length` más abajo.
+      upsellPersonsPerUnit: composition.effectiveAdults + composition.payingChildren + (composition.freeChildren - composition.babies),
       needsCrib: lineNeedsCrib, cribCount: lineCribCount,
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
       childAmenities: lineChildAmenities, childAmenitiesTotal: lineChildAmenitiesTotal,
@@ -425,21 +452,52 @@ export async function createPublicBookingGroup(
   // REQ-01 (#290) — Σ de las amenidades de habitación de TODAS las unidades de todas las líneas.
   const roomAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.roomAmenitiesTotal, 0))
 
-  // ─── Upsells (mismo criterio que el flujo de 1 habitación: Σ price × qty, por GRUPO no por línea) ──
+  // ─── Upsells (mismo criterio que el flujo de 1 habitación, por GRUPO no por línea) ─────────
+  // MR-10 (#275): la matemática y los topes por `kind` viven en `resolveUpsellLines` (mismo helper
+  // que `/booking`). El contexto es el CARRITO entero: `rooms` = unidades físicas de todas las
+  // líneas (per_room ≤ habitaciones), `persons` = Σ por línea de (adultos + niños con plaza +
+  // niños libres − bebés) × unidades (per_person ≤ personas del grupo; ppn × personas del grupo).
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // MR-10 (#275) — líneas cotizadas por `kind` (van tal cual a `priceBreakdown.upsells[]`).
+  let upsellPricedLines: UpsellPricedLine[] = []
   // #269 — líneas resueltas para materializarlas como `ReservationAddons` de la LÍDER (abajo).
   const upsellLines: BookingEngineUpsellInput[] = []
-  if (upsellItems.length > 0 && hotelUpsellsMap) {
-    for (const item of upsellItems as UpsellItem[]) {
-      const found = hotelUpsellsMap.get(item.id)
-      if (!found || !found.active || found.hotelId !== hotelId) continue
-      const qty = Math.max(1, Math.floor(Number(item.quantity) || 1))
-      const lineTotal = Number(found.price) * qty
-      upsellsTotal += lineTotal
-      upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
-      upsellLines.push({ name: String(found.name ?? ''), quantity: qty, unitPrice: Number(found.price) || 0 })
+  if (upsellItems.length > 0 && hotelUpsells) {
+    const upsellRooms = resolvedLines.reduce((s, l) => s + l.roomIds.length, 0)
+    const upsellPersons = resolvedLines.reduce((s, l) => s + l.upsellPersonsPerUnit * l.roomIds.length, 0)
+    const resolved = resolveUpsellLines(hotelUpsells, upsellItems as UpsellItem[], hotelId, { nights, rooms: upsellRooms, persons: upsellPersons })
+    if (!resolved.ok) {
+      // Cantidad fuera del tope del kind → 400 tipado (mismo body que `/booking`): es dinero que
+      // el huésped vio en pantalla, no se silencia clampeando. `max` le dice al widget hasta
+      // cuánto puede pedir.
+      return {
+        status: 400,
+        body: {
+          error: resolved.error, upsellId: resolved.upsellId, name: resolved.name, kind: resolved.kind,
+          quantity: resolved.quantity, max: resolved.max,
+          message: `La cantidad de "${resolved.name}" (${resolved.quantity}) supera el máximo permitido (${resolved.max})`,
+        },
+      }
+    }
+    upsellPricedLines = resolved.lines
+    upsellsTotal = resolved.total
+    for (const line of upsellPricedLines) {
+      // Texto para `notes`: "Desayuno×4p×2n=80.00" (ppn), "Parking×2n=30.00" (per_night),
+      // "Transfer×3=30.00" (el resto) — el detalle estructurado va en `priceBreakdown.upsells`.
+      const factor = line.persons !== undefined
+        ? `×${line.persons}p×${line.nights}n`
+        : line.kind === 'per_night' ? `×${line.nights}n` : `×${line.quantity}`
+      upsellSummary.push(`${line.name}${factor}=${line.total.toFixed(2)}`)
+      // #269 — el folio asienta `quantity × unitPrice`; `quantity` lleva el multiplicador completo
+      // del kind (cantidad × noches × personas) y `unitPrice` el unitario del catálogo, igual que
+      // en `/booking`.
+      upsellLines.push({
+        name: line.name,
+        quantity: line.quantity * line.nights * (line.persons ?? 1),
+        unitPrice: line.unitPrice,
+      })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     logger?.warn('createPublicBookingGroup: upsells sin extraDeps.upsells cableado — se persisten en notes sin precios', { hotelId })
@@ -476,6 +534,9 @@ export async function createPublicBookingGroup(
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
+    // MR-10 (#275) — por línea; se persiste en el `priceBreakdown` de la LÍDER y sale en la
+    // confirmación pública del grupo.
+    upsells: upsellPricedLines,
     childAmenitiesTotal,
     roomAmenitiesTotal,
     taxes,
