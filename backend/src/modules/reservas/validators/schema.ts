@@ -240,6 +240,12 @@ export const IssueInvoiceSchema: Record<string, ValidationRule> = {
   notes: { type: 'string' as const, max: 500 },
 }
 
+// ── Reintentar reembolso web (#272): POST /api/reservas/:id/retry-refund ──
+// No hay campos: el monto sale de `reservations.refundAmount`, nunca del cliente. El schema vacío
+// existe para que la ruta pase por `validateSchema` como todo POST (regla del módulo); no cambia
+// el comportamiento (un body con claves de más no falla — igual que el resto de los schemas).
+export const RetryRefundSchema: Record<string, ValidationRule> = {}
+
 // ── Pre-Checkin (público) ──
 // Nombres de campo alineados con lo que MANDA el form público (pre-checkin/index.vue: `name`,
 // `document`, no `guestName`/`documentNumber` — con la clave vieja el check nunca se ejecutaba,

@@ -1,5 +1,6 @@
 import { checkinHashFromId } from '../../../shared/utils/checkin-hash'
 import type { ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
+import { isRefundInFlight } from '../../../shared/usecases/web-booking-refund'
 import { paidReposFrom, requireMoneyPort, type MoneyRowRef, type ReservationMoneyPort } from './money-port'
 
 export class ReservasQueries {
@@ -135,5 +136,33 @@ export class ReservasQueries {
 
   async findReservationById(id: string): Promise<any> {
     return (await this.orm.findMany('Reservations', { id }))[0] || null
+  }
+
+  /**
+   * #272 — Reclamo atómico del reembolso web: compare-and-swap que deja `refundStatus: 'pending'`
+   * y devuelve `true` sólo al que ganó. Dos invocaciones concurrentes (evento duplicado + reintento
+   * a mano) leen la misma fila; la primera escribe y el ORM pisa `updatedAt`, así que el UPDATE de
+   * la segunda —guardado por el `updatedAt` leído— cambia 0 filas. Mismo patrón que
+   * ari-outbox/usecases/outbox-store.ts. NO se filtra por `refundStatus`: las filas anteriores al
+   * campo lo traen NULL y `campo = NULL` no matchea nunca en SQL (ver ese archivo).
+   * `false` también si la reserva no existe, ya está `done` (no hay nada que reclamar) o tiene un
+   * `pending` FRESCO (`isRefundInFlight`): un reembolso en vuelo esperando a Stripe, que el CAS solo
+   * no ve porque nadie pisó `updatedAt` mientras tanto. Un `pending` VIEJO (el proceso murió tras
+   * reclamar) sí se reclama de nuevo: justamente porque el guard es `updatedAt` y esta escritura lo
+   * pisa, el segundo que llegue después ya ve un `pending` fresco y se queda afuera.
+   */
+  async claimRefund(id: string): Promise<boolean> {
+    const row = (await this.orm.findMany('Reservations', { id }))[0] as any
+    if (!row) return false
+    if (row.refundStatus === 'done') return false
+    if (isRefundInFlight(row)) return false
+    // El guard es `updatedAt`, que el ORM setea con resolución de milisegundo: si este UPDATE cae
+    // en el MISMO ms que la escritura anterior (la cancelación que disparó el evento), el valor
+    // nuevo sería igual al leído y el perdedor también matchearía. Se espera a que el reloj avance
+    // (acotado: un `updatedAt` en el futuro por desfase de reloj no puede colgar el reembolso).
+    for (let i = 0; i < 5 && row.updatedAt && new Date().toISOString() <= String(row.updatedAt); i++) await new Promise((r) => setTimeout(r, 2))
+    const guard = row.updatedAt ? { id, updatedAt: row.updatedAt } : { id }
+    const changes = await this.orm.updateMany('Reservations', guard, { refundStatus: 'pending' })
+    return Number(changes) === 1
   }
 }

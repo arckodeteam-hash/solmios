@@ -338,6 +338,14 @@ const messages = {
     'confirm.cancellationFee': 'Cargo por cancelación',
     'confirm.noRefund': 'No hay reembolso según la política de cancelación aplicada.',
     'confirm.alreadyCancelled': 'Esta reserva ya estaba cancelada.',
+    // #272 (MR-07) — reserva de varias habitaciones y estado real del reembolso.
+    'confirm.groupRooms': 'Habitaciones de tu reserva',
+    'confirm.roomFallback': 'Habitación {n}',
+    'confirm.roomGuests': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {niño} other {niños}}',
+    'confirm.cancelLinkGroup': 'Cancelar la reserva ({n} habitaciones)',
+    'confirm.cancelBodyGroup': 'Se cancelarán las {n} habitaciones de esta reserva. Esta acción no se puede deshacer. El monto del reembolso depende de la política de cancelación del hotel.',
+    'confirm.refundDone': 'Reembolso de {amount} procesado: lo verás en tu tarjeta en 5-10 días hábiles.',
+    'confirm.refundPending': 'Reembolso de {amount}: el hotel lo está gestionando.',
     'confirm.backToStart': 'Volver al inicio',
     'confirm.walletTitle': 'Tu pase de acceso',
 
@@ -609,6 +617,14 @@ const messages = {
     'confirm.cancellationFee': 'Cancellation fee',
     'confirm.noRefund': 'No refund applies under the cancellation policy.',
     'confirm.alreadyCancelled': 'This booking was already cancelled.',
+    // #272 (MR-07) — multi-room booking and real refund state.
+    'confirm.groupRooms': 'Rooms in your booking',
+    'confirm.roomFallback': 'Room {n}',
+    'confirm.roomGuests': '{adults} {adults, plural, one {adult} other {adults}} · {children} {children, plural, one {child} other {children}}',
+    'confirm.cancelLinkGroup': 'Cancel the booking ({n} rooms)',
+    'confirm.cancelBodyGroup': 'All {n} rooms in this booking will be cancelled. This cannot be undone. The refund amount depends on the hotel’s cancellation policy.',
+    'confirm.refundDone': 'Refund of {amount} processed: it will show on your card within 5-10 business days.',
+    'confirm.refundPending': 'Refund of {amount}: the hotel is handling it.',
     'confirm.backToStart': 'Back to start',
     'confirm.walletTitle': 'Your access pass',
 
@@ -879,6 +895,14 @@ const messages = {
     'confirm.cancellationFee': 'Taxa de cancelamento',
     'confirm.noRefund': 'Não há reembolso segundo a política de cancelamento aplicada.',
     'confirm.alreadyCancelled': 'Esta reserva já estava cancelada.',
+    // #272 (MR-07) — reserva de vários quartos e estado real do reembolso.
+    'confirm.groupRooms': 'Quartos da sua reserva',
+    'confirm.roomFallback': 'Quarto {n}',
+    'confirm.roomGuests': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {criança} other {crianças}}',
+    'confirm.cancelLinkGroup': 'Cancelar a reserva ({n} quartos)',
+    'confirm.cancelBodyGroup': 'Os {n} quartos desta reserva serão cancelados. Esta ação não pode ser desfeita. O valor do reembolso depende da política de cancelamento do hotel.',
+    'confirm.refundDone': 'Reembolso de {amount} processado: você o verá no seu cartão em 5-10 dias úteis.',
+    'confirm.refundPending': 'Reembolso de {amount}: o hotel está cuidando disso.',
     'confirm.backToStart': 'Voltar ao início',
     'confirm.walletTitle': 'Seu passe de acesso',
 
