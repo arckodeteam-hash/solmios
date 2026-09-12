@@ -31,8 +31,34 @@ export interface RecordedPayment {
   status: string
 }
 
+/**
+ * #253 — fila de `payments` tal cual la devuelve el conector (`payments.unbilledPaymentsOfReservation`).
+ * `facturas` decide cuáles cuentan como pagado (`usecases/invoice-from-reservation.ts`).
+ */
+export interface ReservationPaymentRow {
+  id: string
+  type?: string | null
+  status?: string | null
+  amount?: number | null
+  method?: string | null
+  stripeSessionId?: string | null
+  invoiceId?: string | null
+  currency?: string | null
+}
+
 export interface PaymentPort {
   recordPayment(input: RecordPaymentInput): Promise<RecordedPayment>
+  /**
+   * #253 — pagos de la reserva que todavía no cuelgan de ninguna factura. Opcional: lo inyecta
+   * `connectors/facturas-payments`; sin él, la factura desde la reserva falla cerrada (nunca
+   * emite una factura "pagada" sin poder vincular el dinero que la respalda).
+   */
+  paymentsOfReservation?(hotelId: string, reservationId: string): Promise<ReservationPaymentRow[]>
+  /**
+   * #253 — escribe `payments.invoiceId` en las filas dadas. La factura VINCULA pagos existentes;
+   * jamás los crea (`payments` es la única fuente de verdad del dinero). Devuelve cuántas filas tocó.
+   */
+  linkPaymentsToInvoice?(hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string): Promise<number>
 }
 
 /**

@@ -1,7 +1,7 @@
 // payments/service.ts — Facade pública del módulo Payments. Orquestador delgado que delega a usecases/
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
-import { paymentsLinkedTo, settledNetOfReservation, type PaymentReservationRef } from './usecases/reservation-money'
+import { paymentsLinkedTo, settledNetOfReservation, unbilledPaymentsOfReservation, linkPaymentsToInvoice, type PaymentReservationRef } from './usecases/reservation-money'
 import type {
   PaymentDTO, CreatePaymentDTO, ChargeCardDTO,
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
@@ -122,6 +122,10 @@ export class PaymentsService {
   paymentsLinkedTo(hotelId: string, ref: PaymentReservationRef): Promise<PaymentDTO[]> { return paymentsLinkedTo(this.paymentRepo, hotelId, ref) }
   // RTC-7.4 — dinero neto asentado a nombre de una reserva (`connectors/payment-requests-money`).
   settledNetOfReservation(hotelId: string, reservationId: string): Promise<number> { return settledNetOfReservation(this.paymentRepo, hotelId, reservationId) }
+  // #253 — puerto para connectors/facturas-payments: pagos de la reserva aún sin factura (los que la factura emitida desde la reserva vincula).
+  unbilledPaymentsOfReservation(hotelId: string, reservationId: string): Promise<PaymentDTO[]> { return unbilledPaymentsOfReservation(this.paymentRepo, hotelId, reservationId) }
+  // #253 — puerto para connectors/facturas-payments: vincula filas EXISTENTES a la factura (nunca crea); devuelve cuántas.
+  linkPaymentsToInvoice(hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string): Promise<number> { return linkPaymentsToInvoice(this.paymentRepo, hotelId, reservationId, paymentIds, invoiceId) }
 
   /** RTC-8.1 — lo inyecta el connector `payments-ceiling`; ver `usecases/charge-card.ts`. */
   setCeilingGuard(port: ChargeCeilingPort): void { this.ceiling = port }

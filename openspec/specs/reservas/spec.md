@@ -350,8 +350,8 @@ re-evalúa en vivo al cambiar la edad de un menor.
 
 ### Requirement: Registrar pago manual con evidencia (REQ-RWP-06)
 
-`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — el único endpoint del módulo
-con permiso de facturación, porque registra dinero; ownership post-findById con bypass
+`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — con `POST /:id/invoice`, los dos únicos endpoints
+del módulo con permiso de facturación, porque tocan dinero; ownership post-findById con bypass
 `super_admin`) recibe `{method: cash|transfer|card|other, amount > 0, reference?, note?}`
 y MUST: rechazar con 400 `reference` vacía para `transfer`/`card` (evidencia para
 conciliar con el banco; `cash`/`other` no la exigen), rechazar con 400
@@ -398,6 +398,61 @@ refrescan el detalle (badge y "Historial de cobros" con "Registró: {nombre}") y
 
 - GIVEN un rol sin `billing:create` (p.ej. housekeeper)
 - WHEN `POST /:id/mark-paid`
+- THEN 403 sin efectos
+
+### Requirement: Emitir factura desde la reserva, con o sin folio (REQ-FDR-02)
+
+`POST /api/reservas/:id/invoice` (permiso `billing:create` — el mismo que
+`POST /api/facturas`; ownership post-findById con bypass `super_admin`; body `{notes?}`
+validado, ≤ 500 caracteres) emite la factura de la reserva en UNA sola operación del
+servidor y el camino NO lo elige el cliente (`usecases/issue-invoice.ts`): con folio
+`open` (lector `folioReader`, mismo criterio que la guarda de deuda del checkout) delega
+en `folios.closeAndCreateInvoice` — el folio queda `closed` con `invoiceId` y la factura
+lleva los cargos del folio, exactamente como `POST /api/folios/:id/invoice`; sin folio (o
+con el folio ya cerrado) delega en `facturas.invoiceFromReservation`
+(`facturas/usecases/invoice-from-reservation.ts`): items = alojamiento
+(`chargeableTotal`) + extras (`reservation_addons`, descuentos con signo) + otros cobros,
+llevados a neto con la tasa de `configuration('taxes')` (fallback `hotels.taxRate`,
+nada hardcodeado) porque `reservations.totalAmount` es bruto; numeración y NCF por el
+contador atómico de `facturas`; moneda de la reserva. La factura VINCULA los
+`payments` de la reserva (`status` `completed`/`refunded`, `invoiceId` vacío) escribiendo
+`payments.invoiceId` por el puerto `facturas-payments`, `amountPaid` = Σ neto de refunds,
+`status:'paid'` si `amountPaid ≥ amount − BALANCE_EPSILON`; MUST NOT crear filas en
+`payments`. Idempotente: reserva con factura `type:'invoice'` no `cancelled` → 409 con
+`invoiceId` de la existente (anular ≠ borrar: una factura anulada sí deja emitir otra).
+Reserva `cancelled` → 409. Sin conector `reservas-facturas` → 400 (fail-closed, nunca
+"ok" sin factura). Audit `invoice.issued_from_reservation`. Respuesta 201 con
+`{invoiceId, invoiceNumber, source: 'folio'|'reservation', folioId?, linkedPayments?,
+amountPaid?}`. `reservas` NO importa `facturas` ni `folios`: `ReservationInvoicingPort`
+lo inyecta `connectors/reservas-facturas.ts`.
+
+#### Scenario: Reserva pagada online sin folio
+
+- GIVEN reserva `confirmed` sin folio, total bruto 590 con impuesto del hotel 18 % en
+  `configuration('taxes')`, y un `payment` `charge`/`completed` de 590 por Stripe con
+  `reservationId` y sin `invoiceId`
+- WHEN `POST /:id/invoice`
+- THEN 201 `source:'reservation'`, la factura es `type:'invoice'`, `status:'paid'`,
+  `amount ≈ 590`, `taxes ≈ 90`, el payment queda con `invoiceId` = la factura y la tabla
+  `payments` tiene la misma cantidad de filas que antes
+
+#### Scenario: Segunda emisión
+
+- GIVEN la reserva ya tiene una factura `invoice` viva
+- WHEN `POST /:id/invoice` otra vez
+- THEN 409 con `invoiceId` de la existente y no se crea ninguna factura
+
+#### Scenario: Con folio abierto
+
+- GIVEN reserva `checked_in` con folio `open`
+- WHEN `POST /:id/invoice`
+- THEN 201 `source:'folio'`, el folio queda `closed` con `invoiceId` y la factura incluye
+  los cargos del folio (camino `folios-facturas` existente)
+
+#### Scenario: Sin permiso de facturación
+
+- GIVEN un rol sin `billing:create` (p.ej. housekeeper)
+- WHEN `POST /:id/invoice`
 - THEN 403 sin efectos
 
 ### Requirement: Estado de pago por fila en el listado y origen web (REQ-RWP-04)

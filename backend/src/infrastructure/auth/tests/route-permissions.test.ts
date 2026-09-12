@@ -83,6 +83,8 @@ const suites: ModuleSuite[] = [
       { label: 'POST checkin', method: 'POST', path: '/api/reservas/r1/checkin', permission: 'reservations:checkin', deniedRole: 'housekeeper', allowedRole: 'receptionist', body: {} },
       // #249: registra dinero → exige billing:create (mismo permiso que POST /api/payments), no reservations:edit.
       { label: 'POST mark-paid', method: 'POST', path: '/api/reservas/r1/mark-paid', permission: 'billing:create', deniedRole: 'housekeeper', allowedRole: 'receptionist', body: {} },
+      // #253: emite factura → billing:create, mismo permiso que folios/facturas POST.
+      { label: 'POST invoice (#253)', method: 'POST', path: '/api/reservas/r1/invoice', permission: 'billing:create', deniedRole: 'housekeeper', allowedRole: 'receptionist', body: {} },
     ],
   },
   {

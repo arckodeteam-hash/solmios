@@ -55,3 +55,41 @@ export async function settledNetOfReservation(
   const rows = await paymentsLinkedTo(repo, hotelId, { reservationId })
   return sumPayments(rows as PaymentRowLike[])
 }
+
+/**
+ * Filas de `payments` de una reserva todavía sin factura: las que la factura emitida desde la
+ * reserva puede vincular (#253). El filtro `invoiceId` vacío se hace en memoria: el ORM no
+ * distingue NULL de '' y una fila histórica puede tener cualquiera de los dos.
+ */
+export async function unbilledPaymentsOfReservation(
+  repo: Pick<RepositoryAdapter<PaymentDTO>, 'findMany'>, hotelId: string, reservationId: string,
+): Promise<PaymentDTO[]> {
+  if (!hotelId) throw new Error('payments: unbilledPaymentsOfReservation sin hotelId (multi-tenancy)')
+  if (!reservationId) return []
+  const rows = await paymentsLinkedTo(repo, hotelId, { reservationId })
+  return rows.filter((p) => !p.invoiceId)
+}
+
+/**
+ * Vincula filas EXISTENTES de `payments` a una factura (#253). No crea filas: `payments` es la única
+ * fuente de verdad del dinero y la factura emitida desde la reserva sólo lo referencia. Devuelve
+ * cuántas vinculó. Sólo toca filas del hotel, con `reservationId` dado y sin `invoiceId` previo
+ * (idempotente: una fila ya vinculada no se pisa; un id de otro hotel u otra reserva se ignora).
+ */
+export async function linkPaymentsToInvoice(
+  repo: Pick<RepositoryAdapter<PaymentDTO>, 'findMany' | 'update'>,
+  hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string,
+): Promise<number> {
+  if (!hotelId) throw new Error('payments: linkPaymentsToInvoice sin hotelId (multi-tenancy)')
+  if (!invoiceId) throw new Error('payments: linkPaymentsToInvoice sin invoiceId')
+  if (!reservationId || !paymentIds?.length) return 0
+  const wanted = new Set(paymentIds)
+  const unbilled = await unbilledPaymentsOfReservation(repo, hotelId, reservationId)
+  let linked = 0
+  for (const p of unbilled) {
+    if (!wanted.has(p.id)) continue
+    await repo.update(p.id, { invoiceId } as Partial<PaymentDTO>)
+    linked++
+  }
+  return linked
+}
