@@ -303,26 +303,36 @@ Toda reserva creada desde el motor público MUST persistir su composición real:
 `adults`, `children`, `childrenAges` (edades declaradas, auditoría de lo tipeado —
 un niño con edad > maxChildAge cuenta en `adults` pero su edad queda en el array),
 `childrenAgesAsOf` (checkIn vigente al declarar; ancla temporal que NUNCA se
-reescribe) y, cuando el hotel habilita `childPolicy.cribAvailable` y la composición
-incluye un bebé (clasificación de `childrenAges`, `child-composition.ts`), la
-pregunta binaria `needsCrib` (+`cribCount` 1/0 espejo). El backend re-valida cuna
-y capacidad al crear — nunca confía en lo que manda el cliente — y en una reserva
-grupal cada room-line es su propia fila `reservations` con su propia distribución
-(`public-booking-group.ts`). `childrenRatePercentApplied` congela el % infantil
-efectivamente cotizado (auditoría: cambiar el % después no toca reservas existentes).
-La cuna sigue siendo Sí/No sin precio. Aparte de ella, REQ-01 (#233) agrega las
-**amenidades para niños/bebés configurables por el hotel** (tabla `child_amenities`:
-nombre libre, `price` >= 0 con 0 permitido, `active`; CRUD `/api/child-amenities` con
-permiso `upsells:*`, catálogo público `GET /api/public/hotels/:slug/child-amenities`
-solo activas). El cliente las elige POR HABITACIÓN (`childAmenities: [{id}]` en el
-body single y en cada `rooms[i]` del grupo); el backend las acepta SOLO si esa línea
-declara al menos un menor y `childPolicy.acceptChildren`, ignora ids inexistentes,
-inactivos, de otro hotel o duplicados, y persiste en cada fila `reservations` el
-snapshot `childAmenities` `[{id,name,price,quantity,total}]` + `childAmenitiesTotal`
-con el precio vigente al reservar. Su importe entra en `subtotal` (alojamiento +
-upsells + amenidades) → base imponible → impuestos → total cobrado, y
-`priceBreakdown.childAmenitiesTotal` lo desglosa (`public-booking.ts`,
-`public-booking-group.ts`).
+reescribe) y, cuando la composición incluye un bebé (clasificación de `childrenAges`,
+`child-composition.ts`) Y el tipo elegido publica la cuna, la pregunta binaria
+`needsCrib` (+`cribCount` 1/0 espejo). El backend re-valida cuna y capacidad al crear
+— nunca confía en lo que manda el cliente — y en una reserva grupal cada room-line es
+su propia fila `reservations` con su propia distribución (`public-booking-group.ts`).
+`childrenRatePercentApplied` congela el % infantil efectivamente cotizado (auditoría:
+cambiar el % después no toca reservas existentes).
+
+Desde #292 la cuna NO es una configuración global del hotel: es la **amenidad
+personalizada de la habitación** `RoomAmenities` con key `custom:cuna` (nombre, `price`
+>= 0 e `isActive` por habitación, configurada en Habitaciones → editar; ver REQ-01 #290
+más abajo). En el motor público la pregunta "¿Necesita cuna?" (Sí/No, con "(+ $precio)"
+cuando tiene precio) se ofrece SOLO si la tarjeta declara al menos un bebé Y el tipo
+publica `custom:cuna` en `GET /api/public/hotels/:slug/room-amenities` (unión de sus
+unidades vendibles, precio mínimo); "Sí" agrega la key `custom:cuna` a `roomAmenities`
+de esa línea y la cuna NO aparece en el checklist genérico de amenidades de la
+habitación. En una reserva múltiple cada línea se evalúa contra su propio tipo. El
+backend (`public-booking.ts` / `public-booking-group.ts`) resuelve `needsCrib` = bebés > 0
+∧ `needsCrib: true` en el body ∧ alguna unidad libre del tipo ofrece `custom:cuna` activa
+(`roomsOfferCrib`); si queda en true FUERZA la key `custom:cuna` en `roomAmenities` de la
+línea (prefiere una unidad que la ofrezca y cobra su precio real en `roomAmenitiesTotal`,
+nunca el del body) y si queda en false la QUITA aunque el cliente la haya mandado;
+`cribCount` es siempre el espejo 1/0 de `needsCrib`.
+
+Nota de compatibilidad: el catálogo global de amenidades infantiles (dado de baja en
+#292) ya no existe — ni CRUD, ni endpoint público, ni editor, ni checklist en el motor —
+y cualquier lista de amenidades infantiles que llegue en el body de la reserva pública
+se ignora. Las columnas snapshot `childAmenities`/`childAmenitiesTotal` de `reservations`
+se conservan SOLO para leer reservas históricas; toda reserva nueva las persiste en
+`[]` / 0.
 
 REQ-01 (#290) agrega, con el mismo patrón, las **amenidades personalizadas de la
 habitación**: filas `RoomAmenities` con `amenityKey` `custom:<slug>`, `name`, `price` >= 0
@@ -357,31 +367,52 @@ re-evalúa en vivo al cambiar la edad de un menor.
 #### Scenario: Amenidad de habitación que solo ofrece una unidad del tipo
 
 - GIVEN tipo "double" con dos unidades libres, la más barata sin "Cuna" y la otra con
-  "Cuna" activa a 15 en sus `RoomAmenities`, y un POST single con `roomType: 'double'` y
+  "Cuna" activa a 15 en sus `RoomAmenities`, y un POST single con `roomType: 'double'`,
+  `childrenAges: [1]` (un bebé), `needsCrib: true` y
   `roomAmenities: [{key:'custom:cuna', price: 0.01}]`
 - THEN el backend asigna la unidad que ofrece la cuna, `priceBreakdown.roomAmenitiesTotal`
   = 15 (el precio del server, no el del body), el subtotal y el total lo incluyen, y la
-  reserva persiste `roomAmenities` `[{key:'custom:cuna', name:'Cuna', price:15, quantity:1,
-  total:15}]` y `roomAmenitiesTotal` = 15
-- AND una key que ninguna unidad del tipo ofrece, una key fija o una inactiva se ignora sin
-  error y no se cobra; en un grupo, solo las filas de la línea que la pidió llevan snapshot,
-  cada una al precio de su propia habitación
+  reserva persiste `needsCrib = true`, `roomAmenities` `[{key:'custom:cuna', name:'Cuna',
+  price:15, quantity:1, total:15}]` y `roomAmenitiesTotal` = 15
+- AND `custom:cuna` tiene una sola fuente de verdad (#292): sin bebé o sin `needsCrib: true`
+  la key se descarta del body aunque venga en `roomAmenities`; para cualquier otra key
+  `custom:*`, una que ninguna unidad del tipo ofrece, una key fija o una inactiva se ignora
+  sin error y no se cobra; en un grupo, solo las filas de la línea que la pidió llevan
+  snapshot, cada una al precio de su propia habitación
+
+#### Scenario: Tipo que no publica cuna — no se pregunta y needsCrib queda en false
+
+- GIVEN tipo "single" cuyas unidades no tienen ninguna fila `RoomAmenities` activa con key
+  `custom:cuna`, y una tarjeta con 2 adultos y `childrenAges: [1]` (un bebé)
+- WHEN el motor público arma la tarjeta
+- THEN NO muestra "¿Necesita cuna?" y no manda `needsCrib` ni `custom:cuna`
+- AND si un cliente igual hace POST con `needsCrib: true` y `roomAmenities:
+  [{key:'custom:cuna'}]`, el backend persiste `needsCrib = false`, `cribCount = 0`, quita
+  `custom:cuna` de `roomAmenities` y no cobra nada por ella
+
+#### Scenario: Tipo con cuna a 15, bebé y "Sí"
+
+- GIVEN tipo "double" con una unidad libre que tiene `RoomAmenities` `custom:cuna` activa a
+  15, y una tarjeta con 2 adultos y `childrenAges: [1]`
+- WHEN el motor público muestra "¿Necesita cuna? (+ $15)" y el cliente elige "Sí"
+- THEN el POST lleva `needsCrib: true` y `custom:cuna` en `roomAmenities` de esa línea, y la
+  reserva persiste `needsCrib = true`, `cribCount = 1`, `roomAmenities`
+  `[{key:'custom:cuna', name:'Cuna', price:15, quantity:1, total:15}]` y
+  `roomAmenitiesTotal` = 15 (precio de la fila de la unidad asignada, nunca el del body)
+- AND `childAmenities` = `[]` y `childAmenitiesTotal` = 0
+- AND sin bebé en la composición no se pregunta, y si el cliente elige "No" no viaja
+  `custom:cuna` aunque haya quedado marcada antes
 
 #### Scenario: Grupo de dos habitaciones con bebé en una
 
-- GIVEN hotel con cribAvailable y una reserva grupal de 2 líneas, una con bebé + cuna
-- THEN cada línea persiste sus propios adults/children/childrenAges y SOLO la del bebé
-  lleva needsCrib=true validado por el backend
-
-#### Scenario: Amenidad infantil elegida en una sola habitación del grupo
-
-- GIVEN hotel con la amenidad activa "Kit de bebé" a 10 y una reserva grupal de 2 líneas,
-  la segunda con un niño, quantity 2 y `childAmenities: [{id}]`
-- THEN `priceBreakdown.childAmenitiesTotal` = 20, el subtotal y el total lo incluyen, cada
-  reserva física de la segunda línea persiste el snapshot con quantity 1 y total 10, y la
-  primera línea no lleva amenidades
-- AND una amenidad inactiva, de otro hotel o pedida en una línea sin menores se ignora
-  sin error y no se cobra
+- GIVEN reserva grupal de 2 líneas: la primera del tipo "double" (publica `custom:cuna` a 15)
+  con bebé y "Sí" a la cuna, la segunda del tipo "single" (sin `custom:cuna`) con un niño
+- THEN cada línea persiste sus propios adults/children/childrenAges y SOLO la primera lleva
+  `needsCrib = true` validado por el backend (`roomsOfferCrib` contra las unidades de SU
+  tipo), con `custom:cuna` a 15 en su snapshot `roomAmenities`; la segunda queda con
+  `needsCrib = false`, `cribCount = 0` y sin `custom:cuna`
+- AND en el motor público cada tarjeta decide por separado si muestra "¿Necesita cuna?"
+  según el catálogo de su propio tipo
 
 #### Scenario: Máximo de niños sin plaza por habitación (REQ-03)
 

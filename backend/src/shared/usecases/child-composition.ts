@@ -45,12 +45,10 @@ export interface ChildPolicy {
    *  `childrenDiscountEnabled` está prendido. 50 es apenas un valor default/ejemplo — el pedido es
    *  explícito en que NO debe quedar hardcodeado: cada hotel elige el suyo entre 1 y 100. */
   childrenRatePercent: number
-  /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el checklist de
-   *  "amenidades para bebé" (isChildAmenity sobre upsells) por un único toggle a nivel hotel:
-   *  ¿el hotel ofrece cuna? Sin esto en `true`, "¿Necesita cuna?" ni se pregunta, sin importar si
-   *  hay un bebé en la composición. Apagado por default — mismo criterio que el resto de esta
-   *  política (nada cambia hasta que el hotel lo habilite a mano). */
-  cribAvailable: boolean
+  // #292 — el toggle global "¿el hotel ofrece cuna?" (Tarea 22) se dio de baja: la cuna es una
+  // amenidad PERSONALIZADA de cada habitación (`RoomAmenities` con key `custom:cuna`, con
+  // precio). "¿Necesita cuna?" se ofrece si la habitación/tipo la publica — ver
+  // `CRIB_AMENITY_KEY` en `bookingengine/usecases/public-room-amenities.ts`.
   /** REQ-03 (#235, 2026-09-12) — "Máximo de niños que no consumen plaza por habitación".
    *  `null`/ausente = SIN LÍMITE (nunca un default numérico: el pedido prohíbe hardcodear 2 ni
    *  ningún otro número — sin configurar, ningún hotel existente cambia de comportamiento). Entero
@@ -68,7 +66,7 @@ export interface ChildPolicy {
  *  `false`, que es el estado real por default. */
 export const DEFAULT_CHILD_POLICY: ChildPolicy = {
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  childrenDiscountEnabled: false, childrenRatePercent: 50,
   maxFreeChildrenPerRoom: null,
 }
 
@@ -362,7 +360,6 @@ export async function resolveChildPolicy(
       childrenRatePercent: Number.isFinite(childrenRatePercent)
         ? Math.min(100, Math.max(1, Math.round(childrenRatePercent)))
         : DEFAULT_CHILD_POLICY.childrenRatePercent,
-      cribAvailable: raw.cribAvailable === true,
       maxFreeChildrenPerRoom: raw.maxFreeChildrenPerRoom != null && (raw.maxFreeChildrenPerRoom as unknown) !== ''
         && Number.isFinite(maxFreeChildrenPerRoom) && maxFreeChildrenPerRoom >= 0
         ? Math.floor(maxFreeChildrenPerRoom)
