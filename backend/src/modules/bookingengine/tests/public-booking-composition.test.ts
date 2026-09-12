@@ -337,7 +337,7 @@ describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 
     })
   }
 
-  it('sin bebé en la composición: needsCrib se ignora aunque el body lo pida (defensa en profundidad)', async () => {
+  it('#341 — sin bebé en la composición: la cuna es una amenidad normal, se cumple si el tipo la ofrece', async () => {
     const { orm, tables } = dbWithRoom()
     const res = await createPublicBookingDirect(
       orm, {
@@ -347,8 +347,8 @@ describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 
       undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
     )
     expect(res.status).toBe(201)
-    expect(tables.Reservations[0].needsCrib).toBe(false)
-    expect(tables.Reservations[0].cribCount).toBe(0)
+    expect(tables.Reservations[0].needsCrib).toBe(true)
+    expect(tables.Reservations[0].cribCount).toBe(1)
   })
 
   it('tipo SIN custom:cuna: needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
