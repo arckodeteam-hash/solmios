@@ -63,10 +63,15 @@
       `ota`).
       **Aceptación**: `bun test src/modules/canales src/connectors/tests/canales-notificaciones.test.ts`
       — revisión nueva → 1 llamada; modificación/cancelación → 0; aviso que falla → ingesta igual.
-- [x] 3.6 (#257, REQ-HAC-02) La ingesta elige la unidad libre del tipo con `availableOfType`;
-      sin unidad libre igual crea la reserva con nota `⚠ OVERBOOKING`.
-      **Aceptación**: `bun test src/modules/canales/tests/ari-ingestion.test.ts` — r1 ocupada → r2;
-      ambas ocupadas → r1 + OVERBOOKING en notes.
+- [x] 3.6 (#257, REQ-HAC-02) La ingesta elegía la unidad libre del tipo con `availableOfType`;
+      sin unidad libre igual creaba la reserva con nota `⚠ OVERBOOKING`. **Reemplazado por 3.7.**
+- [x] 3.7 (#260, REQ-HAC-05) La ingesta ya no elige unidad: la reserva OTA nace con `roomType`
+      (tipo local del room type de Channex) y `roomId: null`; sin mapeo → primer tipo del hotel +
+      nota `⚠ TIPO SIN MAPEAR (<título>)`; nunca se descarta un booking. La unidad se asigna después
+      (`assign-room`). El push de disponibilidad de una reserva sin unidad va por tipo.
+      **Aceptación**: `bun test src/modules/canales/tests/booking-ingestion-by-type.test.ts` — 2 OTA
+      del mismo tipo y fechas → 2 filas sin unidad; tipo desconocido → nota TIPO SIN MAPEAR;
+      `rg AUTO-ASSIGNED backend/src` → 0.
 
 ## 4. Pantalla admin (REQ-CAN-08)
 
