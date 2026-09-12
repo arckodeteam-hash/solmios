@@ -1,5 +1,6 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import type { AmenitiesService } from './service'
+import { isCustomAmenityKey, normalizeRoomAmenityItems, type NormalizedItem } from './usecases/room-amenity-items'
 
 export class AmenitiesController {
   constructor(
@@ -57,8 +58,17 @@ export class AmenitiesController {
     if (!hotelId) return { status: 400, body: { error: 'hotelId requerido' } }
     const ok = await this.assertRoomInHotel(req.params.roomId, hotelId)
     if (!ok) return { status: 404, body: { error: 'Habitación no encontrada' } }
-    const { amenities } = req.body as any
+    const { amenities, items } = req.body as any
     if (!Array.isArray(amenities)) return { status: 400, body: { error: 'amenities debe ser un array' } }
-    return { status: 200, body: { success: true, count: await this.service.updateRoomAmenities(req.params.roomId, amenities) } }
+    // Personalizadas (#290): sólo entran por `items` (con name/price/isActive); una key `custom:` en
+    // `amenities` se ignora para que no se cree una fila sin nombre ni precio.
+    const fixedKeys = amenities.filter((k: unknown) => !isCustomAmenityKey(k))
+    let normalized: NormalizedItem[] | undefined
+    if (items !== undefined) {
+      const r = normalizeRoomAmenityItems(items)
+      if ('error' in r) return { status: 400, body: { error: r.error } }
+      normalized = r.items
+    }
+    return { status: 200, body: { success: true, count: await this.service.updateRoomAmenities(req.params.roomId, fixedKeys, normalized) } }
   }
 }
