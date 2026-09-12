@@ -1,8 +1,9 @@
 // connectors/bookingengine-notificaciones.ts — Wire: bookingengine → notificaciones (aviso al hotel).
 //
-// Una reserva del motor web (`onBookingCreated`) o un pago confirmado por la pasarela
-// (`onBookingPaid`) tienen que enterarle al hotel: campanita a quien puede ver reservas, correo al
-// buzón del hotel y push. Solo delega: la lógica vive en `shared/usecases/notify-reservation-received`.
+// Una reserva del motor web (`onBookingCreated`), un pago confirmado por la pasarela
+// (`onBookingPaid`) o una cancelación del huésped (`onBookingCancelled`, #272) tienen que enterarle
+// al hotel: campanita a quien puede ver reservas, correo al buzón del hotel y push. Solo delega: la
+// lógica vive en `shared/usecases/notify-reservation-received`.
 //
 // Todo se resuelve EN CADA aviso, no al cablear (mismo criterio que canales-notificaciones): si un
 // módulo opcional no está, el aviso sale igual con lo que haya. Y los deps se arman con MÓDULOS, no
@@ -14,11 +15,13 @@
 
 import type { ConnectorContext, Logger } from 'arckode-framework'
 import {
+  notifyReservationCancelled,
   notifyReservationPaid,
   notifyReservationReceived,
   type ReservationEmailSender,
   type ReservationNotifyDeps,
 } from '../shared/usecases/notify-reservation-received'
+import type { BookingCancelledEvent } from '../modules/bookingengine/sockets'
 import type { NotificacionesPort, PushPort, RoomsPort } from '../shared/usecases/notify-task-assigned'
 import { DEFAULT_PLATFORM_IDENTITY, type PlatformIdentity } from '../shared/utils/platform-identity'
 
@@ -107,6 +110,15 @@ export function bookingengineNotificacionesConnector(logger: Logger): (ctx: Conn
           currency: b.currency,
           provider: b.provider,
           paymentRef: b.paymentRef,
+        })),
+      // #272 — el reembolso (bookingengine-refunds) se registra ANTES y los sockets se encadenan en
+      // orden: al releer la reserva acá ya tiene el `refundStatus` verdadero (best-effort: sin fila → undefined).
+      onBookingCancelled: (e: BookingCancelledEvent) => swallow('cancelled', { id: e.reservationId, hotelId: e.hotelId }, async (d) =>
+        notifyReservationCancelled(d, { id: e.reservationId, hotelId: e.hotelId }, {
+          refundAmount: Number(e.refundAmount) || 0,
+          cancellationFee: Number(e.cancellationFee) || 0,
+          refundStatus: (await d.reservations.findById(e.reservationId))?.refundStatus ?? undefined,
+          roomsCount: Array.isArray(e.reservationIds) && e.reservationIds.length > 0 ? e.reservationIds.length : undefined,
         })),
     })
   }

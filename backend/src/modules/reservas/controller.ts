@@ -145,6 +145,21 @@ export class ReservasController {
     }
   }
 
+  // ── RETRY REFUND (#272): reintenta en Stripe el reembolso de una cancelación web que quedó `failed` ──
+  // Sin body que validar: el monto sale de `reservations.refundAmount`, nunca del cliente.
+  async retryRefund(req: HttpRequest) {
+    try {
+      const result = await this.service.retryRefund(req.params.id, req.user as any)
+      return { status: 200, body: result }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
   // ── Companions (/api/reservations/:id/companions, /api/companions/:id) — F2 ──
   async listCompanions(req: HttpRequest) {
     const data = await listCompanions(this.companionsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, req.user as any)
