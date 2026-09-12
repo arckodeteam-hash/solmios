@@ -1,8 +1,7 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
-import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
-import { validateRoomAssignment, CLOSED_STATUSES, type RoomAssignmentDeps } from './assign-room'
+import { validateRoomAssignment, assertNoRoomConflict, CLOSED_STATUSES, type RoomAssignmentDeps } from './assign-room'
 import { auditSafely } from '../../../shared/usecases/audit'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
@@ -14,6 +13,7 @@ import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
+import { availableOfType } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest } from '../../../shared/usecases/find-or-create-guest'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
@@ -179,13 +179,22 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     const minStay = row && Number(row.minStay) > 1 ? Math.floor(Number(row.minStay)) : 1
     if (nights < minStay) throw new ConflictError(`Estadía mínima para el ${dto.checkIn}: ${minStay} noche(s)`)
   }
-  await assertRoomAvailable(repo, dto.roomId, dto.checkIn, dto.checkOut)
-  if (blockRepo) {
-    const blocks = await blockRepo.findMany({ roomId: dto.roomId, hotelId: dto.hotelId })
-    for (const block of blocks as any[]) {
-      if (dto.checkIn <= block.endDate && dto.checkOut >= block.startDate) throw new ConflictError(`Habitación bloqueada del ${block.startDate} al ${block.endDate}: ${block.reason || 'Sin motivo'}`)
+  // REQ-HAC-02 (#257) — disponibilidad en DOS pasos, en este orden:
+  //  1. Por TIPO (fuente única: `shared/usecases/type-availability.ts`): `rooms − booked` contando
+  //     también las reservas confirmadas SIN unidad asignada. Antes sólo se miraba el solape de la
+  //     unidad elegida, así que con 2 dobles y 2 reservas de "doble" sin asignar el panel seguía
+  //     vendiendo una tercera. Se salta sin `roomRepo.findMany` (callers/mocks viejos, patrón
+  //     "sin cablear" del repo) o sin tipo resuelto.
+  //  2. Por UNIDAD (`assertNoRoomConflict`, assign-room.ts — el ÚNICO lugar del solape por
+  //     habitación): mientras el alta del panel siga exigiendo `roomId`, crear ES asignar, y la
+  //     unidad concreta no puede estar tomada ni bloqueada esas noches.
+  if (roomType && typeof roomRepo?.findMany === 'function') {
+    const avail = await availableOfType({ rooms: roomRepo, reservations: repo, blocks: blockRepo }, dto.hotelId, roomType, dto.checkIn, dto.checkOut)
+    if (avail.available < 1) {
+      throw new ConflictError('No hay habitaciones de este tipo disponibles para esas fechas', { reason: 'type_sold_out', roomType, available: 0 })
     }
   }
+  if (dto.roomId) await assertNoRoomConflict({ repo, blockRepo }, dto.hotelId, dto.roomId, dto.checkIn, dto.checkOut)
   // ─── Precio por temporada (server-side) ───────────────────────────────────────────────
   // Cuando el alta viene del panel sin edición manual (`priceFrom:'rates'`), el alojamiento lo
   // calcula el SERVIDOR con la misma cadena que el motor público — season_assignments →
