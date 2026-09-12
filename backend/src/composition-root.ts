@@ -27,6 +27,8 @@ import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
 import { createActivationSequenceCron } from './shared/usecases/activation-sequence-cron'
 import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
+import { createArrivalSetupCron, ARRIVAL_SETUP_TICK_MS } from './shared/usecases/arrival-setup-cron'
+import { createRoomInfoCron, ROOM_INFO_TICK_MS } from './shared/usecases/room-info-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -278,6 +280,11 @@ import type { ExternalReviewsFetchers } from './shared/usecases/external-reviews
 import { createAbandonRecoveryCron, ABANDON_RECOVERY_TICK_MS } from './shared/usecases/abandon-recovery-cron'
 import { runPendingPaymentExpiry, expirePendingReservation, type PendingPaymentExpiryDeps } from './shared/usecases/pending-payment-expiry'
 import { createPendingPaymentExpiryCron, PENDING_PAYMENT_EXPIRY_TICK_MS, PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS, isPendingPaymentExpiryDisabled } from './shared/usecases/pending-payment-expiry-cron'
+// #271 MR-06 — Recordatorio al hotel de reservas pagadas sin aprobar.
+import { runApprovalReminder, type ApprovalReminderDeps } from './shared/usecases/approval-reminder'
+import { createApprovalReminderCron, APPROVAL_REMINDER_TICK_MS, APPROVAL_REMINDER_FIRST_TICK_MS, isApprovalReminderDisabled } from './shared/usecases/approval-reminder-cron'
+import { notifyApprovalOverdue } from './shared/usecases/notify-reservation-received'
+import { reservationNotifyDepsFactory } from './connectors/reservation-notify-deps'
 import { FcmClient } from './services/fcm-client'
 
 // F3 3.5 — Fetchers de las 3 APIs externas. Compartido por módulo (sync endpoint) + cron.
@@ -427,7 +434,6 @@ import { habitacionesReservasConnector } from './connectors/habitaciones-reserva
 import { reservasCanalesConnector } from './connectors/reservas-canales'
 import { mantenimientoNotificacionesConnector } from './connectors/mantenimiento-notificaciones'
 import { mantenimientoHabitacionesConnector } from './connectors/mantenimiento-habitaciones'
-import { bookingChannexConnector } from './connectors/booking-channex'
 import { reservasBookingengineConnector } from './connectors/reservas-bookingengine'
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
@@ -536,6 +542,7 @@ import { payrollGastosConnector } from './connectors/payroll-gastos'
 import { reembolsosGastosConnector } from './connectors/reembolsos-gastos'
 import { reservasRescheduleChargeConnector } from './connectors/reservas-reschedule-charge'
 import { reservasPaymentsConnector } from './connectors/reservas-payments'
+import { reservasNotificacionesConnector } from './connectors/reservas-notificaciones'
 // #253 (REQ-FDR-02) — "Emitir factura" desde la reserva: folio abierto → folios; sin folio → facturas.
 import { reservasFacturasConnector } from './connectors/reservas-facturas'
 import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
@@ -595,7 +602,6 @@ system.addConnector('habitaciones-reservas', habitacionesReservasConnector)
 system.addConnector('reservas-canales', reservasCanalesConnector)
 system.addConnector('mantenimiento-notificaciones', mantenimientoNotificacionesConnector)
 system.addConnector('mantenimiento-habitaciones', mantenimientoHabitacionesConnector)
-system.addConnector('booking-channex', bookingChannexConnector)
 system.addConnector('reservas-bookingengine', reservasBookingengineConnector)
 system.addConnector('reservas-huespedes', reservasHuespedesConnector(logger))
 // Invitación a opinar post-checkout: reservas emite onReservationCheckedOut → opiniones crea
@@ -674,6 +680,8 @@ system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnec
 // REQ-RWP-06 (#249) — "Registrar pago" manual desde la ficha: el cobro se asienta en `payments`
 // (única fuente de verdad del dinero) y de ahí caen solos el pendiente y la caja.
 system.addConnector('reservas-payments', reservasPaymentsConnector)
+// #271 (MR-06) — aprobar una reserva web cierra la campanita "Nueva reserva web" del hotel (marca leídas las notificaciones de esa reserva).
+system.addConnector('reservas-notificaciones', reservasNotificacionesConnector)
 // #253 (REQ-FDR-02) — POST /api/reservas/:id/invoice: con folio abierto cierra y factura por `folios`
 // (mismo camino que POST /api/folios/:id/invoice); sin folio, `facturas.invoiceFromReservation`.
 system.addConnector('reservas-facturas', reservasFacturasConnector)
@@ -1025,6 +1033,34 @@ setInterval(() => {
 }, PREARRIVAL_TICK_MS)
 logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 
+// Información de la habitación asignada al huésped (#297): anticipación configurable por hotel
+// en `room_info_config` (horas antes, email/WhatsApp, plantilla). Reemplaza el 24 h fijo para
+// reservas de cualquier origen; prearrival-pass-cron queda para los pases wallet. Dedup por
+// huella habitación+código en `message_logs.response`, con reintento de fallos.
+const roomInfoCron = createRoomInfoCron({
+  orm, resolveModule: (name) => system.resolveModule(name), emailService, logger, publicUrl: process.env.PUBLIC_URL || '',
+})
+setTimeout(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info cron failed', { error: (e as Error).message }))
+}, ROOM_INFO_TICK_MS)
+logger.info('Room-info cron listo', { tickMs: ROOM_INFO_TICK_MS })
+
+// Tarea `arrival_setup` de housekeeping (#274): el connector reservas-housekeeping la mantiene
+// por socket, pero el motor público y la confirmación por Stripe escriben `Reservations` directo
+// sin pasar por el CRUD. El cron cubre ese hueco: toda llegada confirmed en ventana tiene su
+// tarea. syncArrivalSetup es idempotente, así que re-correrlo no duplica.
+const arrivalSetupCron = createArrivalSetupCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup cron failed', { error: (e as Error).message }))
+}, ARRIVAL_SETUP_TICK_MS)
+logger.info('Arrival-setup cron listo', { tickMs: ARRIVAL_SETUP_TICK_MS })
+
 // Recordatorio de las citas de conexión de canales (REQ-CAN-07). Tick HORARIO con gate de reloj:
 // el aviso sale una vez por día a las 8 del servidor, pero si el proceso reinició a las 8:05 el
 // próximo tick lo alcanza. Correrlo de más es inofensivo — la dedup vive en `reminderSentFor`.
@@ -1228,6 +1264,53 @@ if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function')
   }
 } else {
   logger.warn('Pending-payment-expiry: módulo reservas no disponible — cron desactivado')
+}
+
+// #276 (MR-11) — el asiento del pago de un GRUPO marca Groups confirmed/paidAmount y resuelve el
+// titular para payments.description. Independiente del cron de vencimiento (no depende de `reservas`).
+const bookingengineForSettle = system.resolveModule<{ setSettleDeps?(d: { groups?: any; guests?: any }): void }>('bookingengine')
+if (bookingengineForSettle && typeof bookingengineForSettle.setSettleDeps === 'function') {
+  bookingengineForSettle.setSettleDeps({
+    groups: new OrmRepository<any>(orm, 'Groups'),
+    guests: new OrmRepository<any>(orm, 'Guests'),
+  })
+}
+
+// #271 MR-06 — pushAvailabilityToChannex: reject.ts empuja la habitación liberada a las OTAs.
+// El puerto estaba declarado en reservas/usecases/orchestration-deps.ts pero nadie lo seteaba;
+// `pushAvailability` (arriba) tiene exactamente esa firma. setOrchestrationDeps hace merge.
+const reservasForPush = system.resolveModule<{ setOrchestrationDeps(d: any): void }>('reservas')
+if (reservasForPush && typeof reservasForPush.setOrchestrationDeps === 'function') {
+  reservasForPush.setOrchestrationDeps({ pushAvailabilityToChannex: pushAvailability })
+}
+
+// #271 MR-06 — Recordatorio de aprobación pendiente. Cada 15 min el cron busca reservas con
+// `approvalStatus: 'pending'` (el huésped ya pagó y espera respuesta del hotel) que llevan más
+// horas esperando que `booking_config.approvalDeadlineHours` (default 24) y avisa al hotel por las
+// mismas vías que una reserva nueva (campanita, correo al buzón, push — `notifyApprovalOverdue`).
+// UNA sola vez por reserva: `reservations.approvalReminderAt` es el dedup y se escribe sólo si el
+// aviso salió. No auto-aprueba ni auto-rechaza. Los deps del aviso se arman con MÓDULOS
+// (`reservationNotifyDepsFactory`, compartido con bookingengine-notificaciones) en cada tick.
+// Flag global BOOKING_APPROVAL_REMINDER_DISABLED=1 = kill-switch para incidentes (por tick).
+const approvalReminderLogger = logger.child('approval-reminder')
+const approvalNotifyDeps = reservationNotifyDepsFactory((n) => system.resolveModule(n), approvalReminderLogger)
+const approvalReminderDeps: ApprovalReminderDeps = {
+  reservations: new OrmRepository<any>(orm, 'Reservations'),
+  bookingConfig: new OrmRepository<any>(orm, 'BookingConfig'),
+  notify: async (ref, input) => notifyApprovalOverdue(await approvalNotifyDeps(ref.hotelId), ref, input),
+  logger: approvalReminderLogger,
+}
+if (isApprovalReminderDisabled()) {
+  logger.info('Approval-reminder cron desactivado (BOOKING_APPROVAL_REMINDER_DISABLED=1)')
+} else {
+  const approvalReminderCron = createApprovalReminderCron((now) => runApprovalReminder(approvalReminderDeps, now), logger)
+  setTimeout(() => {
+    approvalReminderCron().catch((e) => logger.warn('approval-reminder initial run failed', { error: (e as Error).message }))
+  }, APPROVAL_REMINDER_FIRST_TICK_MS)
+  setInterval(() => {
+    approvalReminderCron().catch((e) => logger.warn('approval-reminder cron failed', { error: (e as Error).message }))
+  }, APPROVAL_REMINDER_TICK_MS)
+  logger.info('Approval-reminder cron listo', { tickMs: APPROVAL_REMINDER_TICK_MS })
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────────

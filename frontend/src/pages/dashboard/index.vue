@@ -111,7 +111,20 @@
               </div>
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-bold text-navy">{{ item.guestName || 'Huésped' }}</div>
-                <div class="text-[11px] text-text-muted">Hab. {{ item.roomNumber || '—' }}</div>
+                <div class="flex items-center gap-1.5 text-[11px] text-text-muted">
+                  <span>Hab. {{ item.roomNumber || '—' }}</span>
+                  <!-- #274 — cuna / amenidades infantiles pedidas al reservar; el tooltip lista qué preparar. -->
+                  <span
+                    v-if="childSetupSummary(item)"
+                    :title="childSetupSummary(item)"
+                    :aria-label="childSetupSummary(item)"
+                    data-testid="crib-badge"
+                    class="inline-flex items-center gap-0.5 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-bold text-warning"
+                  >
+                    <Icon name="crib" :size="12" />
+                    {{ item.needsCrib ? 'Cuna' : 'Bebé' }}
+                  </span>
+                </div>
               </div>
               <span
                 v-if="depositBadge(item)"
@@ -299,6 +312,9 @@ import RevenueChart, { type DailyPoint } from '@/components/features/dashboard/R
 import FloorHeatMap from '@/components/features/dashboard/FloorHeatMap.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Icon from '@/components/ui/Icon.vue'
+// #274 — texto del tooltip del badge de cuna (compartido con el listado de reservas).
+import { childSetupSummary } from '@/services/Reservation.service'
 import { DashboardService } from '@/services/Dashboard.service'
 import { WeatherService, type WeatherInfo } from '@/services/Weather.service'
 import { currencySymbol } from '@/composables/useCurrency'

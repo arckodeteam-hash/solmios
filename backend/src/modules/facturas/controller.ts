@@ -8,6 +8,7 @@ import { validateSchema } from '../../shared/validators/validate-body'
 import type { FacturasService } from './service'
 import { CreateFacturasSchema, UpdateFacturasSchema, PayFacturasSchema, CreditNoteSchema, EmailInvoiceSchema } from './validators/schema'
 import { renderInvoiceHtml } from './usecases/invoice-template'
+import { hotelHeaderOf } from './usecases/hotel-header'
 import { htmlToPdf, checkPdfRateLimit } from './usecases/pdf'
 
 export class FacturasController {
@@ -71,13 +72,9 @@ export class FacturasController {
   async printInvoice(req: HttpRequest) {
     this.logger.info('GET /facturas/:id/print', { id: req.params.id })
     const invoice = await this.service.getById(req.params.id, req.user as any)
-    let hotelName = 'Hotel'
-    if (this.hotelRepo && invoice.hotelId) {
-      const hotel = await this.hotelRepo.findById(invoice.hotelId)
-      if (hotel?.name) hotelName = hotel.name
-    }
+    const header = await hotelHeaderOf(this.hotelRepo, invoice.hotelId)
     const policyText = invoice.hotelId ? await this.service.getInvoicePolicyText(invoice.hotelId) : undefined
-    const html = renderInvoiceHtml({ invoice, hotelName, policyText })
+    const html = renderInvoiceHtml({ invoice, ...header, policyText })
     return { status: 200, body: html, headers: { 'content-type': 'text/html; charset=utf-8' } }
   }
 
@@ -90,13 +87,9 @@ export class FacturasController {
       return { status: 429, body: { error: 'Demasiadas generaciones de PDF. Intente nuevamente en un minuto.' } }
     }
     const invoice = await this.service.getById(req.params.id, req.user as any)
-    let hotelName = 'Hotel'
-    if (this.hotelRepo && invoice.hotelId) {
-      const hotel = await this.hotelRepo.findById(invoice.hotelId)
-      if (hotel?.name) hotelName = hotel.name
-    }
+    const header = await hotelHeaderOf(this.hotelRepo, invoice.hotelId)
     const policyText = invoice.hotelId ? await this.service.getInvoicePolicyText(invoice.hotelId) : undefined
-    const html = renderInvoiceHtml({ invoice, hotelName, policyText })
+    const html = renderInvoiceHtml({ invoice, ...header, policyText })
     const pdfBuffer = await htmlToPdf(html)
     return {
       status: 200,

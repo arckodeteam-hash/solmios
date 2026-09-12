@@ -35,12 +35,15 @@ function hotelFor(user: UpsellCurrentUser): string {
   return h
 }
 
+/** Enum cerrado de `UpsellKind` (única lista; `per_night` y `per_person_per_night` son de MR-10 #275). */
+const UPSELL_KINDS: readonly UpsellKind[] = ['per_room', 'per_person', 'per_stay', 'per_night', 'per_person_per_night']
+
 /** Valida que `t` esté en el enum cerrado de UpsellKind. */
 function assertKind(t: unknown): UpsellKind {
-  if (t !== 'per_room' && t !== 'per_person' && t !== 'per_stay') {
-    throw new ValidationError("kind debe ser 'per_room', 'per_person' o 'per_stay'")
+  if (!UPSELL_KINDS.includes(t as UpsellKind)) {
+    throw new ValidationError(`kind debe ser uno de: ${UPSELL_KINDS.map((k) => `'${k}'`).join(', ')}`)
   }
-  return t
+  return t as UpsellKind
 }
 
 /** Valida price >= 0 (permitimos 0 para "gratis como beneficio"). */

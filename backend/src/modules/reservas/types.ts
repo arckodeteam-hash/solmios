@@ -70,7 +70,8 @@ export interface ReservasDTO {
   policyApplied?: any
   // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
   // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
-  approvalStatus?: 'pending' | 'approved'
+  // 'rejected' (#271 MR-06): el hotel la rechazó — la reserva queda además `status: 'cancelled'`.
+  approvalStatus?: 'pending' | 'approved' | 'rejected'
   // REQ-RWP-04 (#247) — etiqueta de cobro calculada (payments + extras, ver crud.ts). Sólo la
   // devuelven el listado y mark-paid; NO es columna de la tabla.
   paymentState?: 'pending' | 'partial' | 'paid'
@@ -81,6 +82,13 @@ export interface ReservasDTO {
 
 export interface CreateReservasDTO {
   guestId?: string
+  // MR-08 (#273): el panel puede mandar el email del huésped en lugar de `guestId`; el usecase lo
+  // resuelve a una ficha existente (email/teléfono normalizados) o nueva con el helper compartido
+  // `shared/usecases/find-or-create-guest.ts`. NO se persisten en Reservations. Con `guestId`
+  // presente se ignoran.
+  guestEmail?: string
+  guestName?: string
+  guestPhone?: string
   roomId: string
   // REQ-HAC-01 (#258) — tipo vendido; si falta, el usecase lo rellena desde `rooms.type`.
   roomType?: string

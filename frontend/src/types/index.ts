@@ -1,3 +1,5 @@
+import type { UpsellBreakdownLine } from './booking'
+
 // === HOTEL ===
 export interface Hotel {
   id: string
@@ -157,12 +159,30 @@ export interface Reservation {
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
-   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada. */
-  approvalStatus?: 'pending' | 'approved' | null
+   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
+   *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   /** REQ-HAC-03/06 (#258/#261) — quién y cuándo asignó la unidad (`roomId`). null/ausente =
    *  sin asignar. `roomId` sigue siendo '' cuando el backend manda null (ver `mapReservation`). */
   roomAssignedAt?: string | null
   roomAssignedBy?: string | null
+  /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
+   *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | null
+}
+
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congela el motor público al
+ *  reservar (`bookingengine/usecases/public-booking.ts`, REQ-01 #233): nombre y precio del
+ *  catálogo `child_amenities` en ese momento. Según el driver puede llegar como string JSON:
+ *  `mapReservation()` lo normaliza a array. */
+export interface ChildAmenitySnapshot {
+  id?: string
+  name: string
+  price?: number
+  quantity: number
+  total?: number
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -211,8 +231,14 @@ export interface ReservationApiRecord {
   roomAssignedAt?: string | null
   roomAssignedBy?: string | null
   cancelledAt?: string
+  /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
+  createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
+  needsCrib?: boolean | null
+  cribCount?: number | null
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
@@ -533,6 +559,9 @@ export interface ReservationPriceBreakdown {
   mealPlanTotal?: number
   taxes?: number
   taxBreakdown?: { name: string; rate: number; amount: number }[]
+  /** MR-10 (#275) — extras cotizados línea por línea con su multiplicador por `kind`.
+   *  Sólo en reservas creadas después de la feature. */
+  upsells?: UpsellBreakdownLine[]
   total?: number
 }
 
@@ -713,9 +742,14 @@ export interface ReservationDetail {
    *  a mano en el panel (que no tienen este composer). */
   needsCrib?: boolean
   cribCount?: number
+  /** #274 — snapshot de amenidades infantiles elegidas al reservar (ver `ChildAmenitySnapshot`). */
+  childAmenities?: ChildAmenitySnapshot[] | null
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
+  /** #271 MR-06 — mismo eje que `Reservation.approvalStatus`: el detalle lo trae del registro
+   *  (`...safeReservation` en `reservas/usecases/detail.ts`). 'pending' habilita Aprobar/Rechazar. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
@@ -833,6 +867,11 @@ export interface CheckinListItem {
    *  total cobrable (alta/baja de extras y `otherCharges`) — ver
    *  `shared/usecases/sync-reservation-pending.ts`. */
   pendingAmount?: number
+  /** #274 — llegan por el mismo spread `...r`: cuna y amenidades infantiles pedidas al reservar
+   *  online. El dashboard muestra el badge de cuna con tooltip (`childSetupSummary`). */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 export interface CheckinListData {

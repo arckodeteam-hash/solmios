@@ -3,7 +3,7 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -126,6 +126,22 @@ export class ReservasController {
       const item = await this.service.approve(req.params.id, req.user as any)
       return { status: 200, body: item }
     } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
+  // ── REJECT (#271 MR-06): reserva pública pendiente de revisión → el hotel la rechaza:
+  //    reembolso Stripe 100%, cancelación, email al huésped. El motivo es obligatorio (≥10). ──
+  async reject(req: HttpRequest) {
+    try {
+      const dto = validateSchema(RejectReservationSchema, req.body ?? {}) as { reason: string }
+      const item = await this.service.reject(req.params.id, dto, req.user as any)
+      return { status: 200, body: item }
+    } catch (e: any) {
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message, ...(e.fields ? { fields: e.fields } : {}) } }
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
       if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
       if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }

@@ -1154,6 +1154,12 @@ async function createTablesBlock3(): Promise<void> {
   // de `payment-requests` en cualquier base ya desplegada).
   await addColumnIfMissing("payments", "reservationId", "TEXT")
   await exec(`CREATE INDEX IF NOT EXISTS idx_payments_reservation ON payments(hotelId, reservationId)`)
+
+  // MR-08 (#273) — un huésped = una ficha: los POST públicos y el panel buscan en `guests` por
+  // (hotelId, email) antes de crear. NO es UNIQUE a propósito: las bases existentes tienen fichas
+  // duplicadas de antes del dedupe; `scripts/merge-duplicate-guests.ts --apply` las fusiona
+  // (paso post-deploy opcional, ver CLAUDE.md).
+  await exec(`CREATE INDEX IF NOT EXISTS idx_guests_hotel_email ON guests(hotelId, email)`)
   const backfilledReservations = await backfillPaymentsReservationId(db)
   if (backfilledReservations > 0) {
     console.log(`payments.reservationId: ${backfilledReservations} fila(s) reconstruida(s) desde metadata`)
@@ -1205,6 +1211,8 @@ async function createTablesBlock3(): Promise<void> {
   // #266 — Vencimiento de pago (ISO; NULL = no vence) y clave de idempotencia del widget.
   await addColumnIfMissing("reservations", "paymentDeadlineAt", "TEXT")
   await addColumnIfMissing("reservations", "idempotencyKey", "TEXT")
+  // #271 MR-06 — Último recordatorio de aprobación pendiente enviado al hotel (dedup del cron).
+  await addColumnIfMissing("reservations", "approvalReminderAt", "TEXT")
   // #266 — La misma idempotencyKey no puede crear dos reservas en el mismo hotel. El ORM no crea
   // UNIQUE compuesto: índice único idempotente, identificadores SIN comillas (portable SQLite + PG,
   // mismo criterio que idx_configuration_hotel_key). Los NULL (reservas del panel / previas a #266)
@@ -1220,6 +1228,8 @@ async function createTablesBlock3(): Promise<void> {
   await addColumnIfMissing('booking_config', 'pendingPaymentTtlHours', 'INTEGER')
   // #266 — Minutos para completar el pago (15–1440; NULL → 60 en el usecase).
   await addColumnIfMissing('booking_config', 'pendingTtlMinutes', 'INTEGER')
+  // #271 MR-06 — Horas que el hotel se da para aprobar/rechazar una reserva pendiente (NULL → 24).
+  await addColumnIfMissing('booking_config', 'approvalDeadlineHours', 'INTEGER')
 
   // CREATE: reservation_addons (F3 match-misterplan — otros servicios y descuentos por reserva).
   await exec(`CREATE TABLE IF NOT EXISTS reservation_addons (

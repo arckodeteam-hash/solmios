@@ -95,6 +95,8 @@ const CHILD_CATALOG = [
 ]
 const UPSELLS = [
   { id: 'u-transfer', hotelId: HOTEL_ID, name: 'Transfer', price: 30, kind: 'per_stay', active: true },
+  // MR-10 (#275) — `per_person` para probar cantidad > 1 (per_stay ya no la admite).
+  { id: 'u-late', hotelId: HOTEL_ID, name: 'Late checkout', price: 30, kind: 'per_person', active: true },
   { id: 'u-off', hotelId: HOTEL_ID, name: 'Inactivo', price: 99, kind: 'per_stay', active: false },
 ]
 
@@ -149,10 +151,13 @@ describe('createPublicBookingDirect — extras pagados online como ReservationAd
   })
 
   it('(a2) upsell con quantity 2 → una fila con quantity 2 y amount unitario', async () => {
+    // MR-10 (#275): `per_stay` admite solo qty 1 (qty 2 → 400 upsell_quantity_out_of_range), así
+    // que la cantidad 2 se prueba con un `per_person` (2 adultos → tope 2). Lo que valida este
+    // caso no cambia: una fila con quantity 2 y el unitario del catálogo.
     const { orm, tables } = singleRoomDb()
     const res = await createPublicBookingDirect(
       orm,
-      { ...BASE_BODY, roomType: 'family', adults: 2, upsells: [{ id: 'u-transfer', quantity: 2 }] },
+      { ...BASE_BODY, roomType: 'family', adults: 2, upsells: [{ id: 'u-late', quantity: 2 }] },
       undefined, undefined, undefined, undefined, undefined, deps(),
     )
     expect(res.status).toBe(201)

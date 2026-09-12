@@ -11,9 +11,11 @@
 
 import type { ConnectorContext } from 'arckode-framework'
 import type { ManualPaymentInput } from '../modules/reservas/usecases/mark-paid'
+import type { ApprovalRefundPort } from '../modules/reservas/usecases/reject'
 
 interface PaymentsModule {
   createPayment: (dto: Record<string, unknown>) => Promise<{ id: string; status: string }>
+  refundPayment: (paymentId: string, amount?: number, user?: { id: string; role: string; hotelId?: string }) => Promise<{ id: string; amount: number }>
 }
 
 export function reservasPaymentsConnector(ctx: ConnectorContext): void {
@@ -43,5 +45,14 @@ export function reservasPaymentsConnector(ctx: ConnectorContext): void {
         return { id: p.id, status: p.status }
       },
     },
+    // #271 MR-06: rechazar una reserva pendiente de aprobación devuelve el 100% de lo cobrado
+    // por Stripe. `payments` es quien sabe reembolsar (refund-flows: asiento + audit +
+    // `onRefundProcessed`, que resincroniza el saldo de la reserva); reservas sólo dice cuánto.
+    approvalRefund: {
+      refundPayment: async (paymentId, amount, user) => {
+        const r = await payments.refundPayment(paymentId, amount, user)
+        return { id: r.id, amount: r.amount }
+      },
+    } satisfies ApprovalRefundPort,
   })
 }

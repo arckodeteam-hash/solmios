@@ -231,10 +231,25 @@ export class StripeGateway implements RefundableGateway {
 
   async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
     const r = await this.stripe.refunds.create({
-      payment_intent: providerRef,
+      payment_intent: await this.paymentIntentOf(providerRef),
       ...(amountMinor ? { amount: amountMinor } : {}),
     })
     return { refundId: r.id, status: r.status || 'unknown' }
+  }
+
+  /**
+   * #271 MR-06: `refunds.create` sólo acepta un PaymentIntent, pero lo que se guarda como
+   * referencia de un cobro por Checkout es el id de la SESIÓN (`cs_...`): settle-webhook.ts
+   * persiste `outcome.providerRef` y post-booking-payment.ts guarda `stripeSessionId`. Acá se
+   * resuelve la sesión → su `payment_intent`; un `pi_` (cobro directo) pasa tal cual.
+   */
+  private async paymentIntentOf(providerRef: string): Promise<string> {
+    if (!providerRef.startsWith('cs_')) return providerRef
+    const s = await this.stripe.checkout.sessions.retrieve(providerRef)
+    const pi = s.payment_intent
+    const id = typeof pi === 'string' ? pi : pi?.id
+    if (!id) throw new Error(`Stripe: la sesión de checkout ${providerRef} no tiene cargo asociado (sin payment_intent)`)
+    return id
   }
 
   async voidCharge(providerRef: string): Promise<void> {

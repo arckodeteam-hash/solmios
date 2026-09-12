@@ -16,6 +16,7 @@
 // vivo cuando puede.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { resolvePhotoByType } from './public-rates'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 export interface PublicRoomTypesDeps {
   hotels: RepositoryAdapter<any>
@@ -48,14 +49,11 @@ export async function getPublicRoomTypes(
   if (!slug) return { status: 404, body: { error: 'Hotel not found' } }
 
   // Anti-enumeración: mismo 404 para "no existe" y "no activo" que `/rates`/`/calendar`.
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
-  const bookingConfig = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
-  if (bookingConfig && bookingConfig.enabled === false) {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const rooms = await deps.rooms.findMany({ hotelId: hotel.id })
   const photoByType = await resolvePhotoByType(deps, hotel.id)

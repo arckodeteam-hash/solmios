@@ -21,14 +21,12 @@ import { VideoTranscoder } from './usecases/transcode'
 import type { S3StorageAdapter } from '../../infrastructure/storage/s3-adapter'
 import { assertStaffExists } from './usecases/staff'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+import { syncArrivalSetup, type ArrivalReservationRef } from './usecases/arrival-setup'
 
 const CACHE_TTL = 300
 
 /** Sin `configRepo` no hay settings del hotel: se responde el default de fábrica. */
-const FALLBACK_SETTINGS: HousekeepingSettings = {
-  requireSupervisorPhoto: false, completionEvidence: 'photos',
-  maxVideoSeconds: DEFAULT_MAX_VIDEO_SECONDS, evidenceRetentionDays: DEFAULT_EVIDENCE_RETENTION_DAYS,
-}
+const FALLBACK_SETTINGS: HousekeepingSettings = { requireSupervisorPhoto: false, completionEvidence: 'photos', maxVideoSeconds: DEFAULT_MAX_VIDEO_SECONDS, evidenceRetentionDays: DEFAULT_EVIDENCE_RETENTION_DAYS }
 
 export class HousekeepingService {
   private sockets: HousekeepingSockets = {}
@@ -187,6 +185,8 @@ export class HousekeepingService {
   async removeVideo(id: string, u: HousekeepingUser) { return this.afterVideo(await this.video().removeVideo(id, u)) }
   async getVideoViewUrl(id: string, u: HousekeepingUser) { return this.video().getViewUrl(id, u) }
   async getRoomLockCode(id: string, u: HousekeepingUser) { return getRoomLockCode(this.repo, this.auth, this.lockDeviceRepo, this.lockCodeRepo, id, u) }
+  /** Preparación de llegada (#274): crea/actualiza/borra la tarea `arrival_setup` de una reserva. Lo llama el connector y el cron. */
+  syncArrivalSetup(r: ArrivalReservationRef) { return syncArrivalSetup({ repo: this.repo as any, invalidate: (h) => this.invalidateCache(h) }, r) }
 
   private async invalidateCache(hotelId?: string) {
     // `delete` de una clave exacta ya no alcanza: la clave del listado incluye

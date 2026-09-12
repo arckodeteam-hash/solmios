@@ -13,7 +13,9 @@ import type { PublicPlan, MySubscription } from '@/services/Signup.service'
 let publicPlansImpl: () => Promise<PublicPlan[]>
 let mySubscriptionImpl: () => Promise<MySubscription>
 let hotelPlanColumn: string | undefined
-let amenitiesCatalogImpl: () => Promise<unknown>
+// #291: el catálogo de servicios ya no se carga acá; la única carga del `try` de onMounted que
+// propaga su error (las demás lo tragan) es `SettingsService.get()`, así que COR-4 falla con ésa.
+let settingsGetImpl: () => Promise<unknown>
 
 vi.mock('@/services/Signup.service', () => ({
   SignupService: {
@@ -23,17 +25,11 @@ vi.mock('@/services/Signup.service', () => ({
 }))
 vi.mock('@/services/Settings.service', () => ({
   SettingsService: {
-    get: async () => ({ hotel: { id: 'h1', name: 'Hotel Test', country: 'República Dominicana', plan: hotelPlanColumn } }),
+    get: () => settingsGetImpl(),
     patchHotel: async () => ({}),
   },
 }))
-vi.mock('@/services/Hotel.service', () => ({
-  HotelService: {
-    amenitiesCatalog: () => amenitiesCatalogImpl(),
-    amenitiesHotel: async () => ({ data: [] }),
-    saveAmenitiesHotel: async () => ({}),
-  },
-}))
+vi.mock('@/services/Hotel.service', () => ({ HotelService: {} }))
 vi.mock('@/services/Room.service', () => ({
   RoomService: { list: async () => ({ rooms: [], total: 0 }) },
 }))
@@ -72,7 +68,7 @@ const PLANS = [
 
 beforeEach(() => {
   hotelPlanColumn = undefined
-  amenitiesCatalogImpl = async () => ({})
+  settingsGetImpl = async () => ({ hotel: { id: 'h1', name: 'Hotel Test', country: 'República Dominicana', plan: hotelPlanColumn } })
   publicPlansImpl = async () => PLANS
   mySubscriptionImpl = async () => sub()
 })
@@ -131,18 +127,18 @@ describe('GH-31 — la tarjeta "Plan" muestra el plan contratado', () => {
     expect(w.find('[data-testid="settings-plan-price"]').text()).toBe('USD 99/mes')
   })
 
-  // COR-4: `loadPlan()` era el 8º `await` de un `try` con siete cargas antes. Si cualquiera de esas
-  // siete fallaba, nunca corría: `planLoading` arranca en `true` y sólo se apaga en el `finally` de
+  // COR-4: `loadPlan()` era el último `await` de un `try` con varias cargas antes. Si cualquiera de
+  // esas fallaba, nunca corría: `planLoading` arranca en `true` y sólo se apaga en el `finally` de
   // `loadPlan`, así que la tarjeta quedaba en skeleton para siempre y el fallback era inalcanzable.
   it('si falla una carga anterior, la tarjeta resuelve igual — nada de skeleton eterno', async () => {
-    amenitiesCatalogImpl = async () => { throw new Error('500 amenities') }
+    settingsGetImpl = async () => { throw new Error('500 settings') }
     const w = await mountSettings()
     expect(w.find('[data-testid="settings-plan-name"]').text()).toBe('Essential')
     expect(w.find('[data-testid="settings-plan-price"]').text()).toBe('USD 49/mes')
   })
 
   it('si falla una carga anterior Y el plan no resuelve, muestra el fallback (no el skeleton)', async () => {
-    amenitiesCatalogImpl = async () => { throw new Error('500 amenities') }
+    settingsGetImpl = async () => { throw new Error('500 settings') }
     mySubscriptionImpl = async () => { throw new Error('401') }
     publicPlansImpl = async () => { throw new Error('network') }
     const w = await mountSettings()
