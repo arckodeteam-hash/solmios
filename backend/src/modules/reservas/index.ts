@@ -133,6 +133,8 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // ── Approve (Tarea 3.4, corrección 2026-08-25): reserva pública pendiente de
       //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──
       router.post('/api/reservas/:id/approve', guard('reservations', 'edit'), (req) => controller.approve(req))
+      // ── Reject (#271 MR-06): la contracara — reembolso Stripe 100%, cancela y avisa al huésped ──
+      router.post('/api/reservas/:id/reject', guard('reservations', 'edit'), (req) => controller.reject(req))
 
       // ── Mark paid (REQ-RWP-06, #249): permiso `billing` (con /invoice, los dos únicos de reservas) — registra dinero, mismo permiso que POST /api/payments ──
       router.post('/api/reservas/:id/mark-paid', guard('billing', 'create'), (req) => controller.markPaid(req))

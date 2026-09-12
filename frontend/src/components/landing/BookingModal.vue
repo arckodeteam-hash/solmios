@@ -521,22 +521,30 @@
                     <span class="mt-1 block text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ UPSELL_KIND_LABEL[up.kind] }}</span>
                   </span>
                 </label>
-                <span class="shrink-0 text-right font-black tabular-nums text-navy">{{ money(up.price) }}</span>
+                <!-- MR-10 (#275): precio calculado PARA ESTA ESTADÍA (per_night → × noches,
+                     ppn → × personas × noches); en esos kinds el unitario de catálogo va chico. -->
+                <span class="shrink-0 text-right">
+                  <span class="block font-black tabular-nums text-navy" data-testid="upsell-stay-price">{{ money(store.upsellStayPrice(up)) }}</span>
+                  <span v-if="up.kind === 'per_night' || up.kind === 'per_person_per_night'" class="block text-[11px] text-text-muted" data-testid="upsell-unit-price">{{ money(up.price) }} · {{ UPSELL_KIND_LABEL[up.kind] }}</span>
+                </span>
               </div>
 
-              <div v-if="isSelectedUpsell(up.id) && up.kind !== 'per_stay'" class="mt-3 flex items-center gap-2">
+              <!-- Cantidad sólo en per_room/per_person; per_stay/per_night/ppn van fijos en 1 (MR-10). -->
+              <div v-if="isSelectedUpsell(up.id) && upsellHasQty(up.kind)" class="mt-3 flex items-center gap-2">
                 <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Cantidad</span>
                 <button
                   type="button"
                   :aria-label="`Quitar una unidad de ${up.name}`"
-                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface"
+                  :disabled="upsellQty(up.id) <= 1"
+                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-30"
                   @click="setUpsellQty(up.id, upsellQty(up.id) - 1)"
                 >−</button>
                 <span class="w-6 text-center font-black tabular-nums text-navy">{{ upsellQty(up.id) }}</span>
                 <button
                   type="button"
                   :aria-label="`Agregar una unidad de ${up.name}`"
-                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface"
+                  :disabled="upsellQty(up.id) >= store.upsellMaxQty(up.kind)"
+                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-30"
                   @click="setUpsellQty(up.id, upsellQty(up.id) + 1)"
                 >+</button>
               </div>
@@ -774,7 +782,7 @@
               <span class="font-bold tabular-nums text-navy">{{ money(store.roomsSubtotal) }}</span>
             </div>
             <div v-for="line in store.upsellLines" :key="line.id" class="flex justify-between" data-testid="upsell-line">
-              <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
+              <span class="text-text-muted">{{ upsellLineLabel(line) }} <span class="text-[11px]">· sin impuestos</span></span>
               <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
             </div>
             <!-- REQ-01 (#233) — amenidades infantiles, una fila por habitación × amenidad. -->
@@ -1233,6 +1241,23 @@ const UPSELL_KIND_LABEL: Record<UpsellKind, string> = {
   per_room: 'Por habitación',
   per_person: 'Por persona',
   per_stay: 'Por estadía',
+  per_night: 'Por noche',
+  per_person_per_night: 'Por persona y noche',
+}
+
+/** Etiqueta de una línea de extra del resumen con su multiplicador explícito (MR-10 #275):
+ *  "Desayuno × 2 pers. × 3 noches" (ppn), "Parking × 3 noches" (per_night), "Late checkout × 2". */
+function upsellLineLabel(line: { name: string; quantity: number; nights?: number; persons?: number }): string {
+  const parts = [line.name]
+  if (line.quantity > 1) parts.push(`× ${line.quantity}`)
+  if (line.persons !== undefined) parts.push(`× ${line.persons} pers.`)
+  if ((line.nights ?? 1) > 1) parts.push(`× ${line.nights} ${line.nights === 1 ? 'noche' : 'noches'}`)
+  return parts.join(' ')
+}
+
+/** MR-10 (#275): sólo per_room/per_person tienen cantidad elegible; el resto va fijo en 1. */
+function upsellHasQty(kind: UpsellKind): boolean {
+  return kind === 'per_room' || kind === 'per_person'
 }
 
 function isSelectedUpsell(id: string): boolean {
@@ -1250,23 +1275,22 @@ function toggleUpsell(id: string, checked: boolean): void {
     return
   }
   const up = store.upsells.find((u) => u.id === id)
-  // Cantidad por defecto según cómo se cobra: por habitación → habitaciones del carrito; por
-  // persona → ocupación FÍSICA de la reserva (los niños también desayunan, incluso los que no
-  // consumen plaza). `cartTotalGuests` ya incluye a los niños con plaza (es ocupación chargeable);
-  // sumar `cartTotalChildren` (TODOS) los contaría dos veces — solo se suma
-  // `cartTotalFreeChildren` (Requerimiento 7, fix 2026-09-03: bug encontrado en la propia
-  // implementación del Requerimiento 3, que sí duplicaba a los niños con plaza).
-  const qty = up?.kind === 'per_room'
-    ? store.cartTotalRooms
-    : up?.kind === 'per_person'
-      ? store.cartTotalGuests + store.cartTotalFreeChildren
-      : 1
+  // Cantidad por defecto según cómo se cobra = el tope del kind (`store.upsellMaxQty`, MR-10
+  // #275, espejo del backend): por habitación → habitaciones del carrito; por persona →
+  // ocupación FÍSICA de la reserva sin bebés (los niños también desayunan, incluso los que no
+  // consumen plaza — `cartTotalGuests` + `cartTotalFreeChildren` − bebés, sin duplicar al niño
+  // con plaza, Requerimiento 7 fix 2026-09-03); por estadía / por noche / por persona y noche → 1.
+  const qty = up ? store.upsellMaxQty(up.kind) : 1
   store.setSelectedUpsells([...rest, { id, quantity: Math.max(1, qty) }])
 }
 
+/** Acota la cantidad a [1, tope del kind] — el mismo tope con el que el backend responde 400
+ *  `upsell_quantity_out_of_range` (nada de un 20 arbitrario). */
 function setUpsellQty(id: string, qty: number): void {
   const rest = store.selectedUpsells.filter((u) => u.id !== id)
-  store.setSelectedUpsells([...rest, { id, quantity: Math.max(1, Math.min(20, qty)) }])
+  const up = store.upsells.find((u) => u.id === id)
+  const max = up ? store.upsellMaxQty(up.kind) : Infinity
+  store.setSelectedUpsells([...rest, { id, quantity: Math.min(Math.max(1, qty), max) }])
 }
 
 // ─── Paso datos ───────────────────────────────────────────────────────────────

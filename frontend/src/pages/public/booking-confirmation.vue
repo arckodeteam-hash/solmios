@@ -163,6 +163,10 @@
         -->
         <div v-if="isPendingApproval" class="rounded-2xl border-2 border-gold/40 bg-gold/5 p-4">
           <p class="text-sm font-bold text-navy">{{ t('confirm.pendingApprovalNotice') }}</p>
+          <!-- #271 (MR-06): plazo que el hotel se comprometió a cumplir (`booking_config.approvalDeadlineHours`). -->
+          <p class="mt-1.5 text-sm text-text-secondary" data-testid="confirm-approval-deadline">
+            {{ t('confirm.approvalDeadline', { hours: approvalDeadlineHours }) }}
+          </p>
         </div>
 
         <!-- 2. Resumen de la estadía: fechas legibles en el idioma de la página, noches, huésped. -->
@@ -340,6 +344,38 @@
         </button>
       </section>
 
+      <!--
+        REJECTED (#271 MR-06) — el hotel revisó la reserva pendiente de aprobación y la rechazó.
+        No es un error del huésped ni un pago fallido: se le dice el motivo que el hotel escribió
+        y cuánto se le devolvió. Sin "Cancelar reserva": ya está cancelada.
+      -->
+      <section v-else-if="pollingState === 'rejected'" class="text-center py-6" data-testid="confirm-rejected">
+        <div class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-slate-100 text-text-secondary [&_svg]:h-9 [&_svg]:w-9" v-html="ICON_X_CIRCLE" />
+        <h2 class="mt-4 text-2xl font-black text-navy">{{ t('confirm.rejectedTitle') }}</h2>
+        <p v-if="rejectedRefundAmount > 0" class="text-sm text-text-secondary mt-2" data-testid="confirm-rejected-refund">
+          {{ t('confirm.rejectedRefund', { amount: fmtMoney(rejectedRefundAmount) }) }}
+        </p>
+        <p v-else class="text-sm text-text-secondary mt-2" data-testid="confirm-rejected-no-refund">
+          {{ t('confirm.rejectedNoRefund') }}
+        </p>
+        <div
+          v-if="rejectionReason"
+          class="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm"
+          data-testid="confirm-rejected-reason"
+        >
+          <p class="text-[11px] font-bold uppercase tracking-wide text-text-secondary">{{ t('confirm.rejectedReason') }}</p>
+          <p class="mt-1 text-navy whitespace-pre-line break-words">{{ rejectionReason }}</p>
+        </div>
+        <router-link
+          v-if="slug"
+          :to="`/book/${slug}`"
+          class="mt-6 inline-flex min-h-12 items-center justify-center rounded-xl bg-cyan px-6 py-3 text-sm font-black text-white shadow-card transition hover:bg-cyan-light focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50"
+          data-testid="confirm-rejected-cta"
+        >
+          {{ t('confirm.expiredCta') }}
+        </router-link>
+      </section>
+
       <!-- EXPIRED (#266) — venció el plazo de pago: cancelada por el sistema, no por un pago fallido. -->
       <section v-else-if="pollingState === 'expired'" class="text-center py-6" data-testid="booking-expired">
         <div class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-gold/10 text-gold [&_svg]:h-9 [&_svg]:w-9" v-html="ICON_CLOCK" />
@@ -432,8 +468,10 @@ const i18n = useBookingI18nStore()
 const { t } = i18n
 
 /** 'expired' (#266): cancelada por vencimiento del plazo de pago (`cancellationReason ===
- *  'payment_timeout'`) — no es un error del huésped, se le ofrece volver a reservar. */
-type PollingState = 'loading' | 'success' | 'pending' | 'expired' | 'error'
+ *  'payment_timeout'`) — no es un error del huésped, se le ofrece volver a reservar.
+ *  'rejected' (#271 MR-06): el hotel rechazó la reserva pendiente de aprobación
+ *  (`approvalStatus === 'rejected'`, `status === 'cancelled'`) — se muestra motivo y reembolso. */
+type PollingState = 'loading' | 'success' | 'pending' | 'expired' | 'rejected' | 'error'
 const pollingState = ref<PollingState>('loading')
 const reservation = ref<PublicReservationResponse | null>(null)
 const errorMessage = ref(t('confirm.errorDefault'))
@@ -555,6 +593,17 @@ const canCancel = computed(() => {
 /** Tarea 3.4 (corrección 2026-08-25) — el pago se completó (por eso llegamos a SUCCESS) pero
  *  el hotel todavía no aprobó la reserva ("confirmación instantánea" apagada). */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
+/** #271 (MR-06) — plazo (horas) en que el hotel se comprometió a revisar. El backend manda
+ *  `booking_config.approvalDeadlineHours`; 24 si no vino (reserva vieja / config sin el campo). */
+const approvalDeadlineHours = computed(() => {
+  const n = Number(reservation.value?.reservation?.approvalDeadlineHours)
+  return Number.isFinite(n) && n > 0 ? n : 24
+})
+/** #271 (MR-06) — el hotel rechazó la reserva. El backend solo manda `rejectionReason` y
+ *  `refundAmount` en este estado (fuera de él son `null`). */
+const isRejected = computed(() => reservation.value?.reservation?.approvalStatus === 'rejected')
+const rejectionReason = computed(() => String(reservation.value?.reservation?.rejectionReason ?? '').trim())
+const rejectedRefundAmount = computed(() => Number(reservation.value?.reservation?.refundAmount ?? 0))
 /** #196: `payment=` lo agrega el backend al redirigir desde el retorno de Azul/CardNet. */
 const returnedUnverified = computed(() => {
   const p = typeof route.query.payment === 'string' ? route.query.payment : ''
@@ -655,6 +704,14 @@ async function tick(): Promise<void> {
     reservation.value = res
     const ps = String(res.paymentStatus || '').toLowerCase()
     const rs = String(res.reservation.status || '').toLowerCase()
+    // #271 (MR-06): el hotel rechazó la reserva pendiente de aprobación. Va ANTES de la rama de
+    // éxito y de la de cancelada: la reserva viene `cancelled` y no es ni "pago rechazado" ni
+    // "venció" — se le muestra el motivo del hotel y el importe devuelto.
+    if (isRejected.value) {
+      pollingState.value = 'rejected'
+      clearStoredReservation(slug.value)
+      return
+    }
     if (ps === 'paid' || rs === 'confirmed' || rs === 'checked_in' || rs === 'checked_out') {
       pollingState.value = 'success'
       clearStoredReservation(slug.value) // limpieza: reserva confirmada

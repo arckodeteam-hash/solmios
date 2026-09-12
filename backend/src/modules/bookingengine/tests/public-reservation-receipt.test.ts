@@ -21,7 +21,8 @@ const BREAKDOWN = {
   subtotal: 330, // 250 alojamiento + 50 upsell + 30 amenidad
   promoDiscount: 33,
   upsellsTotal: 50,
-  upsellLines: [{ id: 'u1', name: 'Desayuno buffet', price: 25, quantity: 2, total: 50 }],
+  // MR-10 (#275): `upsells[]` cotizados por `kind` — el recibo lee esta forma, no un `price × qty` plano.
+  upsells: [{ id: 'u1', name: 'Desayuno buffet', kind: 'per_person', unitPrice: 25, quantity: 2, nights: 1, total: 50 }],
   childAmenitiesTotal: 30,
   roomAmenitiesTotal: 0,
   taxes: 83.16, // 18% + 10% sobre 297
@@ -188,7 +189,7 @@ describe('getPublicReceiptPdf — recibo de pago público (#270)', () => {
 
   it('grupo: líder + 2 hermanas → 3 líneas de habitación y el total del grupo', async () => {
     const groupBreakdown = {
-      subtotal: 600, promoDiscount: 0, upsellsTotal: 0, upsellLines: [],
+      subtotal: 600, promoDiscount: 0, upsellsTotal: 0, upsells: [],
       childAmenitiesTotal: 0, roomAmenitiesTotal: 0,
       taxes: 108, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 108 }], total: 708,
     }
@@ -260,6 +261,17 @@ describe('buildReceiptLines / renderReceiptHtml (puros)', () => {
     ])
     const upsell = lines.find((l) => l.kind === 'upsell')!
     expect(upsell).toMatchObject({ description: 'Desayuno buffet', quantity: 2, unitPrice: 25 })
+  })
+
+  it('upsell por persona y noche: cantidad = personas × noches (cuadra con el unitario) y el detalle va en la descripción', () => {
+    const lines = buildReceiptLines(baseReservation({ priceBreakdown: { ...BREAKDOWN, upsells: [
+      { id: 'u1', name: 'Desayuno', kind: 'per_person_per_night', unitPrice: 10, quantity: 1, nights: 3, persons: 2, total: 60 },
+      { id: 'u2', name: 'Parking', kind: 'per_night', unitPrice: 15, quantity: 1, nights: 3, total: 45 },
+    ] } }))
+    const upsells = lines.filter((l) => l.kind === 'upsell')
+    expect(upsells[0]).toEqual({ kind: 'upsell', description: 'Desayuno · 2 personas × 3 noches', quantity: 6, unitPrice: 10, amount: 60 })
+    expect(upsells[1]).toEqual({ kind: 'upsell', description: 'Parking · 3 noches', quantity: 3, unitPrice: 15, amount: 45 })
+    for (const u of upsells) expect(u.quantity! * u.unitPrice!).toBe(u.amount)
     expect(lines.find((l) => l.kind === 'discount')?.description).toBe('Descuento promo (VERANO10)')
     expect(lines.filter((l) => l.kind === 'tax').map((l) => l.rate)).toEqual([18, 10])
   })

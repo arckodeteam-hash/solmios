@@ -97,6 +97,32 @@ function pricedLine(line: PricedLine, currency: string): string {
   return `${escapeHtml(String(line.name ?? ''))} × ${qty} = ${moneyOf(total, currency)}`
 }
 
+type UpsellPricedLike = PricedLine & { kind?: unknown; unitPrice?: unknown; nights?: unknown; persons?: unknown }
+
+const UPSELL_UNITS: Record<NotificationLanguage, { persons: string; nights: string }> = {
+  es: { persons: 'personas', nights: 'noches' },
+  en: { persons: 'persons', nights: 'nights' },
+  pt: { persons: 'pessoas', nights: 'noites' },
+}
+
+/**
+ * Línea de un upsell cotizado por `kind` (MR-10 #275, `priceBreakdown.upsells[]`):
+ * "Desayuno × 2 personas × 3 noches = 60.00 USD" (ppn) · "Parking × 3 noches = 45.00 USD"
+ * (per_night) · "Transfer × 2 = 30.00 USD" (el resto). Mismo criterio que el texto de `notes`
+ * en `public-booking.ts`: el huésped tiene que ver de dónde sale el importe.
+ */
+function upsellLine(line: UpsellPricedLike, currency: string, language: NotificationLanguage): string {
+  const units = UPSELL_UNITS[language]
+  const qty = Math.max(1, Number(line.quantity ?? 1) || 1)
+  const nights = Math.max(1, Number(line.nights ?? 1) || 1)
+  const persons = line.persons != null ? Math.max(1, Number(line.persons) || 1) : undefined
+  const factor = persons !== undefined
+    ? `× ${persons} ${units.persons} × ${nights} ${units.nights}`
+    : line.kind === 'per_night' ? `× ${nights} ${units.nights}` : `× ${qty}`
+  const total = line.total ?? Number(line.unitPrice ?? 0) * qty * nights * (persons ?? 1)
+  return `${escapeHtml(String(line.name ?? ''))} ${factor} = ${moneyOf(total, currency)}`
+}
+
 /** "ITBIS · 18% · 52.20 USD". `rate` es SIEMPRE porcentaje (hotel-taxes.ts: amount = base × rate / 100). */
 function taxLine(tax: { name?: unknown; rate?: unknown; amount?: unknown }, currency: string): string {
   const pct = Number(tax.rate ?? 0) || 0
@@ -170,6 +196,34 @@ async function notifyHotelOfFailure(
 }
 
 /**
+ * Filas sobre las que se calcula la plata del correo: la reserva sola, o ella más sus
+ * hermanas no canceladas si pertenece a un grupo. Best-effort: si la consulta falla, se
+ * usa sólo la reserva. La líder siempre está (Map por id).
+ */
+async function groupRows(
+  reservationsRepo: RepositoryAdapter<any>,
+  reservation: any,
+  logger: Logger,
+): Promise<any[]> {
+  if (!reservation.groupId) return [reservation]
+  const byId = new Map<string, any>([[String(reservation.id), reservation]])
+  try {
+    const siblings = await reservationsRepo.findMany({
+      hotelId: reservation.hotelId, groupId: reservation.groupId,
+    })
+    for (const s of siblings ?? []) {
+      if (!s || s.status === 'cancelled') continue
+      byId.set(String(s.id), s)
+    }
+  } catch (e) {
+    logger.warn('booking-paid-email: no se pudieron cargar las hermanas del grupo', {
+      reservationId: reservation.id, groupId: reservation.groupId, error: (e as Error).message,
+    })
+  }
+  return [...byId.values()]
+}
+
+/**
  * Encola el correo de confirmación de pago de una reserva del motor público.
  * No-op silencioso si la reserva no existe o el huésped no dejó email.
  */
@@ -198,10 +252,14 @@ export async function sendBookingPaidEmail(
 
     const language = resolveGuestLanguage(guest) as NotificationLanguage
     const currency = String(reservation.currency || 'USD').toUpperCase()
+    // #270 — el desglose (extras, promo, impuestos) vive en el priceBreakdown de la líder.
     const breakdown = (reservation.priceBreakdown ?? {}) as Record<string, any>
-    // En un grupo la líder lleva el priceBreakdown con el total de TODAS las habitaciones.
-    const total = Number(breakdown.total ?? reservation.totalAmount ?? 0)
-    const paid = Number(reservation.deposit ?? 0)
+    // #276 MR-11: en una reserva de GRUPO el cobro queda repartido entre las hermanas
+    // (`settle()` prorratea el `deposit`), así que el total/pagado de la líder sola no es lo
+    // que el huésped pagó. El mail habla del pedido entero: sumamos las hermanas vivas.
+    const rows = await groupRows(reservationsRepo, reservation, logger)
+    const total = rows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0)
+    const paid = rows.reduce((acc, r) => acc + Number(r.deposit ?? 0), 0)
     const pending = Math.max(0, Number((total - paid).toFixed(2)))
     const method = String(reservation.paymentMethod ?? '')
     const cancellationType = await hotelCancellationTypeOf(hotelRepo, reservation.hotelId)
@@ -212,9 +270,10 @@ export async function sendBookingPaidEmail(
       ? (await resolvePlatformIdentity(deps.configRepo)).platformName
       : DEFAULT_PLATFORM_IDENTITY.platformName
 
+    // #270 — una línea por habitación: las MISMAS filas vivas que suman el total (una hermana
+    // cancelada no se lista ni se cobra), en orden de alta.
     const siblings: any[] = reservation.groupId
-      ? (await reservationsRepo.findMany({ groupId: reservation.groupId, hotelId: reservation.hotelId }))
-          .sort((a: any, b: any) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
+      ? [...rows].sort((a: any, b: any) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
       : []
     const roomsLines = siblings.length ? await roomsLinesOf(siblings, deps.roomsRepo, currency, language) : ''
 
@@ -224,7 +283,8 @@ export async function sendBookingPaidEmail(
     const canLink = Boolean(publicUrl && hotel?.slug)
     const logoUrl = logoUrlOf(hotel?.logo, publicUrl)
     const [yes, no] = YES_NO[language]
-    const upsellLines: PricedLine[] = Array.isArray(breakdown.upsellLines) ? breakdown.upsellLines : []
+    // MR-10 (#275) — `priceBreakdown.upsells[]` trae `kind`/`nights`/`persons`: el detalle sale de ahí.
+    const upsellLines: UpsellPricedLike[] = Array.isArray(breakdown.upsells) ? breakdown.upsells : []
     const childAmenities: PricedLine[] = Array.isArray(reservation.childAmenities) ? reservation.childAmenities : []
     const roomAmenities: PricedLine[] = Array.isArray(reservation.roomAmenities) ? reservation.roomAmenities : []
     const taxBreakdown: any[] = Array.isArray(breakdown.taxBreakdown) ? breakdown.taxBreakdown : []
@@ -261,7 +321,7 @@ export async function sendBookingPaidEmail(
         special_requests: String(reservation.specialRequests ?? '').trim() || '—',
         rooms_lines: roomsLines,
         rooms_count: String(siblings.length || 1),
-        extras_lines: linesHtml(upsellLines.map(l => pricedLine(l, currency))),
+        extras_lines: linesHtml(upsellLines.map(l => upsellLine(l, currency, language))),
         child_amenities_lines: linesHtml(childAmenities.map(l => pricedLine(l, currency))),
         room_amenities_lines: linesHtml(roomAmenities.map(l => pricedLine(l, currency))),
         promo_code: String(reservation.promoCode ?? '').trim(),

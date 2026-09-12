@@ -100,12 +100,28 @@ describe('createPublicBookingDirect — childrenAges (composición del huésped)
     expect(tables.Reservations[0].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
   })
 
-  it('caller sin childrenAges (legacy): NO setea childrenAgesAsOf (nada que proyectar)', async () => {
+  it('caller sin childrenAges (legacy, MR-10 Opción A): children plano se sintetiza a maxChildAge y SÍ ancla childrenAgesAsOf', async () => {
+    // MR-10 (#275): antes un caller con `children` plano no pasaba por el motor de niños (sin
+    // edades, sin `childrenAgesAsOf`). Ahora cada niño se sintetiza a `maxChildAge` (niño con
+    // plaza, el caso más caro) y sigue el MISMO camino que un caller con edades — incluida la
+    // edad de referencia, para que un reagendado vuelva a cotizar con la misma base.
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }],
     })
     const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 1 })
     expect(res.status).toBe(201)
+    expect(tables.Reservations[0].childrenAges).toEqual([17]) // DEFAULT_CHILD_POLICY.maxChildAge
+    expect(tables.Reservations[0].children).toBe(1)
+    expect(tables.Reservations[0].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
+  })
+
+  it('caller sin childrenAges y children:0 → sin edades ni childrenAgesAsOf (nada que sintetizar)', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 0 })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].childrenAges).toEqual([])
     expect(tables.Reservations[0].childrenAgesAsOf).toBeFalsy()
   })
 
@@ -507,14 +523,19 @@ describe('createPublicBookingDirect — Tarea "Cobro % niños"', () => {
     expect(tables.Reservations[0].totalAmount).toBe(150)
   })
 
-  it('caller legacy (contador `children` plano, sin edades): la regla NO aplica — no hay forma de saber la edad real', async () => {
+  it('caller legacy (contador `children` plano, sin edades) — MR-10 Opción A: cotiza como niño con plaza a maxChildAge, la regla SÍ aplica', async () => {
+    // Antes de MR-10 (#275) este caller cotizaba la fila de ocupación=2 plana (200): el mismo
+    // pedido daba dos totales según la puerta de entrada. Ahora el niño plano se sintetiza a
+    // `maxChildAge` (con plaza) y paga el % del hotel igual que `childrenAges:[maxChildAge]`.
     const { orm, tables } = dbWithOccupancyRates()
     const res = await createPublicBookingDirect(
       orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, children: 1 },
       undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
     )
     expect(res.status).toBe(201)
-    expect(tables.Reservations[0].totalAmount).toBe(200) // fila de ocupación=2 plana, sin split
+    // adultsTotal=100 (ocupación=1) + 1 niño × 50 % de 100 = 150 — idéntico al caso con edades.
+    expect(tables.Reservations[0].totalAmount).toBe(150)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(50)
   })
 
   it('el resumen (totalBreakdown) usa el MISMO importe que queda persistido en la reserva', async () => {

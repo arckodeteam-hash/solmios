@@ -294,6 +294,15 @@ export function registerSharedModels(orm: ORM): void {
       quantity: { type: 'number', default: 1 },
       kind: { type: 'string', default: 'service' },
       status: { type: 'string', default: 'pending' },
+      // #269 — extras pagados online (upsells, amenidades) materializados por el motor público.
+      // `amount` conserva su semántica histórica: es el importe UNITARIO y la línea vale
+      // `amount × quantity` (así lo suman `addonsTotal` y `buildItems`). `unitPrice` es informativo
+      // (mismo valor que `amount` para las filas del motor), `taxRate` es el % aplicado al reservar.
+      // `source:'booking_engine'` marca filas YA incluidas en `reservations.totalAmount`: quedan
+      // fuera del total cobrable (`shared/utils/reservation-balance.ts`).
+      unitPrice: { type: 'number' },
+      source: { type: 'string', default: 'manual' },
+      taxRate: { type: 'number' },
     },
   })
 

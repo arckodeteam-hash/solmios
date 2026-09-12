@@ -19,7 +19,9 @@ const GUEST = { id: 'g1', hotelId: 'h1', name: 'E2E Huésped', email: 'huesped@e
 
 interface HarnessOver {
   reserva?: any; guest?: any; hotel?: any
-  /** Hermanas del grupo (lo que devuelve findMany({ groupId })). */
+  /** Repo de reservas completo (gana sobre `reserva`/`siblings`) — tests de grupo de #276. */
+  reservationsRepo?: any
+  /** Hermanas del grupo (lo que devuelve findMany({ hotelId, groupId })). */
   siblings?: any[]
   rooms?: Record<string, any>
   configRow?: any
@@ -35,7 +37,8 @@ function harness(over: HarnessOver = {}) {
   const reserva = over.reserva === undefined ? RESERVA : over.reserva
   const deps: any = {
     emailSender: { enqueueNotification: over.enqueue ?? (async (i: any) => { sent.push(i); return 'q1' }) },
-    reservationsRepo: { findById: async () => reserva, findMany: async () => over.siblings ?? (reserva ? [reserva] : []) },
+    reservationsRepo: over.reservationsRepo
+      ?? { findById: async () => reserva, findMany: async () => over.siblings ?? (reserva ? [reserva] : []) },
     hotelRepo: repo(over.hotel === undefined ? HOTEL : over.hotel),
     guestRepo: repo(over.guest === undefined ? GUEST : over.guest),
     logger: silentLogger(),
@@ -92,6 +95,73 @@ describe('correo de confirmación de pago', () => {
     expect(h.sent[0].variables.pending_amount).toBe('46.70 USD')
   })
 
+  // #276 MR-11: el cobro de un grupo queda repartido entre las hermanas; el mail habla del
+  // pedido entero, no de la fila líder.
+  describe('reserva de grupo', () => {
+    const LIDER = { ...RESERVA, groupId: 'g1', totalAmount: 100, deposit: 118 }
+    const HERMANAS = [
+      LIDER,
+      { ...RESERVA, id: 'res-2', guestId: null, groupId: 'g1', totalAmount: 100, deposit: 118 },
+      { ...RESERVA, id: 'res-3', guestId: null, groupId: 'g1', totalAmount: 200, deposit: 236 },
+    ]
+
+    it('suma total y pagado de todas las hermanas', async () => {
+      const calls: any[] = []
+      const h = harness({ reservationsRepo: {
+        findById: async () => LIDER,
+        findMany: async (f: any) => { calls.push(f); return HERMANAS },
+      } })
+      expect(await h.run()).toBe(true)
+      expect(calls[0]).toEqual({ hotelId: 'h1', groupId: 'g1' })
+      const v = h.sent[0].variables
+      expect(v.total_amount).toBe('400.00 USD')
+      expect(v.deposit_amount).toBe('472.00 USD')
+      expect(v.pending_amount).toBe('—')
+    })
+
+    it('ignora las hermanas canceladas', async () => {
+      const h = harness({ reservationsRepo: {
+        findById: async () => LIDER,
+        findMany: async () => [...HERMANAS, { ...RESERVA, id: 'res-4', groupId: 'g1', status: 'cancelled', totalAmount: 500, deposit: 0 }],
+      } })
+      await h.run()
+      expect(h.sent[0].variables.total_amount).toBe('400.00 USD')
+      expect(h.sent[0].variables.pending_amount).toBe('—')
+    })
+
+    it('si la consulta no trae a la líder, igual la cuenta', async () => {
+      const h = harness({ reservationsRepo: {
+        findById: async () => LIDER,
+        findMany: async () => HERMANAS.slice(1),
+      } })
+      await h.run()
+      expect(h.sent[0].variables.total_amount).toBe('400.00 USD')
+      expect(h.sent[0].variables.deposit_amount).toBe('472.00 USD')
+    })
+
+    it('si falla la carga de hermanas usa sólo la líder (best-effort)', async () => {
+      const h = harness({ reservationsRepo: {
+        findById: async () => LIDER,
+        findMany: async () => { throw new Error('db down') },
+      } })
+      expect(await h.run()).toBe(true)
+      const v = h.sent[0].variables
+      expect(v.total_amount).toBe('100.00 USD')
+      expect(v.deposit_amount).toBe('118.00 USD')
+    })
+
+    it('sin groupId no consulta hermanas', async () => {
+      let called = false
+      const h = harness({ reservationsRepo: {
+        findById: async () => RESERVA,
+        findMany: async () => { called = true; return [] },
+      } })
+      await h.run()
+      expect(called).toBe(false)
+      expect(h.sent[0].variables.total_amount).toBe('76.70 USD')
+    })
+  })
+
   it('lleva la política de cancelación del hotel y sus datos de contacto', async () => {
     const h = harness(); await h.run()
     const v = h.sent[0].variables
@@ -128,7 +198,8 @@ describe('recibo completo (#270)', () => {
     roomAmenities: [],
     priceBreakdown: {
       subtotal: 300, promoDiscount: 10, upsellsTotal: 20,
-      upsellLines: [{ id: 'u1', name: 'Desayuno', price: 10, quantity: 2, total: 20 }],
+      // MR-10 (#275): `upsells[]` cotizados por `kind` (per_person: unitPrice × quantity).
+      upsells: [{ id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 10, quantity: 2, nights: 1, total: 20 }],
       childAmenitiesTotal: 15, roomAmenitiesTotal: 0,
       // Impuestos sobre el alojamiento neto (300 − 10 = 290): 18% = 52.2 y 10% = 29.
       // total = 290 + 20 + 15 + 81.2 = 406.2
@@ -174,9 +245,24 @@ describe('recibo completo (#270)', () => {
     expect(v.rooms_count).toBe('1')
   })
 
+  it('(a ter) un upsell por persona y noche muestra personas × noches; per_night sólo noches', async () => {
+    const h = harness({
+      reserva: { ...RESERVA_270, priceBreakdown: { ...RESERVA_270.priceBreakdown, upsells: [
+        { id: 'u1', name: 'Desayuno', kind: 'per_person_per_night', unitPrice: 10, quantity: 1, nights: 3, persons: 2, total: 60 },
+        { id: 'u2', name: 'Parking', kind: 'per_night', unitPrice: 15, quantity: 1, nights: 3, total: 45 },
+        { id: 'u3', name: 'Transfer', kind: 'per_stay', unitPrice: 30, quantity: 1, nights: 1, total: 30 },
+      ] } },
+    })
+    await h.run()
+    const v = h.sent[0].variables
+    expect(v.extras_lines).toContain('Desayuno × 2 personas × 3 noches = 60.00 USD')
+    expect(v.extras_lines).toContain('Parking × 3 noches = 45.00 USD')
+    expect(v.extras_lines).toContain('Transfer × 1 = 30.00 USD')
+  })
+
   it('(a bis) platform_name sale de la configuración de plataforma y los valores se escapan', async () => {
     const h = harness({
-      reserva: { ...RESERVA_270, specialRequests: '<b>x</b>', priceBreakdown: { ...RESERVA_270.priceBreakdown, upsellLines: [{ id: 'u1', name: '<i>Spa</i>', price: 5, quantity: 1, total: 5 }] } },
+      reserva: { ...RESERVA_270, specialRequests: '<b>x</b>', priceBreakdown: { ...RESERVA_270.priceBreakdown, upsells: [{ id: 'u1', name: '<i>Spa</i>', kind: 'per_stay', unitPrice: 5, quantity: 1, nights: 1, total: 5 }] } },
       configRow: { value: JSON.stringify({ platformName: 'HotelSoft' }) },
     })
     await h.run()
@@ -200,30 +286,36 @@ describe('recibo completo (#270)', () => {
     expect(v.total_amount).toBe('76.70 USD')   // sin priceBreakdown cae a totalAmount
   })
 
-  it('(b) grupo: total del grupo y una línea por habitación SIN el número', async () => {
-    const leader = { ...RESERVA_270, groupId: 'g1', roomId: 'r1', totalAmount: 300, deposit: 900, priceBreakdown: { ...RESERVA_270.priceBreakdown, total: 900 } }
+  it('(b) grupo: total del grupo (Σ hermanas vivas, #276) y una línea por habitación SIN el número', async () => {
+    // `settle()` prorratea el depósito: cada hermana lleva su parte, la líder NO lleva los 900.
+    const leader = { ...RESERVA_270, groupId: 'g1', roomId: 'r1', totalAmount: 300, deposit: 300, priceBreakdown: { ...RESERVA_270.priceBreakdown, total: 900 } }
     const siblings = [
       { ...leader, createdAt: '2026-09-01T10:00:00Z' },
-      { ...RESERVA, id: 'sib-2', groupId: 'g1', roomId: 'r2', totalAmount: 300, adults: 2, children: 0, createdAt: '2026-09-01T10:00:01Z' },
-      { ...RESERVA, id: 'sib-3', groupId: 'g1', roomId: 'r3', totalAmount: 300, adults: 1, children: 2, createdAt: '2026-09-01T10:00:02Z' },
+      { ...RESERVA, id: 'sib-2', groupId: 'g1', roomId: 'r2', totalAmount: 300, deposit: 300, adults: 2, children: 0, createdAt: '2026-09-01T10:00:01Z' },
+      { ...RESERVA, id: 'sib-3', groupId: 'g1', roomId: 'r3', totalAmount: 300, deposit: 300, adults: 1, children: 2, createdAt: '2026-09-01T10:00:02Z' },
+      // Cancelada: ni suma al total ni aparece como línea.
+      { ...RESERVA, id: 'sib-4', groupId: 'g1', roomId: 'r4', status: 'cancelled', totalAmount: 500, deposit: 0, createdAt: '2026-09-01T10:00:03Z' },
     ]
     const rooms = {
       r1: { id: 'r1', number: '101', type: 'Doble' },
       r2: { id: 'r2', number: '102', type: 'Doble', name: 'Doble vista mar' },
       r3: { id: 'r3', number: '201', type: 'Suite' },
+      r4: { id: 'r4', number: '301', type: 'Penthouse' },
     }
     const h = harness({ reserva: leader, siblings, rooms })
     expect(await h.run()).toBe(true)
     const v = h.sent[0].variables
     expect(v.total_amount).toBe('900.00 USD')
+    expect(v.deposit_amount).toBe('900.00 USD')
     expect(v.pending_amount).toBe('—')
+    expect(v.rooms_lines).not.toContain('Penthouse')
     expect(v.rooms_count).toBe('3')
     expect((v.rooms_lines.match(/<li>/g) ?? []).length).toBe(3)
     expect(v.rooms_lines).toContain('Doble')
     expect(v.rooms_lines).toContain('Doble vista mar')
     expect(v.rooms_lines).toContain('Suite')
     expect(v.rooms_lines).toContain('300.00 USD')
-    for (const n of ['101', '102', '201']) expect(v.rooms_lines).not.toContain(n)
+    for (const n of ['101', '102', '201', '301']) expect(v.rooms_lines).not.toContain(n)
   })
 
   it('(c) si el envío falla avisa al hotel con una notificación system y devuelve false', async () => {

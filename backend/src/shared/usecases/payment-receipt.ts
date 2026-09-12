@@ -14,6 +14,7 @@
 // texto libre del panel o del huésped.
 
 import { escapeHtml } from '../../services/notification-renderer'
+import { round2 } from '../utils/money'
 
 export type ReceiptLineKind = 'room' | 'upsell' | 'child_amenity' | 'room_amenity' | 'discount' | 'tax' | 'total'
 
@@ -83,7 +84,9 @@ export interface ReceiptReservationLike {
     subtotal?: number
     promoDiscount?: number
     upsellsTotal?: number
-    upsellLines?: Array<{ id?: string; name?: string; price?: number; quantity?: number; total?: number }>
+    /** MR-10 (#275) — línea por upsell cotizada por `kind` (`upsell-pricing.ts`): `unitPrice` del
+     *  catálogo, `quantity` efectiva, `nights` y `persons` (solo per_person_per_night). */
+    upsells?: Array<{ id?: string; name?: string; kind?: string; unitPrice?: number; quantity?: number; nights?: number; persons?: number; total?: number }>
     childAmenitiesTotal?: number
     roomAmenitiesTotal?: number
     taxes?: number
@@ -104,10 +107,6 @@ const ROOM_TYPE_LABELS: Record<string, string> = {
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   card: 'Tarjeta', link: 'Link de pago', cash: 'Efectivo', transfer: 'Transferencia',
   deposit: 'Depósito', stripe: 'Tarjeta (Stripe)', other: 'Otro',
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100
 }
 
 function num(v: unknown): number {
@@ -184,12 +183,23 @@ export function buildReceiptLines(
     lines.push({ kind: 'room', description: `Alojamiento · ${roomLabel(room)}`, amount: round2(num(reservation.totalAmount)) })
   }
 
-  for (const u of pb?.upsellLines ?? []) {
+  for (const u of pb?.upsells ?? []) {
     if (!u || typeof u !== 'object') continue
-    const quantity = Math.max(1, Math.floor(num(u.quantity) || 1))
-    const unitPrice = num(u.price)
+    // El recibo muestra `cantidad × unitario = importe`, así que `quantity` lleva el multiplicador
+    // completo del kind (cantidad × noches × personas) y `unitPrice` sigue siendo el del catálogo
+    // — mismo criterio que los `ReservationAddons` (#269). El detalle ("2 personas × 3 noches")
+    // va en la descripción para que el huésped entienda de dónde sale el 6.
+    const qty = Math.max(1, Math.floor(num(u.quantity) || 1))
+    const nights = Math.max(1, Math.floor(num(u.nights) || 1))
+    const persons = u.persons != null ? Math.max(1, Math.floor(num(u.persons) || 1)) : undefined
+    const quantity = qty * nights * (persons ?? 1)
+    const unitPrice = num(u.unitPrice)
     const amount = u.total != null ? num(u.total) : round2(unitPrice * quantity)
-    lines.push({ kind: 'upsell', description: String(u.name ?? '').trim() || 'Extra', quantity, unitPrice, amount })
+    const name = String(u.name ?? '').trim() || 'Extra'
+    const detail = persons !== undefined
+      ? ` · ${persons} persona${persons === 1 ? '' : 's'} × ${nights} noche${nights === 1 ? '' : 's'}`
+      : u.kind === 'per_night' ? ` · ${nights} noche${nights === 1 ? '' : 's'}` : ''
+    lines.push({ kind: 'upsell', description: `${name}${detail}`, quantity, unitPrice, amount })
   }
 
   const amenitySources = group ?? [reservation]
