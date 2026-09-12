@@ -141,7 +141,7 @@ describe('Requerimiento 1 — Política de niños', () => {
     await flushPromises()
     expect(configSet).toHaveBeenCalledWith('child_policy', {
       acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-      childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+      childrenDiscountEnabled: false, childrenRatePercent: 50,
       maxFreeChildrenPerRoom: null,
     })
     expect(toastSuccess).toHaveBeenCalled()
@@ -158,8 +158,10 @@ describe('Tarea "Cobro % niños" — porcentaje de tarifa para niños', () => {
     const w = await mountSettings()
     await setTab(w, 'Niños')?.trigger('click')
     const toggles = w.findAll('input[type="checkbox"]')
-    // "Aceptar niños" + "Cobro reducido para niños" + "Ofrece cuna para bebés" (Tarea 22, 2026-09-09).
-    expect(toggles).toHaveLength(3)
+    // "Aceptar niños" + "Cobro reducido para niños". #292 — "Ofrece cuna para bebés" se dio de
+    // baja: la cuna es la amenidad `custom:cuna` de cada habitación.
+    expect(toggles).toHaveLength(2)
+    expect(w.text()).not.toContain('Ofrece cuna para bebés')
     expect((toggles[1]!.element as HTMLInputElement).checked).toBe(false)
     expect(w.text()).not.toContain('Porcentaje de tarifa para niños')
   })

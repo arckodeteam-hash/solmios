@@ -175,10 +175,10 @@ export interface Reservation {
   childAmenities?: ChildAmenitySnapshot[] | null
 }
 
-/** #274 — Una línea del snapshot `Reservations.childAmenities` que congela el motor público al
- *  reservar (`bookingengine/usecases/public-booking.ts`, REQ-01 #233): nombre y precio del
- *  catálogo `child_amenities` en ese momento. Según el driver puede llegar como string JSON:
- *  `mapReservation()` lo normaliza a array. */
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congelaba el motor público al
+ *  reservar (REQ-01 #233): nombre y precio del catálogo `child_amenities` en ese momento. #292 dio
+ *  de baja ese catálogo; el snapshot se conserva sólo para leer reservas históricas. Según el
+ *  driver puede llegar como string JSON: `mapReservation()` lo normaliza a array. */
 export interface ChildAmenitySnapshot {
   id?: string
   name: string

@@ -4,6 +4,9 @@
 // Por qué (#269): el motor público cobra upsells, amenidades infantiles y amenidades de la
 // habitación junto con la noche, pero hasta ahora solo quedaban como TEXTO en `notes` y como
 // snapshot en `priceBreakdown` / `childAmenities` / `roomAmenities`. Nada de eso es un cargo:
+// (#292: el catálogo global de amenidades infantiles se dio de baja; `childAmenities` se sigue
+// aceptando como entrada por el snapshot HISTÓRICO de reservas ya creadas — backfill — y
+// `kind:'child_amenity'` queda como valor legado en `reservation_addons`.)
 // al check-in el folio nace con la habitación sola, el prepago (que incluye los extras) se cruza
 // contra ese folio incompleto y al checkout aparece un "saldo a favor" del huésped que no existe.
 // Con una fila por extra, el check-in / night audit pueden postear cada uno al folio (MR-04 #269,

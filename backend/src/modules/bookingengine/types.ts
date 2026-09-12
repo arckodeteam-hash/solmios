@@ -302,8 +302,10 @@ export interface PublicHotelInfoDTO {
    *  `childrenRatePercent`) sin actualizar acá: revisar este literal cada vez que `ChildPolicy`
    *  cambie — el error de TS es "Property missing", fácil de pasar por alto en un diff grande.
    *  REQ-03 (#235): `maxFreeChildrenPerRoom` (null = sin límite) — tope de niños sin plaza por
-   *  habitación, para que el composer público lo aplique antes de mandar la reserva. */
-  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number; maxBabyAge: number; childrenDiscountEnabled: boolean; childrenRatePercent: number; cribAvailable: boolean; maxFreeChildrenPerRoom?: number | null }
+   *  habitación, para que el composer público lo aplique antes de mandar la reserva.
+   *  #292: el toggle global de cuna se dio de baja — la cuna es la amenidad `custom:cuna` de
+   *  cada habitación (`/room-amenities`), no una config del hotel. */
+  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number; maxBabyAge: number; childrenDiscountEnabled: boolean; childrenRatePercent: number; maxFreeChildrenPerRoom?: number | null }
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────
@@ -410,45 +412,4 @@ export interface PublicRateMealPlan extends PublicMealPlan {
   perNight: number
   /** `price × persons × nights` (0 si `included`). */
   totalForStay: number
-}
-
-// ─── Amenidades para niños/bebés (REQ-01, #233 — sub-dominio de bookingengine) ──────────
-// Catálogo ABIERTO por hotel (nombre libre + precio), a diferencia de la cuna
-// (`childPolicy.cribAvailable`, Sí/No sin precio). Ver el comentario de `ChildAmenityModel`.
-
-/** DTO de lectura. Espeja los campos persistidos en `child_amenities` (model.ts). */
-export interface ChildAmenityDTO {
-  id: string
-  hotelId: string
-  name: string
-  /** Precio en la moneda del hotel. 0 = gratuita. */
-  price: number
-  active: boolean
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
-}
-
-/** Body del POST /api/child-amenities. */
-export interface CreateChildAmenityDTO {
-  name: string
-  price: number
-  active?: boolean
-  sortOrder?: number
-}
-
-/** Body del PUT /api/child-amenities/:id. Todos opcionales (partial). */
-export interface UpdateChildAmenityDTO {
-  name?: string
-  price?: number
-  active?: boolean
-  sortOrder?: number
-}
-
-/** Fila pública (lo que el widget necesita) — sin hotelId/timestamps. */
-export interface PublicChildAmenity {
-  id: string
-  name: string
-  price: number
-  sortOrder: number
 }

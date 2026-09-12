@@ -17,7 +17,7 @@ export const PARITY_CHECK_IN = '2026-08-18'
 export const PARITY_CHECK_OUT = '2026-08-21'
 
 /** Misma política en ambas superficies: acepta niños, libres hasta 3, niños hasta 12. */
-export const PARITY_CHILD_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+export const PARITY_CHILD_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
 
 /** Ocupación 3 habilitada (a diferencia del fixture de cada archivo individual) para poder agregar
  *  la Habitación 2 del escenario ("1 adulto + niños de 6 y 10" → 3 ocupantes con plaza). */

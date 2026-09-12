@@ -211,13 +211,16 @@
               </label>
             </div>
 
-            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No — solo aparece si
-                 HAY un bebé en la composición de ESTA tarjeta (asociado a la habitación, no al
-                 carrito) Y el hotel habilitó la cuna (Página pública → Motor de Reservas). Sin cantidad: el
-                 pedido es explícito en que NO se pregunta cuántas cunas, solo Sí/No. -->
+            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292 cuna por
+                 habitación — solo aparece si HAY un bebé en la composición de ESTA tarjeta (asociado
+                 a la habitación, no al carrito) Y el tipo publica la amenidad `custom:cuna`
+                 (`store.roomAmenitiesFor`, precio "desde" del tipo). Con precio > 0 la pregunta lo
+                 muestra ("¿Necesita cuna? (+ $15)"); "Sí" agrega la key a la tarjeta y suma al
+                 "+ $X" de amenidades. Sin cantidad: el pedido es explícito en que NO se pregunta
+                 cuántas cunas, solo Sí/No. -->
             <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
               <div class="flex items-center justify-between gap-3">
-                <span class="text-sm font-bold text-navy">{{ t('rooms.guests.needsCrib') }}</span>
+                <span class="text-sm font-bold text-navy" data-testid="crib-question">{{ cribQuestionLabel(rt) }}</span>
                 <div class="flex overflow-hidden rounded-full border border-slate-200 text-xs font-bold">
                   <button type="button" data-testid="crib-yes"
                     class="px-3 py-1.5 transition"
@@ -233,49 +236,16 @@
               </div>
             </div>
 
-            <!-- REQ-01 (#233, amenidades para niños y bebés) — checklist POR HABITACIÓN, solo si
-                 ESTA tarjeta tiene al menos un menor Y el hotel publicó amenidades activas
-                 (`store.childAmenities`, catálogo del backend: nunca hay nombres ni precios en
-                 código). El precio se ve ANTES de tildar, y lo elegido suma al total de la línea. -->
-            <div v-if="shouldOfferChildAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="child-amenities">
-              <span class="block text-sm font-bold text-navy">{{ t('rooms.guests.childAmenities') }}</span>
-              <label
-                v-for="a in store.childAmenities"
-                :key="a.id"
-                :for="`child-amenity-${rt.id}-${a.id}`"
-                class="flex cursor-pointer items-center justify-between gap-3 text-sm text-navy"
-                data-testid="child-amenity-option"
-              >
-                <span class="flex items-center gap-2">
-                  <input
-                    :id="`child-amenity-${rt.id}-${a.id}`"
-                    :name="`child-amenity-${rt.id}-${a.id}`"
-                    type="checkbox"
-                    class="h-4 w-4 rounded border-slate-300 text-cyan"
-                    :value="a.id"
-                    :checked="isChildAmenitySelected(rt, a.id)"
-                    @change="toggleChildAmenity(rt, a.id)"
-                  />
-                  <span>{{ a.name }}</span>
-                </span>
-                <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="child-amenity-price">
-                  {{ Number(a.price) > 0 ? formatPrice(Number(a.price), store.displayCurrency) : t('rooms.guests.childAmenityFree') }}
-                </span>
-              </label>
-              <p v-if="composedChildAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="child-amenities-total">
-                + {{ formatPrice(composedChildAmenitiesTotal(rt), store.displayCurrency) }}
-              </p>
-            </div>
-
             <!-- REQ-01 (#290, amenidades de la habitación) — checklist POR HABITACIÓN de las
-                 amenidades personalizadas (cuna, cama extra…) que el hotel configuró para ESTE tipo
-                 (`store.roomAmenitiesFor(rt.id)`, catálogo del backend con el precio "desde" del
-                 tipo). A diferencia de las infantiles NO depende de la composición: se ofrece a
-                 cualquier huésped apenas el tipo tenga catálogo. Lo elegido suma al total de la línea. -->
+                 amenidades personalizadas (cama extra…) que el hotel configuró para ESTE tipo
+                 (`offeredRoomAmenities`: `store.roomAmenitiesFor(rt.id)` SIN `custom:cuna`, que se
+                 ofrece sólo vía "¿Necesita cuna?" arriba; precio "desde" del tipo). NO depende de la
+                 composición: se ofrece a cualquier huésped apenas el tipo tenga catálogo. Lo elegido
+                 suma al total de la línea (cuna incluida en el "+ $X"). -->
             <div v-if="shouldOfferRoomAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="room-amenities">
               <span class="block text-sm font-bold text-navy">{{ t('rooms.guests.roomAmenities') }}</span>
               <label
-                v-for="a in store.roomAmenitiesFor(rt.id)"
+                v-for="a in offeredRoomAmenities(rt)"
                 :key="a.key"
                 :for="`room-amenity-${rt.id}-${a.key}`"
                 class="flex cursor-pointer items-center justify-between gap-3 text-sm text-navy"
@@ -411,7 +381,7 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
+import { CRIB_AMENITY_KEY, type MealPlanCode, type OccupancyUnavailableReason, type RoomTypeRate } from '@/types/booking'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import { classifyAge } from '@/utils/child-composition'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
@@ -541,16 +511,24 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
-  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
-  // REQ-01 (#233) — amenidades para niños/bebés por habitación.
-  shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
+  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib, cribPrice,
   // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
   editCartLine,
-  // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…) por habitación.
-  shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
+  // REQ-01 (#290) — amenidades de la habitación (cama extra…) por habitación.
+  offeredRoomAmenities, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
   // MR-03 (#268) — régimen por habitación (radio por tarjeta).
   mealPlanCode, setMealPlan, mealPlanOptions, composedMealPlanTotal,
 } = useGuestComposer()
+
+/** #292 — "¿Necesita cuna?" con el precio "desde" de `custom:cuna` del tipo cuando lo tiene
+ *  ("¿Necesita cuna? (+ $15)"), mismo formateo de moneda que el resto de la tarjeta. Sin cargo →
+ *  la pregunta pelada. */
+function cribQuestionLabel(rt: RoomTypeRate): string {
+  const price = cribPrice(rt)
+  return price > 0
+    ? t('rooms.guests.needsCribPriced', { price: formatPrice(price, store.displayCurrency) })
+    : t('rooms.guests.needsCrib')
+}
 
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
  *  maxAdults/maxChildren del tipo (la matriz no lo sabe, ver useGuestComposer.ts). `'capacity'`
@@ -584,13 +562,11 @@ function cartLineGuestsLabel(line: CartLine): string {
         ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
-  // REQ-01 (#233) — las amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot
-  // de la línea), para que el huésped confirme qué quedó pedido en cada una.
-  const amenities = (line.childAmenities ?? []).map((a) => a.name)
-  const withChildAmenities = amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
-  // REQ-01 (#290) — ídem con las amenidades de la habitación (snapshot de la línea).
-  const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
-  const withRoomAmenities = roomAmenities.length > 0 ? `${withChildAmenities} · ${roomAmenities.join(', ')}` : withChildAmenities
+  // REQ-01 (#290) — las amenidades de la habitación elegidas para ESTA habitación, por nombre
+  // (snapshot de la línea), para que el huésped confirme qué quedó pedido en cada una. La cuna
+  // (#292, `custom:cuna`) ya se nombró arriba con `needsCrib`: no se repite.
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => a.key !== CRIB_AMENITY_KEY).map((a) => a.name)
+  const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
   // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
   return line.mealPlan && line.mealPlan.code !== 'room_only'
     ? `${withRoomAmenities} · ${mealPlanLabel(line.mealPlan.code)}`
