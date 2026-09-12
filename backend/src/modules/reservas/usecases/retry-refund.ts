@@ -8,11 +8,16 @@
 // cablea `connectors/bookingengine-refunds.ts`. Acá sólo se valida (ownership, estado, monto),
 // se delega y se relee la reserva para responder el estado verdadero.
 //
-// Idempotente: una reserva ya `done` responde 200 con lo que hay, sin tocar la pasarela.
+// Idempotente: una reserva ya `done` responde 200 con lo que hay, sin tocar la pasarela. Un
+// `pending` FRESCO (`isRefundInFlight`: reembolso en vuelo esperando a Stripe) responde 409: el
+// hotel apretando "Reintentar" durante el primer intento no puede disparar un segundo refund.
 // Sin puerto: fail-closed (mismo criterio que `requireManualPaymentPort` en mark-paid.ts).
+// Mueve plata → se audita `reservation.refund_retry` con quién lo disparó y el resultado.
 
 import { ConflictError, NotFoundError, ValidationError } from 'arckode-framework'
-import type { Auth, RepositoryAdapter } from 'arckode-framework'
+import type { Auth, Logger, RepositoryAdapter } from 'arckode-framework'
+import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
+import { isRefundInFlight } from '../../../shared/usecases/web-booking-refund'
 
 /** Lo que el connector le devuelve a reservas tras intentar el reembolso. */
 export interface RetryWebRefundOutcome {
@@ -21,7 +26,8 @@ export interface RetryWebRefundOutcome {
   error?: string
 }
 
-export type RetryWebRefundPort = (input: { reservationId: string; hotelId: string; refundAmount: number }) => Promise<RetryWebRefundOutcome>
+/** `actor`: el usuario que apretó "Reintentar"; con él `payments` asienta el refund a nombre del humano y no de SYSTEM. */
+export type RetryWebRefundPort = (input: { reservationId: string; hotelId: string; refundAmount: number; actor?: { id?: string; role?: string } }) => Promise<RetryWebRefundOutcome>
 
 /** Únicos campos que el reembolso puede escribir en la reserva (ver reservas/model.ts). */
 export interface RefundStatePatch {
@@ -43,6 +49,9 @@ export interface RetryRefundDeps {
   repo: RepositoryAdapter<any>
   auth: Auth
   port: RetryWebRefundPort | undefined
+  /** Auditoría `reservation.refund_retry` (SC-05). Opcional: sin puerto no se registra, nunca tumba. */
+  audit?: AuditPort | null
+  logger?: Logger
 }
 
 export interface RetryRefundResult {
@@ -61,9 +70,12 @@ const resultOf = (item: any): RetryRefundResult => ({
   refundAmount: Number(item.refundAmount) || 0,
 })
 
+const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger
+
 /**
- * 404 si no existe · 403 si es de otro hotel · 409 si no está cancelada o no le corresponde plata
- * · 400 si el reembolso web no está cableado · 200 con el estado actual si ya se reembolsó.
+ * 404 si no existe · 403 si es de otro hotel · 409 si no está cancelada, no le corresponde plata o
+ * hay un reembolso en curso · 400 si el reembolso web no está cableado · 200 con el estado actual
+ * si ya se reembolsó.
  */
 export async function retryRefund(
   deps: RetryRefundDeps,
@@ -80,10 +92,20 @@ export async function retryRefund(
   if (item.refundStatus === 'done') return resultOf(item)
   const refundAmount = Number(item.refundAmount) || 0
   if (refundAmount <= 0) throw new ConflictError('La reserva no tiene reembolso pendiente')
+  if (isRefundInFlight(item)) throw new ConflictError('Ya hay un reembolso en curso para esta reserva; esperá unos minutos')
   if (!deps.port) throw new ValidationError('Reembolso no disponible (payments no conectado)')
 
-  await deps.port({ reservationId: String(item.id), hotelId: String(item.hotelId), refundAmount })
+  const outcome = await deps.port({ reservationId: String(item.id), hotelId: String(item.hotelId), refundAmount, actor: { id: currentUser.id, role: currentUser.role } })
   // Relectura de la MISMA fila ya autorizada por assertOwnership arriba: el estado lo escribió el usecase compartido.
   const fresh = await deps.repo.findById(id)
-  return resultOf(fresh ?? item)
+  const result = resultOf(fresh ?? item)
+  await auditSafely(deps.audit ?? null, deps.logger ?? noopLogger, {
+    hotelId: item.hotelId,
+    userId: currentUser.id,
+    action: 'reservation.refund_retry',
+    entity: 'reservation',
+    entityId: id,
+    detail: `resultado=${outcome.status} monto=${refundAmount} refundPaymentId=${outcome.refundPaymentId ?? result.refundPaymentId ?? '-'}`,
+  })
+  return result
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { refundCancelledWebBooking, SYSTEM_REFUND_ACTOR } from '../web-booking-refund'
+import { isRefundInFlight, refundCancelledWebBooking, REFUND_PENDING_STALE_MS, SYSTEM_REFUND_ACTOR } from '../web-booking-refund'
 
 const HOTEL = 'h1'
 
@@ -284,9 +284,65 @@ describe('refundCancelledWebBooking', () => {
     }
   })
 
+  // ── Hallazgo del revisor: el CAS por `updatedAt` no ve un `pending` que ya estaba (nadie lo pisó
+  //    mientras tanto). Un `pending` FRESCO es un reembolso en vuelo; uno VIEJO es un proceso muerto. ──
+  it('pending FRESCO (escrito hace 1 min) → skipped in_progress sin reclamar, llamar ni escribir', async () => {
+    const updatedAt = new Date(Date.now() - 60_000).toISOString()
+    const rows = groupRows().map((r) => ({ ...r, refundStatus: 'pending', updatedAt }))
+    const h = harness({ rows, claim: true })
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+
+    expect(out).toEqual({ status: 'skipped', reason: 'in_progress' })
+    expect(h.claims).toHaveLength(0)
+    expect(h.refunds).toHaveLength(0)
+    expect(h.updates).toHaveLength(0)
+    expect(h.notified).toHaveLength(0)
+  })
+
+  it('pending VIEJO (de hace 15 min, proceso muerto tras reclamar) → sí reintenta y termina done', async () => {
+    const updatedAt = new Date(Date.now() - 15 * 60_000).toISOString()
+    const rows = groupRows().map((r) => ({ ...r, refundStatus: 'pending', updatedAt }))
+    const h = harness({ rows, claim: true })
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+
+    expect(out).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 100 })
+    expect(h.claims).toEqual(['r1'])
+    expect(h.refunds).toHaveLength(1)
+    for (const r of h.rows) expect(r.refundStatus).toBe('done')
+  })
+
+  it('con actor dado (el hotel reintentando) → refundPayment recibe ESE actor y no SYSTEM', async () => {
+    const h = harness()
+    const actor = { id: 'u-admin', role: 'hotel_admin' }
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100, actor })
+    expect(out.status).toBe('done')
+    expect(h.refunds[0].user).toEqual(actor)
+    expect(h.refunds[0].user.id).not.toBe(SYSTEM_REFUND_ACTOR.id)
+  })
+
   it('sin notifyHotel el fallo no rompe', async () => {
     const h = harness({ refundThrows: true, withNotify: false })
     const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
     expect(out.status).toBe('failed')
+  })
+})
+
+describe('isRefundInFlight', () => {
+  const now = Date.parse('2026-09-12T12:00:00.000Z')
+  const ago = (ms: number) => new Date(now - ms).toISOString()
+
+  it('pending fresco → true; al borde de REFUND_PENDING_STALE_MS y más viejo → false', () => {
+    expect(isRefundInFlight({ refundStatus: 'pending', updatedAt: ago(1_000) }, now)).toBe(true)
+    expect(isRefundInFlight({ refundStatus: 'pending', updatedAt: ago(REFUND_PENDING_STALE_MS - 1) }, now)).toBe(true)
+    expect(isRefundInFlight({ refundStatus: 'pending', updatedAt: ago(REFUND_PENDING_STALE_MS) }, now)).toBe(false)
+    expect(isRefundInFlight({ refundStatus: 'pending', updatedAt: ago(15 * 60_000) }, now)).toBe(false)
+  })
+
+  it('cualquier otro estado, o pending sin updatedAt válido → false (nunca cuelga el reembolso)', () => {
+    expect(isRefundInFlight({ refundStatus: 'none', updatedAt: ago(1_000) }, now)).toBe(false)
+    expect(isRefundInFlight({ refundStatus: 'failed', updatedAt: ago(1_000) }, now)).toBe(false)
+    expect(isRefundInFlight({ refundStatus: 'done', updatedAt: ago(1_000) }, now)).toBe(false)
+    expect(isRefundInFlight({ refundStatus: 'pending' }, now)).toBe(false)
+    expect(isRefundInFlight({ refundStatus: 'pending', updatedAt: 'no-es-fecha' }, now)).toBe(false)
   })
 })

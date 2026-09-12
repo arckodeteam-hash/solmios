@@ -13,6 +13,7 @@ import { registerReservasModels } from '../model'
 import { ReservasQueries } from '../usecases/reservas-queries'
 
 let orm: any
+let adapter: any
 let dbPath: string
 let queries: ReservasQueries
 let repo: OrmRepository<any>
@@ -29,7 +30,7 @@ async function sembrar(id: string, extra: Record<string, unknown> = {}): Promise
 
 beforeAll(async () => {
   dbPath = `/tmp/solmios-claim-refund-e2e-${crypto.randomUUID()}.db`
-  const adapter = new SqliteAdapter({ path: dbPath, wal: false, foreignKeys: true }) as any
+  adapter = new SqliteAdapter({ path: dbPath, wal: false, foreignKeys: true }) as any
   await adapter.connect()
   orm = new ORM(adapter)
   registerReservasModels(orm)
@@ -74,6 +75,39 @@ describe('ReservasQueries.claimRefund — CAS sobre SQLite real (#272)', () => {
     const after = await repo.findById('cas-done')
     expect(after.refundStatus).toBe('done')
     expect(after.updatedAt).toBe(before.updatedAt)
+  })
+
+  // Hallazgo del revisor: sobre una fila YA `pending` el CAS solo devolvía true (nadie pisó
+  // `updatedAt` mientras el primero espera a Stripe). Un `pending` fresco bloquea; uno viejo no.
+  it('fila pending recién escrita (reembolso en vuelo) → el segundo claim es false y no toca la fila', async () => {
+    await sembrar('cas-inflight', { refundStatus: 'none' })
+    expect(await queries.claimRefund('cas-inflight')).toBe(true)
+    await new Promise((r) => setTimeout(r, 5))
+    const before = await repo.findById('cas-inflight')
+    expect(before.refundStatus).toBe('pending')
+
+    expect(await queries.claimRefund('cas-inflight')).toBe(false)
+
+    const after = await repo.findById('cas-inflight')
+    expect(after.refundStatus).toBe('pending')
+    expect(after.updatedAt).toBe(before.updatedAt)
+  })
+
+  it('pending con updatedAt de hace 15 min (proceso muerto tras reclamar) → se vuelve a reclamar: true', async () => {
+    await sembrar('cas-stale', { refundStatus: 'none' })
+    const stale = new Date(Date.now() - 15 * 60_000).toISOString()
+    // El ORM pisa `updatedAt` en cada escritura: la fecha vieja se fuerza por SQL, como quedaría tras un proceso muerto.
+    await adapter.query('UPDATE reservations SET refundStatus = ?, updatedAt = ? WHERE id = ?', ['pending', stale, 'cas-stale'])
+    const row = await repo.findById('cas-stale')
+    expect(row.refundStatus).toBe('pending')
+    expect(Date.now() - Date.parse(row.updatedAt)).toBeGreaterThan(10 * 60_000)
+
+    expect(await queries.claimRefund('cas-stale')).toBe(true)
+
+    const after = await repo.findById('cas-stale')
+    expect(after.refundStatus).toBe('pending')
+    expect(after.updatedAt).not.toBe(stale) // la reclamación pisó updatedAt: el próximo que llegue ve un pending fresco
+    expect(await queries.claimRefund('cas-stale')).toBe(false)
   })
 
   it('failed (reintento a mano) → se puede reclamar de nuevo; inexistente → false', async () => {

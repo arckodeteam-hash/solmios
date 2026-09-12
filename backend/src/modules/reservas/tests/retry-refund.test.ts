@@ -24,7 +24,8 @@ const baseItem = {
 
 interface Harness {
   deps: RetryRefundDeps
-  calls: Array<{ reservationId: string; hotelId: string; refundAmount: number }>
+  calls: Array<{ reservationId: string; hotelId: string; refundAmount: number; actor?: { id?: string; role?: string } }>
+  audits: any[]
   row: any
 }
 
@@ -32,6 +33,7 @@ interface Harness {
 function harness(item: any | null = baseItem, opts: { port?: RetryWebRefundPort | undefined; outcome?: 'done' | 'failed' } = {}): Harness {
   const row = item ? { ...item } : null
   const calls: Harness['calls'] = []
+  const audits: any[] = []
   const defaultPort: RetryWebRefundPort = async (input) => {
     calls.push(input)
     if (opts.outcome === 'failed') { Object.assign(row, { refundStatus: 'failed' }); return { status: 'failed', error: 'stripe caído' } }
@@ -42,8 +44,10 @@ function harness(item: any | null = baseItem, opts: { port?: RetryWebRefundPort 
     repo: { findById: async () => (row ? { ...row } : null) } as any,
     auth: realAuth,
     port: 'port' in opts ? opts.port : defaultPort,
+    audit: { record: async (e: any) => { audits.push(e) } },
+    logger: noopLogger,
   }
-  return { deps, calls, row }
+  return { deps, calls, audits, row }
 }
 
 describe('retryRefund — camino feliz', () => {
@@ -51,11 +55,37 @@ describe('retryRefund — camino feliz', () => {
     const h = harness()
     const out = await retryRefund(h.deps, 'r1', user)
 
-    expect(h.calls).toEqual([{ reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 }])
+    expect(h.calls).toEqual([{ reservationId: 'r1', hotelId: HOTEL, refundAmount: 100, actor: { id: 'u1', role: 'hotel_admin' } }])
     expect(out).toEqual({
       reservationId: 'r1', refundStatus: 'done', refundPaymentId: 're-1',
       refundedAt: '2026-09-12T10:00:00.000Z', refundAmount: 100,
     })
+  })
+
+  // Hallazgo del revisor (auditoría): el endpoint mueve plata → queda quién lo disparó y con qué resultado.
+  it('el puerto recibe el actor del usuario y se audita reservation.refund_retry con resultado/monto/refundPaymentId', async () => {
+    const h = harness()
+    await retryRefund(h.deps, 'r1', user)
+
+    expect(h.calls[0].actor).toEqual({ id: 'u1', role: 'hotel_admin' })
+    expect(h.audits).toHaveLength(1)
+    expect(h.audits[0]).toMatchObject({ hotelId: HOTEL, userId: 'u1', action: 'reservation.refund_retry', entity: 'reservation', entityId: 'r1' })
+    expect(h.audits[0].detail).toBe('resultado=done monto=100 refundPaymentId=re-1')
+  })
+
+  it('pasarela caída → igual se audita con resultado=failed y refundPaymentId=-', async () => {
+    const h = harness(baseItem, { outcome: 'failed' })
+    await retryRefund(h.deps, 'r1', user)
+    expect(h.audits).toHaveLength(1)
+    expect(h.audits[0].detail).toBe('resultado=failed monto=100 refundPaymentId=-')
+  })
+
+  it('sin puerto de audit no rompe', async () => {
+    const h = harness()
+    h.deps.audit = undefined
+    h.deps.logger = undefined
+    const out = await retryRefund(h.deps, 'r1', user)
+    expect(out.refundStatus).toBe('done')
   })
 
   it('la pasarela vuelve a fallar → responde failed sin tirar (el hotel puede reintentar de nuevo)', async () => {
@@ -79,6 +109,22 @@ describe('retryRefund — idempotencia y guardas', () => {
     const out = await retryRefund(h.deps, 'r1', user)
     expect(h.calls).toHaveLength(0)
     expect(out).toMatchObject({ refundStatus: 'done', refundPaymentId: 're-0', refundedAt: '2026-09-01T00:00:00.000Z' })
+  })
+
+  // Hallazgo del revisor: apretar "Reintentar" mientras el primer intento espera a Stripe no puede disparar otro refund.
+  it('pending FRESCO (reembolso en curso) → 409 "en curso", no llama al puerto ni audita', async () => {
+    const h = harness({ ...baseItem, refundStatus: 'pending', updatedAt: new Date(Date.now() - 30_000).toISOString() })
+    await expect(retryRefund(h.deps, 'r1', user)).rejects.toBeInstanceOf(ConflictError)
+    await expect(retryRefund(h.deps, 'r1', user)).rejects.toThrow('reembolso en curso')
+    expect(h.calls).toHaveLength(0)
+    expect(h.audits).toHaveLength(0)
+  })
+
+  it('pending VIEJO (de hace 15 min) → sí reintenta', async () => {
+    const h = harness({ ...baseItem, refundStatus: 'pending', updatedAt: new Date(Date.now() - 15 * 60_000).toISOString() })
+    const out = await retryRefund(h.deps, 'r1', user)
+    expect(h.calls).toHaveLength(1)
+    expect(out.refundStatus).toBe('done')
   })
 
   it('reserva no cancelada → 409 y no llama al puerto', async () => {

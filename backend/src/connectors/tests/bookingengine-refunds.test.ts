@@ -187,6 +187,13 @@ describe('bookingengineRefundsConnector — puerto retryWebRefund para reservas 
     expect(h.rows[0].refundStatus).toBe('done')
   })
 
+  it('propaga el actor: el refund en payments queda a nombre de quien apretó "Reintentar", no de SYSTEM', async () => {
+    const h = harness({ reservas: [{ ...RESERVA, refundStatus: 'failed' }] })
+    const out = await h.retryPort()({ reservationId: 'r1', hotelId: 'h1', refundAmount: 100, actor: { id: 'u-admin', role: 'hotel_admin' } })
+    expect(out.status).toBe('done')
+    expect(h.refunds[0].user).toEqual({ id: 'u-admin', role: 'hotel_admin' })
+  })
+
   it('ya done → skipped, sin segundo refund', async () => {
     const h = harness({ reservas: [{ ...RESERVA, refundStatus: 'done', refundPaymentId: 're-0' }] })
     const out = await h.retryPort()({ reservationId: 'r1', hotelId: 'h1', refundAmount: 100 })

@@ -39,6 +39,6 @@ export interface ReservasOrchestrationDeps {
   manualPayment?: ManualPaymentPort
   /** #253 (REQ-FDR-02) — connectors/reservas-facturas.ts: factura desde la reserva (folio abierto → folios; sin folio → facturas). */
   invoicing?: ReservationInvoicingPort
-  /** #272 — connectors/bookingengine-refunds.ts: reintenta en Stripe el reembolso de una cancelación web (POST /api/reservas/:id/retry-refund). */
+  /** #272 — connectors/bookingengine-refunds.ts: reintenta en Stripe el reembolso de una cancelación web (POST /api/reservas/:id/retry-refund). Recibe `actor` (quién apretó "Reintentar") para que `payments` lo asiente a su nombre. */
   retryWebRefund?: RetryWebRefundPort
 }

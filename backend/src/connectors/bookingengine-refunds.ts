@@ -18,7 +18,8 @@
 // ven el `refundStatus` verdadero. Best-effort: un reembolso que falla NUNCA tumba la cancelación.
 //
 // Además le inyecta a `reservas` el puerto `retryWebRefund` (POST /api/reservas/:id/retry-refund):
-// mismo usecase, disparado a mano por el hotel cuando quedó `failed`.
+// mismo usecase, disparado a mano por el hotel cuando quedó `failed`. El `actor` (el usuario que
+// apretó "Reintentar") se propaga tal cual: el refund en `payments` queda a su nombre, no de SYSTEM.
 
 import type { ConnectorContext, Logger } from 'arckode-framework'
 import type { BookingCancelledEvent } from '../modules/bookingengine/sockets'
@@ -82,7 +83,7 @@ export function bookingengineRefundsConnector(logger: Logger): (ctx: ConnectorCo
 
     reservas.setOrchestrationDeps({
       retryWebRefund: async (input) => {
-        const out = await refund(input)
+        const out = await refund(input) // `input.actor` viaja adentro: WebRefundInput lo acepta
         return { status: out.status, ...('refundPaymentId' in out ? { refundPaymentId: out.refundPaymentId } : {}), ...('error' in out ? { error: out.error } : {}) }
       },
     })

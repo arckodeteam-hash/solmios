@@ -672,6 +672,52 @@ las filas para las reservas del motor anteriores al cambio a partir de
 - WHEN checkout
 - THEN factura con 3 líneas, `amountPaid = total`, saldo 0 y `creditBalance` 0
 
+### Requirement: Reintentar el reembolso de una cancelación web (#272)
+
+`POST /api/reservas/:id/retry-refund` (permiso `reservations:edit`; ownership post-findById con
+bypass `super_admin`; sin body) vuelve a ejecutar en Stripe el reembolso que
+`shared/usecases/web-booking-refund` dejó `failed` al cancelar desde el motor público
+(`usecases/retry-refund.ts`, puerto `retryWebRefund` cableado por
+`connectors/bookingengine-refunds.ts`; sin puerto → 400, fail-closed). MUST aplicar sólo a
+reservas `cancelled` con `refundAmount > 0` (409 en otro caso) y usar SIEMPRE el
+`refundAmount` de la reserva, nunca uno del cliente. Idempotente: `refundStatus:'done'` responde
+200 con el estado actual sin tocar la pasarela. MUST responder 409 ("reembolso en curso") si hay
+un `refundStatus:'pending'` FRESCO (escrito hace menos de `REFUND_PENDING_STALE_MS`, 10 min —
+helper `isRefundInFlight`): es un reembolso en vuelo esperando a Stripe y el compare-and-swap
+`claimRefund` (guard por `updatedAt`) solo no lo ve; un `pending` viejo (proceso muerto tras
+reclamar) sí se reintenta. Mueve dinero → MUST auditar `reservation.refund_retry`
+(`userId` del token, `detail: resultado=<status> monto=<refundAmount> refundPaymentId=<id|->`)
+y el refund en `payments` se asienta a nombre del usuario que reintentó (no de `system`).
+Respuesta 200 `{reservationId, refundStatus, refundedAt, refundPaymentId, refundAmount}`
+releídos de la reserva.
+
+#### Scenario: Reintento sobre un reembolso fallido
+
+- GIVEN reserva `cancelled`, `refundAmount:100`, `refundStatus:'failed'`
+- WHEN `POST /:id/retry-refund` con un usuario `reservations:edit` del hotel
+- THEN 200 con `refundStatus:'done'`, `refundPaymentId` y `refundedAt`; `payments.refundPayment`
+  recibió 100 con ese usuario como actor; audit `reservation.refund_retry` con
+  `resultado=done monto=100 refundPaymentId=<id>`
+
+#### Scenario: Ya reembolsada
+
+- GIVEN `refundStatus:'done'`
+- WHEN `POST /:id/retry-refund`
+- THEN 200 con el estado actual y NO se llama a la pasarela
+
+#### Scenario: Reembolso en curso
+
+- GIVEN `refundStatus:'pending'` con `updatedAt` de hace 1 minuto
+- WHEN `POST /:id/retry-refund`
+- THEN 409 "Ya hay un reembolso en curso" sin llamar a la pasarela ni auditar
+- AND con `updatedAt` de hace 15 minutos el reintento sí se ejecuta
+
+#### Scenario: Sin plata que devolver o de otro hotel
+
+- WHEN `POST /:id/retry-refund` sobre una reserva `confirmed`, o `cancelled` con `refundAmount:0`
+- THEN 409 sin efectos
+- AND un `hotel_admin` de otro hotel recibe 403
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir

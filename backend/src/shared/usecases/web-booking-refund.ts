@@ -21,6 +21,11 @@
 //   3. `reservations.claimRefund` (opcional): compare-and-swap que deja la reserva en `pending`
 //      ANTES de llamar a Stripe; el segundo de dos invocaciones concurrentes (evento duplicado +
 //      reintento a mano) ve `false` y se va con `skipped in_progress` sin escribir nada.
+//   3b. Un `pending` FRESCO (`isRefundInFlight`: escrito hace menos de `REFUND_PENDING_STALE_MS`)
+//      es un reembolso en vuelo esperando a Stripe → `skipped in_progress` sin reclamar ni escribir.
+//      El CAS solo no alcanza: sobre una fila ya `pending` nadie pisó `updatedAt`, así que un
+//      evento duplicado o el hotel apretando "Reintentar" durante el primer intento reclamaría de
+//      nuevo. Un `pending` VIEJO (el proceso murió después de reclamar) sí se vuelve a reclamar.
 // Si la pasarela falla (o no hay cobro Stripe que devolver) queda `failed` y se le avisa al hotel
 // con una campanita `system` para que reintente desde la reserva. Nunca tira: el reembolso que no
 // sale no puede deshacer una cancelación que ya está guardada.
@@ -81,6 +86,8 @@ export interface WebRefundInput {
   hotelId: string
   /** Lo que calculó la política al cancelar (`reservations.refundAmount`). */
   refundAmount: number
+  /** Quién lo disparó (el hotel desde "Reintentar"). Sin actor, el refund se asienta como `SYSTEM_REFUND_ACTOR`. */
+  actor?: { id?: string; role?: string }
 }
 
 export type WebRefundOutcome =
@@ -93,6 +100,20 @@ export type WebRefundOutcome =
 export const SYSTEM_REFUND_ACTOR = { id: 'system', role: 'super_admin' }
 
 export const WEB_REFUND_REASON = 'guest_cancellation'
+
+/** Un `pending` más viejo que esto se considera huérfano (proceso muerto tras reclamar) y se puede volver a reclamar. */
+export const REFUND_PENDING_STALE_MS = 10 * 60_000
+
+/**
+ * `true` si la reserva tiene un reembolso EN VUELO: `refundStatus: 'pending'` escrito hace menos de
+ * `REFUND_PENDING_STALE_MS`. `updatedAt` inválido o ausente cuenta como viejo (no se puede
+ * colgar el reembolso por una fecha rota).
+ */
+export function isRefundInFlight(row: { refundStatus?: string; updatedAt?: string }, now = Date.now()): boolean {
+  if (row?.refundStatus !== 'pending') return false
+  const at = Date.parse(String(row.updatedAt ?? ''))
+  return Number.isFinite(at) && now - at < REFUND_PENDING_STALE_MS
+}
 
 type ChargeRow = Awaited<ReturnType<WebRefundPaymentsPort['paymentsLinkedTo']>>[number]
 
@@ -216,6 +237,14 @@ export async function refundCancelledWebBooking(
     return { status: 'skipped', reason: 'already_done' }
   }
 
+  // Capa 3b: `pending` fresco = otra invocación está esperando a Stripe. Ni se reclama ni se escribe.
+  if (isRefundInFlight(reservation)) {
+    deps.logger.info('web-refund: hay un reembolso en curso (pending fresco); no se repite', {
+      reservationId: reservation.id, updatedAt: reservation.updatedAt,
+    })
+    return { status: 'skipped', reason: 'in_progress' }
+  }
+
   const rows = await loadGroupRows(deps, reservation, hotelId)
   const currency = String(reservation.currency || 'USD')
   const requested = Number(input.refundAmount)
@@ -265,7 +294,7 @@ export async function refundCancelledWebBooking(
 
   await updateAll(deps, rows, { refundStatus: 'pending' })
   try {
-    const refund = await deps.payments.refundPayment(charge.id, amount, SYSTEM_REFUND_ACTOR, WEB_REFUND_REASON)
+    const refund = await deps.payments.refundPayment(charge.id, amount, input.actor ?? SYSTEM_REFUND_ACTOR, WEB_REFUND_REASON)
     await updateAll(deps, rows, {
       refundStatus: 'done',
       refundedAt: new Date().toISOString(),

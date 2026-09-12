@@ -1,5 +1,6 @@
 import { checkinHashFromId } from '../../../shared/utils/checkin-hash'
 import type { ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
+import { isRefundInFlight } from '../../../shared/usecases/web-booking-refund'
 import { paidReposFrom, requireMoneyPort, type MoneyRowRef, type ReservationMoneyPort } from './money-port'
 
 export class ReservasQueries {
@@ -144,12 +145,17 @@ export class ReservasQueries {
    * la segunda —guardado por el `updatedAt` leído— cambia 0 filas. Mismo patrón que
    * ari-outbox/usecases/outbox-store.ts. NO se filtra por `refundStatus`: las filas anteriores al
    * campo lo traen NULL y `campo = NULL` no matchea nunca en SQL (ver ese archivo).
-   * `false` también si la reserva no existe o ya está `done` (no hay nada que reclamar).
+   * `false` también si la reserva no existe, ya está `done` (no hay nada que reclamar) o tiene un
+   * `pending` FRESCO (`isRefundInFlight`): un reembolso en vuelo esperando a Stripe, que el CAS solo
+   * no ve porque nadie pisó `updatedAt` mientras tanto. Un `pending` VIEJO (el proceso murió tras
+   * reclamar) sí se reclama de nuevo: justamente porque el guard es `updatedAt` y esta escritura lo
+   * pisa, el segundo que llegue después ya ve un `pending` fresco y se queda afuera.
    */
   async claimRefund(id: string): Promise<boolean> {
     const row = (await this.orm.findMany('Reservations', { id }))[0] as any
     if (!row) return false
     if (row.refundStatus === 'done') return false
+    if (isRefundInFlight(row)) return false
     // El guard es `updatedAt`, que el ORM setea con resolución de milisegundo: si este UPDATE cae
     // en el MISMO ms que la escritura anterior (la cancelación que disparó el evento), el valor
     // nuevo sería igual al leído y el perdedor también matchearía. Se espera a que el reloj avance
