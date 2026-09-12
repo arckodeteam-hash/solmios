@@ -614,6 +614,64 @@ venció porque no se completó el pago" con CTA "Volver a reservar" cuando
 - WHEN dos `POST /api/public/booking` con la misma key y hotel
 - THEN una sola fila en `Reservations`, misma `reservationId`, la segunda con 200; con otro hotel, dos filas
 
+### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
+
+Cada extra que el huésped paga por el motor público —upsell, amenidad infantil, amenidad de
+habitación; el régimen se suma cuando llegue MR-03— MUST materializarse como fila
+`reservation_addons` en la MISMA transacción que crea la reserva (`public-booking.ts`,
+`public-booking-group.ts`), con `source:'booking_engine'`, `kind`
+`upsell|child_amenity|room_amenity`, `description`, `quantity`, `amount` (unitario),
+`unitPrice` y `taxRate` (helper puro `shared/usecases/booking-engine-addons.ts`). En un grupo
+todos los addons cuelgan de la reserva líder (la que lleva `priceBreakdown` y cobra Stripe);
+las hermanas no reciben ninguno. Esas filas YA están dentro de `totalAmount`, así que
+`addonsTotal`/`chargeableTotal`/`pendingBalance` (`shared/utils/reservation-balance.ts`) y las
+líneas de `invoice-from-reservation.ts` MUST ignorarlas: sumarlas cobraría dos veces.
+
+Al check-in (`reservas/usecases/checkin.ts`) el folio MUST recibir un `folio_charges`
+`category:'extra'`, `source:'checkin'`, `reference:'addon:<id>'` por cada addon
+`booking_engine` (impuesto de `configuration('taxes')`, mismo que la noche) ANTES de acreditar
+el prepago, y el tope de `capPrepaidLines` MUST ser noche + extras. La idempotencia es por
+`reference` contra los cargos existentes del folio. El night audit
+(`folios/usecases/night-audit.ts`) MUST hacer el mismo posteo (`source:'night_audit'`) para
+las reservas `checked_in` cuyo folio aún no tenga esos cargos — cubre estadías vivas al
+momento del deploy — y lo informa como `extrasPosted`. `settle-folio-at-checkout` no cambia.
+
+El panel (`ReservationModal.vue`) MUST mostrar la sección "Extras pagados" (una línea por
+addon del motor + desglose completo de `priceBreakdown`) sin leer `notes`, y el CRUD manual
+de servicios adicionales MUST excluir los `source:'booking_engine'`. El modal de checkout
+(`pages/checkin/index.vue`) MUST avisar "Extras pagados online sin cargo en el folio: $X"
+cuando `upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal (+ mealPlanTotal)` del
+`priceBreakdown` supera la Σ `amount` de los cargos `category:'extra'` del folio.
+`scripts/backfill-reservation-addons-from-breakdown.ts` (paso post-deploy, idempotente) crea
+las filas para las reservas del motor anteriores al cambio a partir de
+`priceBreakdown`/`childAmenities`/`notes`.
+
+#### Scenario: Reserva pública con extras
+
+- GIVEN habitación 100/noche, upsell Transfer 30, amenidad infantil Cuna 10, impuesto 18 %
+- WHEN `POST /api/public/booking` por 1 noche
+- THEN `reservation_addons` tiene 2 filas `source:'booking_engine'` con Σ 40 y
+  `reservations.totalAmount = 165.20`
+
+#### Scenario: Check-in con extras pagados
+
+- GIVEN esa reserva con un pago `completed` de 165.20
+- WHEN `POST /:id/checkin`
+- THEN el folio tiene 3 cargos (100+18, 30+5.40, 10+1.80) y crédito prepago 165.20 → saldo 0,
+  sin "a favor"; un segundo check-in responde 409 y los cargos `addon:<id>` siguen siendo 2
+
+#### Scenario: Grupo
+
+- GIVEN grupo de 2 habitaciones con upsell y amenidad
+- WHEN se crea y hace check-in
+- THEN los addons y sus cargos están sólo en la líder; la hermana sólo tiene su noche
+
+#### Scenario: Checkout
+
+- GIVEN folio con noche + 2 extras y prepago 165.20
+- WHEN checkout
+- THEN factura con 3 líneas, `amountPaid = total`, saldo 0 y `creditBalance` 0
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir

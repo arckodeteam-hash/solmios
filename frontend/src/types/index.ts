@@ -131,6 +131,8 @@ export interface Reservation {
   channelReservationId?: string
   notes?: string
   ownerNotes?: string
+  /** #269 — desglose guardado por el motor público (ver `ReservationPriceBreakdown`). */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   totalAmount: number
   depositAmount: number
   depositPercentage?: number
@@ -496,9 +498,35 @@ export interface ReservationDetailMessageLog {
 export interface ReservationDetailAddon {
   id: string
   description: string
-  kind?: 'service' | 'discount'
+  /** 'service' | 'discount' (manuales del panel) o 'upsell' | 'child_amenity' | 'room_amenity'
+   *  (extras del motor de reservas, #269). String abierto: el backend puede sumar kinds. */
+  kind?: string
+  /** Importe UNITARIO: la línea vale `amount × quantity`. */
   amount?: number
   quantity?: number
+  /** #269 — 'booking_engine' = extra pagado online, YA incluido en `totalAmount` (no suma al
+   *  pendiente y no se edita desde el CRUD manual). 'manual'/ausente = cargado por recepción. */
+  source?: string | null
+  unitPrice?: number | null
+  /** % de impuesto aplicado al reservar (sólo filas del motor). */
+  taxRate?: number | null
+}
+
+/** #269 — Desglose de precio que guarda el motor de reservas público al crear la reserva
+ *  (`bookingengine/usecases/public-booking.ts` `TotalBreakdown`). `subtotal` INCLUYE los extras
+ *  (alojamiento + upsells + amenidades); `taxes` se calcula sobre `subtotal − promoDiscount`.
+ *  Según el driver puede llegar como string JSON: parsear con try/catch antes de usar. */
+export interface ReservationPriceBreakdown {
+  subtotal?: number
+  promoDiscount?: number
+  upsellsTotal?: number
+  childAmenitiesTotal?: number
+  roomAmenitiesTotal?: number
+  /** Régimen (#268) — puede no existir todavía. */
+  mealPlanTotal?: number
+  taxes?: number
+  taxBreakdown?: { name: string; rate: number; amount: number }[]
+  total?: number
 }
 
 /** Una factura de la reserva tal como la muestra el detalle (REQ-FDR-01, #252). Vienen de la más
@@ -631,6 +659,8 @@ export interface ReservationDetail {
   otaNotes?: string | null
   ownerNotes?: string | null
   promoCode?: string | null
+  /** #269 — desglose guardado por el motor público. null/ausente en reservas cargadas a mano. */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   autoSendEnabled?: boolean
   communicateClient?: string
   emergencyContact?: { name: string; phone: string; relation: string; email?: string }

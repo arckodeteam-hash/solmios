@@ -45,6 +45,7 @@ import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
 import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
@@ -428,6 +429,8 @@ export async function createPublicBookingGroup(
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // #269 — líneas resueltas para materializarlas como `ReservationAddons` de la LÍDER (abajo).
+  const upsellLines: BookingEngineUpsellInput[] = []
   if (upsellItems.length > 0 && hotelUpsellsMap) {
     for (const item of upsellItems as UpsellItem[]) {
       const found = hotelUpsellsMap.get(item.id)
@@ -436,6 +439,7 @@ export async function createPublicBookingGroup(
       const lineTotal = Number(found.price) * qty
       upsellsTotal += lineTotal
       upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
+      upsellLines.push({ name: String(found.name ?? ''), quantity: qty, unitPrice: Number(found.price) || 0 })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     logger?.warn('createPublicBookingGroup: upsells sin extraDeps.upsells cableado — se persisten en notes sin precios', { hotelId })
@@ -600,6 +604,22 @@ export async function createPublicBookingGroup(
           })
           reservations.push(reservation)
         }
+      }
+
+      // #269 — TODOS los extras pagados online del grupo cuelgan de la LÍDER (la primera creada,
+      // la que lleva `priceBreakdown` y la que Stripe cobra): upsells del grupo + amenidades
+      // infantiles de cada línea (× su quantity) + amenidades de habitación de cada unidad. Las
+      // hermanas no reciben addons — el cobro es uno solo y así se postea al folio una sola vez.
+      // Misma tx que las reservas; `notes`/`priceBreakdown` no cambian.
+      const leader = reservations[0]
+      if (leader) {
+        const addonRows = buildBookingEngineAddons({
+          reservationId: leader.id, hotelId, taxRate: totalTaxRateOf(hotelTaxes),
+          upsells: upsellLines,
+          childAmenities: resolvedLines.flatMap((l) => l.childAmenities),
+          roomAmenities: resolvedLines.flatMap((l) => Array.from(l.roomAmenitiesByRoom.values()).flat()),
+        })
+        for (const row of addonRows) await tx.create('ReservationAddons', row)
       }
 
       if (promoRecord) {

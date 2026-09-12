@@ -1224,6 +1224,11 @@ async function createTablesBlock3(): Promise<void> {
     id TEXT PRIMARY KEY, reservationId TEXT NOT NULL, hotelId TEXT NOT NULL,
     description TEXT, kind TEXT DEFAULT 'service', amount REAL DEFAULT 0, quantity INTEGER DEFAULT 1,
     createdAt TEXT, updatedAt TEXT)`)
+  // #269 — extras del motor como ReservationAddons: precio unitario informativo, origen
+  // ('manual' | 'booking_engine') y % de impuesto aplicado al reservar. Bases anteriores no las tienen.
+  await addColumnIfMissing('reservation_addons', 'unitPrice', 'REAL')
+  await addColumnIfMissing('reservation_addons', 'source', "TEXT DEFAULT 'manual'")
+  await addColumnIfMissing('reservation_addons', 'taxRate', 'REAL')
 
   await exec(`CREATE TABLE IF NOT EXISTS whatsapp_templates (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, name TEXT NOT NULL,

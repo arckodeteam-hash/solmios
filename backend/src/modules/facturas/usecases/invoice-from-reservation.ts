@@ -21,7 +21,7 @@
 
 import { ConflictError, NotFoundError, ValidationError } from 'arckode-framework'
 import type { Logger, RepositoryAdapter } from 'arckode-framework'
-import { chargeableTotal } from '../../../shared/utils/reservation-balance'
+import { chargeableTotal, isBookingEngineAddon } from '../../../shared/utils/reservation-balance'
 import { BALANCE_EPSILON, round2 } from '../../../shared/utils/money'
 import { sumPayments } from '../../../shared/usecases/reservation-paid'
 import type { CreateFacturasDTO, CurrentUser, FacturasDTO, InvoiceItem } from '../types'
@@ -161,6 +161,10 @@ export async function invoiceFromReservation(
  * Líneas NETAS de la factura: alojamiento, extras (con signo, como `addonsTotal`) y otros cobros.
  * Cada importe bruto se lleva a neto con la tasa del hotel; `createInvoice` vuelve a aplicar el
  * impuesto sobre la suma. Sólo entran líneas con importe distinto de cero.
+ *
+ * #269: los addons `source:'booking_engine'` no van como línea aparte — su importe ya está dentro
+ * del alojamiento (`totalAmount`) y `chargeableTotal` tampoco los suma; la línea de alojamiento
+ * los incluye y las líneas deben cuadrar con el importe de la factura.
  */
 function buildItems(reservation: any, addons: readonly any[], rate: number): InvoiceItem[] {
   const toNet = (grossAmount: number) => round2(grossAmount / (1 + rate / 100))
@@ -168,7 +172,7 @@ function buildItems(reservation: any, addons: readonly any[], rate: number): Inv
   const push = (description: string, amount: number) => { if (amount !== 0) items.push({ description, amount }) }
 
   push(`Alojamiento ${stayLabel(reservation)}`, toNet(Number(reservation.totalAmount) || 0))
-  for (const a of addons ?? []) {
+  for (const a of (addons ?? []).filter((x) => !isBookingEngineAddon(x))) {
     const sign = a?.kind === 'discount' ? -1 : 1
     const qty = Number(a?.quantity ?? 1) || 0
     push(String(a?.description ?? 'Extra'), sign * toNet((Number(a?.amount) || 0) * qty))
