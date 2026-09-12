@@ -536,6 +536,7 @@ import { payrollGastosConnector } from './connectors/payroll-gastos'
 import { reembolsosGastosConnector } from './connectors/reembolsos-gastos'
 import { reservasRescheduleChargeConnector } from './connectors/reservas-reschedule-charge'
 import { reservasPaymentsConnector } from './connectors/reservas-payments'
+import { reservasNotificacionesConnector } from './connectors/reservas-notificaciones'
 // #253 (REQ-FDR-02) — "Emitir factura" desde la reserva: folio abierto → folios; sin folio → facturas.
 import { reservasFacturasConnector } from './connectors/reservas-facturas'
 import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
@@ -674,6 +675,8 @@ system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnec
 // REQ-RWP-06 (#249) — "Registrar pago" manual desde la ficha: el cobro se asienta en `payments`
 // (única fuente de verdad del dinero) y de ahí caen solos el pendiente y la caja.
 system.addConnector('reservas-payments', reservasPaymentsConnector)
+// #271 (MR-06) — aprobar una reserva web cierra la campanita "Nueva reserva web" del hotel (marca leídas las notificaciones de esa reserva).
+system.addConnector('reservas-notificaciones', reservasNotificacionesConnector)
 // #253 (REQ-FDR-02) — POST /api/reservas/:id/invoice: con folio abierto cierra y factura por `folios`
 // (mismo camino que POST /api/folios/:id/invoice); sin folio, `facturas.invoiceFromReservation`.
 system.addConnector('reservas-facturas', reservasFacturasConnector)

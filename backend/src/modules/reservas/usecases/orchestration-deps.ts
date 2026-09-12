@@ -39,6 +39,8 @@ export interface ReservasOrchestrationDeps {
   manualPayment?: ManualPaymentPort
   /** #271 MR-06 — connectors/reservas-payments.ts: devuelve por Stripe el cobro web de una reserva rechazada. */
   approvalRefund?: ApprovalRefundPort
+  /** #271 MR-06 — connectors/reservas-notificaciones.ts: al aprobar, marca leídas las campanitas de la reserva. */
+  closeApprovalNotifications?: (hotelId: string, reservationId: string) => Promise<void>
   /** #253 (REQ-FDR-02) — connectors/reservas-facturas.ts: factura desde la reserva (folio abierto → folios; sin folio → facturas). */
   invoicing?: ReservationInvoicingPort
 }
