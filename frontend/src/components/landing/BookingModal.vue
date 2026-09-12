@@ -917,9 +917,11 @@ const {
 
 /** Requerimiento 6 (2026-09-03) — mismo criterio que RoomsStep.vue: texto del motivo cuando
  *  `capacityBlockReason` bloquea por maxAdults/maxChildren del tipo (la matriz no lo sabe). */
-function maxLabel(reason: 'max_adults' | 'max_children' | 'capacity'): string {
+function maxLabel(reason: 'max_adults' | 'max_children' | 'max_free_children' | 'capacity'): string {
   if (reason === 'max_adults') return 'Supera el máximo de adultos de esta habitación'
   if (reason === 'max_children') return 'Supera el máximo de niños de esta habitación'
+  // REQ-03 (#235) — tope hotel-wide de niños sin plaza por habitación.
+  if (reason === 'max_free_children') return `Supera el máximo de ${store.childPolicy.maxFreeChildrenPerRoom ?? 0} niño(s) que no consumen plaza por habitación`
   return unavailableLabel('over_capacity')
 }
 

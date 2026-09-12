@@ -159,6 +159,7 @@ const messages = {
     // esto, excederlos apagaba "Agregar" con un precio arriba y sin decir por qué.
     'rooms.guests.maxAdultsExceeded': 'Supera el máximo de adultos de esta habitación',
     'rooms.guests.maxChildrenExceeded': 'Supera el máximo de niños de esta habitación',
+    'rooms.guests.maxFreeChildrenExceeded': 'Supera el máximo de {max} niño(s) que no consumen plaza por habitación',
     'rooms.unavailable.no_rate': 'Sin tarifa para esta ocupación',
     'rooms.unavailable.no_availability': 'Sin disponibilidad en estas fechas',
     'rooms.unavailable.stop_sell': 'Cerrada a la venta',
@@ -424,6 +425,7 @@ const messages = {
     'rooms.guests.summary': '{adults} {adults, plural, one {adult} other {adults}} · {children} {children, plural, one {child} other {children}} (age {ages})',
     'rooms.guests.maxAdultsExceeded': 'Exceeds this room’s maximum adults',
     'rooms.guests.maxChildrenExceeded': 'Exceeds this room’s maximum children',
+    'rooms.guests.maxFreeChildrenExceeded': 'Exceeds the maximum of {max} child(ren) not taking a bed per room',
     'rooms.unavailable.no_rate': 'No rate for this occupancy',
     'rooms.unavailable.no_availability': 'No availability for these dates',
     'rooms.unavailable.stop_sell': 'Closed for sale',
@@ -678,6 +680,7 @@ const messages = {
     'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {criança} other {crianças}} ({ages} anos)',
     'rooms.guests.maxAdultsExceeded': 'Excede o máximo de adultos deste quarto',
     'rooms.guests.maxChildrenExceeded': 'Excede o máximo de crianças deste quarto',
+    'rooms.guests.maxFreeChildrenExceeded': 'Excede o máximo de {max} criança(s) que não ocupam vaga por quarto',
     'rooms.unavailable.no_rate': 'Sem tarifa para esta ocupação',
     'rooms.unavailable.no_availability': 'Sem disponibilidade nestas datas',
     'rooms.unavailable.stop_sell': 'Fechada para venda',

@@ -9,7 +9,7 @@
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
 import { useBookingStore } from './useBooking'
-import { resolveChildComposition, fitsRoomCapacity, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
+import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import type { RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
 
 /** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
@@ -259,6 +259,8 @@ export function useGuestComposer() {
   function canAddComposition(rt: RoomTypeRate): boolean {
     const c = composition(rt)
     if (!fitsRoomCapacity({ capacity: rt.capacity, maxAdults: rt.maxAdults, maxChildren: rt.maxChildren }, c)) return false
+    // REQ-03 (#235) — tope hotel-wide de niños sin plaza por habitación (null = sin límite).
+    if (freeChildrenLimitError(store.childPolicy, c)) return false
     const row = matchedRow(rt)
     return !row || row.available
   }
@@ -276,10 +278,12 @@ export function useGuestComposer() {
    * también marca `over_capacity` cuando `occupancy > capacity`, así que NO se duplica ese motivo
    * acá salvo en el fallback sin matriz, donde `matchedRow` es siempre `null` y nunca lo diría).
    */
-  function capacityBlockReason(rt: RoomTypeRate): 'max_adults' | 'max_children' | 'capacity' | null {
+  function capacityBlockReason(rt: RoomTypeRate): 'max_adults' | 'max_children' | 'max_free_children' | 'capacity' | null {
     const c = composition(rt)
     if (rt.maxAdults != null && c.effectiveAdults > rt.maxAdults) return 'max_adults'
     if (rt.maxChildren != null && c.payingChildren > rt.maxChildren) return 'max_children'
+    // REQ-03 (#235) — los niños sin plaza no entran en la matriz ni en capacity: motivo propio.
+    if (freeChildrenLimitError(store.childPolicy, c)) return 'max_free_children'
     const rows = rt.occupancies
     if ((!Array.isArray(rows) || rows.length === 0) && c.chargeableOccupancy > rt.capacity) return 'capacity'
     return null
