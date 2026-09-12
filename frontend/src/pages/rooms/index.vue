@@ -294,7 +294,12 @@
                   class="px-3 py-1 rounded-full border border-border text-xs text-text-secondary font-medium">
                   {{ amenityLabel(a) }}
                 </span>
-                <span v-if="!detailRoom?.amenities?.length" class="text-xs text-text-muted">Sin amenities configurados</span>
+                <!-- Custom activas (#290): nombre · precio (`Cuna · $15` / `Cuna · gratis`) -->
+                <span v-for="a in (detailRoom?.customAmenities||[]).filter(c => c.isActive)" :key="customAmenityKey(a)"
+                  class="px-3 py-1 rounded-full border border-border text-xs text-text-secondary font-medium" data-testid="detail-custom-amenity">
+                  {{ a.name }} · {{ customAmenityPriceLabel(a.price) }}
+                </span>
+                <span v-if="!detailRoom?.amenities?.length && !detailRoom?.customAmenities?.some(c => c.isActive)" class="text-xs text-text-muted">Sin amenities configurados</span>
               </div>
             </div>
 
@@ -462,6 +467,47 @@
                   </button>
                 </div>
               </div>
+
+              <!-- Amenidades personalizadas y con precio (#290): cuna, cama extra… Filas con nombre,
+                   precio (0 = gratis) y disponibilidad; se ofrecen al huésped en el motor de reservas. -->
+              <div class="mt-4 pt-4 border-t border-border" data-testid="custom-amenities">
+                <div class="text-[10px] font-extrabold uppercase tracking-wide text-navy/60 mb-1">Amenidades personalizadas y con precio</div>
+                <p class="text-[11px] text-text-muted mb-2.5">Se ofrecen al huésped al reservar esta habitación; el precio se suma a la reserva.</p>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  <button v-for="s in CUSTOM_AMENITY_SUGGESTIONS" :key="s.key" type="button"
+                    data-testid="custom-amenity-suggest"
+                    :disabled="hasCustomAmenity(form.customAmenities, s.key)"
+                    @click="addCustomAmenitySuggestion(s)"
+                    class="px-3 py-1.5 rounded-full text-xs font-bold border border-dashed border-border text-text-secondary hover:border-navy/30 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default">
+                    + {{ s.name }}
+                  </button>
+                </div>
+                <div v-if="form.customAmenities.length" class="space-y-2 mb-3">
+                  <div v-for="(row, i) in form.customAmenities" :key="i" class="flex flex-wrap items-center gap-2" data-testid="custom-amenity-row">
+                    <input v-model="row.name" type="text" placeholder="Nombre (ej: Cuna)" aria-label="Nombre de la amenidad"
+                      data-testid="custom-amenity-name"
+                      class="flex-1 min-w-[140px] px-3 py-2 rounded-xl border text-sm text-navy" :class="showCustomAmenitiesError && !(row.name || '').trim() ? 'border-coral' : 'border-border'" />
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-xs font-bold text-text-muted">$</span>
+                      <input v-model.number="row.price" type="number" min="0" step="0.01" aria-label="Precio de la amenidad"
+                        data-testid="custom-amenity-price"
+                        class="w-24 px-3 py-2 rounded-xl border border-border text-sm font-bold text-navy tabular-nums" />
+                      <span class="text-[10px] text-text-muted whitespace-nowrap">0 = gratis</span>
+                    </div>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input v-model="row.isActive" type="checkbox" data-testid="custom-amenity-active" class="w-4 h-4 rounded text-cyan" />
+                      <span class="text-[11px] font-bold text-navy">Disponible</span>
+                    </label>
+                    <button type="button" @click="removeCustomAmenityRow(i)" data-testid="custom-amenity-remove" aria-label="Quitar amenidad"
+                      class="w-7 h-7 flex items-center justify-center rounded-full text-text-muted hover:text-coral hover:bg-coral/10 cursor-pointer transition-colors text-base leading-none">&times;</button>
+                  </div>
+                </div>
+                <button type="button" @click="addCustomAmenityRow" data-testid="custom-amenity-add"
+                  class="px-3 py-1.5 rounded-full text-xs font-bold border border-border text-navy hover:border-navy/30 transition-colors cursor-pointer">
+                  + Agregar amenidad
+                </button>
+                <p v-if="showCustomAmenitiesError" class="mt-2 text-[11px] font-bold text-coral" data-testid="custom-amenity-error">{{ customAmenitiesError }}</p>
+              </div>
             </div>
       </div>
 
@@ -469,7 +515,7 @@
         <button @click="modal.show=false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cancelar</button>
         <!-- Deshabilitado si el form es inválido; el click "atravesado" (pointer-events-none del
              disabled) revela los errores en rojo, para que el gris no sea un misterio. -->
-        <span @click="!formValid && (touched = { number: true, basePrice: true })">
+        <span @click="!formValid && (touched = { number: true, basePrice: true, customAmenities: true })">
           <button @click="save" :disabled="saving || !formValid"
             class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none">
             {{ saving ? 'Guardando…' : 'Guardar' }}
@@ -498,6 +544,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { ApiError } from '@/services/http'
 import type { Room } from '@/types'
+import type { RoomAmenityItem, RoomAmenityRow } from '@/services/Amenities.service'
 
 interface MappedRoom {
   id: string
@@ -510,6 +557,8 @@ interface MappedRoom {
   maxChildren: number | null
   basePrice: number
   amenities: string[]
+  /** Amenidades personalizadas (#290): `custom:<slug>` con nombre/precio/estado; incluye inactivas. */
+  customAmenities: RoomAmenityItem[]
   surfaceArea: number
   bathrooms: number
   onlineBooking: boolean
@@ -543,6 +592,8 @@ interface EditForm {
   basePrice: number
   status: string
   amenities: string[]
+  /** Amenidades personalizadas y con precio (cuna, cama extra…), #290. */
+  customAmenities: RoomAmenityItem[]
   /** A4: null = sin dato (antes default 0, que se leía como superficie cargada). */
   surfaceArea: number | null
   bathrooms: number
@@ -661,10 +712,10 @@ const detailModal = ref({ show: false })
 const batchModal = ref({ show: false })
 const detailRoom = ref<MappedRoom | null>(null)
 
-const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, maxAdults:null, maxChildren:null, basePrice:80, status:'available', amenities:[], surfaceArea:null, bathrooms:1, onlineBooking:true })
+const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, maxAdults:null, maxChildren:null, basePrice:80, status:'available', amenities:[], customAmenities:[], surfaceArea:null, bathrooms:1, onlineBooking:true })
 /** Campos "tocados" (blur o intento de submit): el error inline se muestra recién al tocar,
  *  para no pintar de rojo un form recién abierto (A4). */
-const touched = ref({ number: false, basePrice: false })
+const touched = ref({ number: false, basePrice: false, customAmenities: false })
 
 const batchForm = ref<BatchForm>({
   type: 'double',
@@ -694,9 +745,27 @@ const priceError = computed<string | null>(() => {
   return null
 })
 
+// Amenidades personalizadas (#290): nombre obligatorio y precio numérico >= 0 (0 = gratis).
+// El error se muestra inline recién al intentar guardar (`touched.customAmenities`), como el resto.
+function customAmenityRowError(row: RoomAmenityItem): string | null {
+  if (!(row.name || '').trim()) return 'El nombre es obligatorio'
+  const raw: unknown = row.price
+  if (raw === '' || raw === null || typeof raw !== 'number' || Number.isNaN(raw)) return 'Ingresá un precio válido (0 = gratis)'
+  if (raw < 0) return 'El precio no puede ser negativo'
+  return null
+}
+const customAmenitiesError = computed<string | null>(() => {
+  for (const row of form.value.customAmenities) {
+    const err = customAmenityRowError(row)
+    if (err) return err
+  }
+  return null
+})
+
 const formValid = computed(() => !numberError.value && !priceError.value)
 const showNumberError = computed(() => touched.value.number && !!numberError.value)
 const showPriceError = computed(() => touched.value.basePrice && !!priceError.value)
+const showCustomAmenitiesError = computed(() => touched.value.customAmenities && !!customAmenitiesError.value)
 
 const ICON_CROWN = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="m3 8 4 3 5-6 5 6 4-3-2 10H5L3 8Z"/></svg>'
 const ICON_BED = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 18v-7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M3 18v2M3 18h18M21 18v2M5 13V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4"/></svg>'
@@ -739,6 +808,40 @@ if (amenityGroups.reduce((n, g) => n + g.items.length, 0) !== amenityOptions.len
 }
 
 function amenityCountLabel(n: number): string { return `${n} seleccionada${n === 1 ? '' : 's'}` }
+
+// ── Amenidades personalizadas y con precio (#290) ─────────────────────────────────────
+// Fila RoomAmenities `custom:<slug(nombre)>` con name/price/isActive. La key la deriva el backend
+// del nombre; el frontend solo la conserva en las filas que ya venían cargadas para que el
+// upsert pegue en la misma fila aunque el dueño renombre la amenidad.
+const CUSTOM_PREFIX = 'custom:'
+/** Sugerencias rápidas: mismo slug que genera el backend (minúsculas sin acentos, no-alfanumérico → `_`). */
+const CUSTOM_AMENITY_SUGGESTIONS: { key: string; name: string }[] = [
+  { key: 'custom:cuna', name: 'Cuna' },
+  { key: 'custom:cama_extra', name: 'Cama extra' },
+]
+function slugifyAmenityName(name: string): string {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40).replace(/_+$/g, '')
+}
+/** Key efectiva de una fila del form: la cargada, o la que derivará el backend del nombre. */
+function customAmenityKey(row: RoomAmenityItem): string { return row.key || CUSTOM_PREFIX + slugifyAmenityName(row.name || '') }
+function isCustomAmenityKey(key: string): boolean { return key.startsWith(CUSTOM_PREFIX) }
+function customAmenityPriceLabel(price: number): string { return price > 0 ? `$${price}` : 'gratis' }
+function hasCustomAmenity(list: RoomAmenityItem[], key: string): boolean { return list.some(r => customAmenityKey(r) === key) }
+function addCustomAmenitySuggestion(s: { key: string; name: string }) {
+  if (hasCustomAmenity(form.value.customAmenities, s.key)) return
+  form.value.customAmenities.push({ name: s.name, price: 0, isActive: true })
+}
+function addCustomAmenityRow() { form.value.customAmenities.push({ name: '', price: 0, isActive: true }) }
+function removeCustomAmenityRow(i: number) { form.value.customAmenities.splice(i, 1) }
+/** Fila de GET → item del form. `isActive` llega como 0/1 (SQLite) o boolean. */
+function rowToCustomAmenity(a: RoomAmenityRow): RoomAmenityItem {
+  const v: unknown = a.isActive
+  return { key: a.amenityKey, name: a.name || a.amenityKey.slice(CUSTOM_PREFIX.length).replace(/_/g, ' '), price: Number(a.price || 0), isActive: v === 1 || v === true || v === '1' }
+}
+function rowIsActive(a: RoomAmenityRow): boolean {
+  const v: unknown = a.isActive
+  return v === undefined || v === null || v === 1 || v === true || v === '1'
+}
 
 const statusOptions = [
   { value: 'available', label: 'Disponible', desc: 'Lista para recibir huésped' },
@@ -916,13 +1019,19 @@ async function load() {
     const mapped: MappedRoom[] = (res.rooms || []).map((r: Room) => ({
       id: r.id, number: r.number, type: r.type, floor: r.floor || 1, status: r.status || 'available',
       maxGuests: r.maxGuests || 2, maxAdults: r.maxAdults ?? null, maxChildren: r.maxChildren ?? null, basePrice: r.basePrice || 0,
-      amenities: [] as string[], surfaceArea: r.surfaceArea || 0, bathrooms: r.bathrooms || 1,
+      amenities: [] as string[], customAmenities: [] as RoomAmenityItem[], surfaceArea: r.surfaceArea || 0, bathrooms: r.bathrooms || 1,
       onlineBooking: r.onlineBookingEnabled !== false,
       guestName: roomGuestMap.get(r.id)?.guestName || null,
       guestEmail: roomGuestMap.get(r.id)?.guestEmail || null,
     }))
     await Promise.all(mapped.map(async (r: MappedRoom) => {
-      try { const am = await AmenitiesService.listRoom(r.id); r.amenities = (am.data || []).map((a: { amenityKey: string }) => a.amenityKey) } catch {}
+      try {
+        // Fijas activas → `amenities`; `custom:*` (activas e inactivas) → `customAmenities`.
+        const am = await AmenitiesService.listRoom(r.id)
+        const rows: RoomAmenityRow[] = am.data || []
+        r.amenities = rows.filter(a => !isCustomAmenityKey(a.amenityKey) && rowIsActive(a)).map(a => a.amenityKey)
+        r.customAmenities = rows.filter(a => isCustomAmenityKey(a.amenityKey)).map(rowToCustomAmenity)
+      } catch {}
     }))
     rooms.value = mapped
     totalRooms.value = res.total
@@ -943,14 +1052,16 @@ function openEditFromDetail() {
   detailModal.value.show = false
   editId.value = room.id; modal.value = { show: true, edit: true }
   const amenities = [...(room.amenities || [])]
-  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, maxAdults: room.maxAdults ?? null, maxChildren: room.maxChildren ?? null, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
-  touched.value = { number: false, basePrice: false }
+  // Clonado: el form se edita sin tocar la card hasta que se guarde y recargue.
+  const customAmenities = (room.customAmenities || []).map(a => ({ ...a }))
+  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, maxAdults: room.maxAdults ?? null, maxChildren: room.maxChildren ?? null, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, customAmenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
+  touched.value = { number: false, basePrice: false, customAmenities: false }
 }
 
 function openNew() {
   editId.value = ''; modal.value = { show: true, edit: false }
-  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, maxAdults: null, maxChildren: null, basePrice: 80, status: 'available', amenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
-  touched.value = { number: false, basePrice: false }
+  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, maxAdults: null, maxChildren: null, basePrice: 80, status: 'available', amenities: [], customAmenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
+  touched.value = { number: false, basePrice: false, customAmenities: false }
 }
 
 async function changeStatus(newStatus: string) {
@@ -973,7 +1084,9 @@ async function changeStatus(newStatus: string) {
 
 async function save() {
   // El botón ya está deshabilitado si el form es inválido; esto es defensa si se llama por otra vía.
-  if (!formValid.value) { touched.value = { number: true, basePrice: true }; return }
+  if (!formValid.value) { touched.value = { number: true, basePrice: true, customAmenities: true }; return }
+  // Amenidades personalizadas inválidas: error inline bajo la lista y no se guarda nada.
+  if (customAmenitiesError.value) { touched.value.customAmenities = true; return }
   saving.value = true
   try {
     const { RoomService } = await import('@/services/Room.service')
@@ -983,7 +1096,11 @@ async function save() {
     let roomId = editId.value
     if (roomId) { await RoomService.update(roomId, patch) }
     else { const created = await RoomService.create({ ...patch, hotelId: hid.value! }); roomId = created.id }
-    await AmenitiesService.saveRoom(roomId, form.value.amenities)
+    // Custom: key solo si la fila venía cargada (fila nueva → el backend la deriva del nombre).
+    const items: RoomAmenityItem[] = form.value.customAmenities.map(a => ({
+      ...(a.key ? { key: a.key } : {}), name: a.name.trim(), price: Number(a.price), isActive: !!a.isActive,
+    }))
+    await AmenitiesService.saveRoom(roomId, form.value.amenities, items)
     toast.success(editId.value ? `Habitación ${form.value.number} actualizada` : `Habitación ${form.value.number} creada`)
   } catch (e) {
     const msg = e instanceof ApiError ? `Error (${e.status})` : 'Sin conexión'

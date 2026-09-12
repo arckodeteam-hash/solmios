@@ -298,6 +298,12 @@
 
     <!-- ========== AMENITIES ========== -->
     <div v-if="activeTab === 'amenities'" class="space-y-6">
+      <!-- Las amenidades por habitación (con precio y disponibilidad) viven en Habitaciones (#290). -->
+      <div class="rounded-2xl bg-cyan/10 border border-cyan/20 px-5 py-4 text-sm text-navy" data-testid="amenities-config-hint">
+        Las amenidades de cada habitación (cuna, cama extra, precios y disponibilidad) se configuran en
+        <router-link to="/panel/config/habitaciones" class="font-bold text-navy underline underline-offset-2 hover:text-cyan">Habitaciones → Crear/Editar habitación</router-link>.
+        Acá solo se define el catálogo general del hotel.
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div v-for="(items, category) in amenityCatalog" :key="category" class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
           <h3 class="font-extrabold text-navy mb-4 capitalize">{{ categoryLabels[category] || category }}</h3>
@@ -995,11 +1001,12 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
       // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      // "Amenities de habitación", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
+      // "Catálogo de amenities", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
       // las que salen en la landing) se editan en Página pública → General. Dos catálogos
       // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
-      // aclaratoria para que no se confundieran.
-      { value: 'amenities', label: 'Amenities de habitación' },
+      // aclaratoria para que no se confundieran. Y "catálogo" porque las amenidades de CADA
+      // habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones (#290).
+      { value: 'amenities', label: 'Catálogo de amenities' },
       // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },
