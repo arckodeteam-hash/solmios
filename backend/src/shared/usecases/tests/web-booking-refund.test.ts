@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { isRefundInFlight, refundCancelledWebBooking, REFUND_PENDING_STALE_MS, SYSTEM_REFUND_ACTOR } from '../web-booking-refund'
+import { isRefundInFlight, refundCancelledWebBooking, webRefundIdempotencyKey, REFUND_PENDING_STALE_MS, SYSTEM_REFUND_ACTOR } from '../web-booking-refund'
 
 const HOTEL = 'h1'
 
@@ -37,8 +37,8 @@ function harness(over: Over = {}) {
   const deps: any = {
     payments: {
       paymentsLinkedTo: async (_hotelId: string, ref: { reservationId: string }) => payments[ref.reservationId] ?? [],
-      refundPayment: async (paymentId: string, amount?: number, user?: any, reason?: string) => {
-        refunds.push({ paymentId, amount, user, reason })
+      refundPayment: async (paymentId: string, amount?: number, user?: any, reason?: string, idempotencyKey?: string) => {
+        refunds.push({ paymentId, amount, user, reason, idempotencyKey })
         if (over.refundThrows) throw new Error('stripe caído')
         const row = { id: 're-1', type: 'refund', status: 'completed', amount, metadata: { refundOf: paymentId, reason }, createdAt: '2026-09-10T10:00:00.000Z' }
         if (over.recordRefundRow) for (const list of Object.values(payments)) if (list.some((p) => p.id === paymentId)) list.push(row)
@@ -318,6 +318,28 @@ describe('refundCancelledWebBooking', () => {
     expect(out.status).toBe('done')
     expect(h.refunds[0].user).toEqual(actor)
     expect(h.refunds[0].user.id).not.toBe(SYSTEM_REFUND_ACTOR.id)
+  })
+
+  // #272 (revisión): Stripe devuelve ANTES de que `payments` asiente la fila; si ese asiento falla, las capas
+  // 1-3 no ven nada y el reintento pediría un refund NUEVO. La clave de idempotencia es la misma en los dos
+  // intentos (cobro + centavos), así la pasarela devuelve el original en vez de sacar plata dos veces.
+  it('refund falló (asiento no grabado) y el hotel reintenta → las DOS llamadas llevan la MISMA idempotencyKey', async () => {
+    const h = harness({ refundThrows: true })
+    const first = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+    expect(first.status).toBe('failed')
+
+    h.deps.payments.refundPayment = async (paymentId: string, amount?: number, user?: any, reason?: string, idempotencyKey?: string) => {
+      h.refunds.push({ paymentId, amount, user, reason, idempotencyKey })
+      return { id: 're-2' }
+    }
+    // Reintento desde una HERMANA: el cobro es el mismo, la clave también.
+    const second = await refundCancelledWebBooking(h.deps, { reservationId: 'r3', hotelId: HOTEL, refundAmount: 100, actor: { id: 'u-7', role: 'hotel_admin' } })
+    expect(second.status).toBe('done')
+
+    expect(h.refunds).toHaveLength(2)
+    expect(h.refunds[0].idempotencyKey).toBe(webRefundIdempotencyKey('p1', 100))
+    expect(h.refunds[1].idempotencyKey).toBe(h.refunds[0].idempotencyKey)
+    expect(h.refunds[0].idempotencyKey).toBe('web-refund:p1:10000')
   })
 
   it('sin notifyHotel el fallo no rompe', async () => {

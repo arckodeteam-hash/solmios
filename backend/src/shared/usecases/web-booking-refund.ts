@@ -32,6 +32,7 @@
 //
 // Sin imports de módulos: sólo puertos, para que el connector lo cablee y el test lo arme a mano.
 
+import { round2 } from '../utils/money'
 import { reservationPanelLink } from './notify-reservation-received'
 
 export interface WebRefundPaymentsPort {
@@ -51,12 +52,16 @@ export interface WebRefundPaymentsPort {
     metadata?: Record<string, unknown>
     createdAt?: string
   }>>
-  /** `payments.refundPayment`: devuelve en Stripe y asienta la fila `refund`. */
+  /**
+   * `payments.refundPayment`: devuelve en Stripe y asienta la fila `refund`. `idempotencyKey` viaja
+   * hasta la pasarela (ver `webRefundIdempotencyKey`).
+   */
   refundPayment(
     paymentId: string,
     amount?: number,
     user?: { id?: string; role?: string },
     reason?: string,
+    idempotencyKey?: string,
   ): Promise<{ id: string }>
 }
 
@@ -117,7 +122,17 @@ export function isRefundInFlight(row: { refundStatus?: string; updatedAt?: strin
 
 type ChargeRow = Awaited<ReturnType<WebRefundPaymentsPort['paymentsLinkedTo']>>[number]
 
-const round2 = (n: number): number => Math.round(n * 100) / 100
+/**
+ * Clave de idempotencia que viaja a la pasarela (capa 4, la única que vive del lado de Stripe): la
+ * devolución sale en Stripe ANTES de que `payments` asiente la fila `refund`; si ese asiento falla,
+ * las capas 1-3 no ven nada y "Reintentar" volvería a pedir un refund NUEVO. Con la misma clave
+ * Stripe devuelve el original. Se arma con el COBRO (`charge.id`, el de la líder, sea cual sea la
+ * hermana por la que entró la cancelación o el reintento) y el monto en centavos, que para una
+ * cancelación web es determinístico (`reservations.refundAmount`, acotado al cobro).
+ */
+export function webRefundIdempotencyKey(chargeId: string, amount: number): string {
+  return `web-refund:${chargeId}:${Math.round(amount * 100)}`
+}
 
 /** Cobro Stripe devolvible: `charge` (o sin tipo, filas viejas) completado con referencia en la pasarela. */
 function isRefundableCharge(p: ChargeRow): boolean {
@@ -294,7 +309,9 @@ export async function refundCancelledWebBooking(
 
   await updateAll(deps, rows, { refundStatus: 'pending' })
   try {
-    const refund = await deps.payments.refundPayment(charge.id, amount, input.actor ?? SYSTEM_REFUND_ACTOR, WEB_REFUND_REASON)
+    const refund = await deps.payments.refundPayment(
+      charge.id, amount, input.actor ?? SYSTEM_REFUND_ACTOR, WEB_REFUND_REASON, webRefundIdempotencyKey(charge.id, amount),
+    )
     await updateAll(deps, rows, {
       refundStatus: 'done',
       refundedAt: new Date().toISOString(),

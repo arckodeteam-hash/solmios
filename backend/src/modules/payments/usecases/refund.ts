@@ -22,6 +22,15 @@ export async function refundPayment(
   user?: { id?: string; role?: string },
   /** #272: motivo de la devolución (p. ej. `guest_cancellation`); va a la descripción y a `metadata.reason`. */
   reason?: string,
+  /**
+   * #272: clave de idempotencia para la PASARELA. La devolución sale en Stripe ANTES de asentarse acá
+   * abajo (`createPayment`); si el asiento falla, el que reintenta con la MISMA clave recibe el refund
+   * original en vez de sacar plata otra vez. La pone el llamador que sabe qué identifica "este
+   * reembolso" (la cancelación web: `web-booking-refund.ts`). No se deriva de `paymentId + monto`
+   * a propósito: dos devoluciones parciales legítimas del mismo importe sobre el mismo cobro
+   * colisionarían y la segunda quedaría asentada sin haber salido.
+   */
+  idempotencyKey?: string,
 ): Promise<PaymentDTO> {
   const payment = await deps.crud.getById(paymentId, user?.id, user?.role)
   if (payment.status !== 'completed') throw new ValidationError('Payment not completed')
@@ -57,6 +66,7 @@ export async function refundPayment(
     hotelId: payment.hotelId,
     paymentId: providerRef,
     amount,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
 
   // El reembolso ya está confirmado por Stripe síncronamente (deps.stripe.refund retornó con

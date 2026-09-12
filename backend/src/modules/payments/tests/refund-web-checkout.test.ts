@@ -17,7 +17,7 @@ function harness(payment: Partial<PaymentDTO>) {
   }
   const created: CreatePaymentDTO[] = []
   const statuses: string[] = []
-  const refundCalls: Array<{ hotelId: string; paymentId: string; amount?: number }> = []
+  const refundCalls: Array<{ hotelId: string; paymentId: string; amount?: number; idempotencyKey?: string }> = []
   const deps = {
     crud: {
       getById: async () => row,
@@ -25,7 +25,7 @@ function harness(payment: Partial<PaymentDTO>) {
     },
     stripe: {
       isConfigured: async () => true,
-      refund: async (p: { hotelId: string; paymentId: string; amount?: number }) => { refundCalls.push(p); return { id: 're_1', status: 'succeeded' } },
+      refund: async (p: { hotelId: string; paymentId: string; amount?: number; idempotencyKey?: string }) => { refundCalls.push(p); return { id: 're_1', status: 'succeeded' } },
     },
     createPayment: async (dto: CreatePaymentDTO) => { created.push(dto); return { id: `r-${created.length}`, ...dto } as PaymentDTO },
   }
@@ -60,6 +60,18 @@ describe('payments — refund de un cobro del widget (method link + stripeSessio
     expect(h.created[0].description).toBe('Refund for payment p1')
     expect(h.created[0].metadata).toEqual({ source: 'web', refundOf: 'p1' })
     expect(h.statuses).toEqual(['refunded'])
+  })
+
+  // #272: la clave de idempotencia del llamador llega a la pasarela ANTES del asiento; sin ella no se inventa una.
+  it('con idempotencyKey → stripe.refund la recibe tal cual; sin ella no manda el campo', async () => {
+    const h = harness({})
+    await refundPayment(h.deps, 'p1', 100, SYSTEM, 'guest_cancellation', 'web-refund:p1:10000')
+    await refundPayment(h.deps, 'p1', 100, SYSTEM, 'guest_cancellation')
+
+    expect(h.refundCalls).toEqual([
+      { hotelId: 'h1', paymentId: 'cs_x', amount: 100, idempotencyKey: 'web-refund:p1:10000' },
+      { hotelId: 'h1', paymentId: 'cs_x', amount: 100 },
+    ])
   })
 
   it('link SIN stripeSessionId ni stripePaymentId → ConflictError y no llama a Stripe', async () => {
