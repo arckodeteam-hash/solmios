@@ -4,17 +4,23 @@
 // ver backend/src/services/payment-gateway/stripe-gateway.ts) y el spec firma los webhooks con
 // `signStripeEvent` usando el mismo STRIPE_WEBHOOK_SECRET que recibe el backend. Sólo cubre las
 // llamadas que hace StripeGateway: crear/leer Checkout Sessions, leer/cancelar PaymentIntents,
-// crear refunds y leer la cuenta. Sin dependencias nuevas: `Bun.serve` + `node:crypto`.
+// crear refunds y leer la cuenta. Sin dependencias nuevas: `node:http` + `node:crypto`, así corre
+// igual bajo Node (Playwright levanta el stub dentro del spec) y bajo Bun (el selftest).
+//
+// Los ids llevan un prefijo aleatorio por proceso (`cs_test_<rand8>_<n>`): `payments.stripeSessionId`
+// es clave de idempotencia en el backend y dos corridas contra la misma base no deben repetir id.
 //
 //   bun run e2e/helpers/stripe-stub.ts --selftest   → OK (valida el contrato con el SDK real)
 
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { URL } from 'node:url'
 
-// Declaración mínima de `Bun.serve` para no depender de bun-types en el tsconfig del frontend
-// (e2e/ queda fuera de `vue-tsc -b`). En runtime Bun provee el global.
-interface BunServer { port: number; stop(closeActiveConnections?: boolean): void }
-declare const Bun: {
-  serve(opts: { port: number; hostname?: string; fetch(req: Request): Promise<Response> | Response }): BunServer
+/** Prefijo aleatorio de esta corrida: 8 hex, común a sessions, PIs, charges, refunds y eventos. */
+const RUN_ID = randomBytes(4).toString('hex')
+let seq = 0
+function nextId(prefix: string): string {
+  return `${prefix}_test_${RUN_ID}_${++seq}`
 }
 
 /** Charge mínimo: lo que `enrichFromCharge` lee tras expandir `latest_charge`. */
@@ -142,12 +148,23 @@ function currencyOf(body: FormObject): string {
   return typeof c === 'string' && c ? c.toLowerCase() : 'usd'
 }
 
-function json(status: number, data: unknown): Response {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
+interface StubResponse { status: number; contentType: string; body: string }
+
+function json(status: number, data: unknown): StubResponse {
+  return { status, contentType: 'application/json', body: JSON.stringify(data) }
 }
 
-function stripeError(status: number, type: string, message: string): Response {
+function stripeError(status: number, type: string, message: string): StubResponse {
   return json(status, { error: { type, message } })
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => chunks.push(c))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
 }
 
 /** Expande `latest_charge`, `payment_intent`, etc. según `expand[]` — Stripe devuelve el id pelado
@@ -169,9 +186,6 @@ function withExpand(obj: StubSession | StubPaymentIntent, expand: string[], stub
 
 /** Levanta el doble en `opts.port` (0 = puerto libre). Recordá `stop()` al terminar el spec. */
 export async function startStripeStub(opts: { port?: number } = {}): Promise<StripeStub> {
-  let seq = 0
-  const nextId = (prefix: string): string => `${prefix}_test_${++seq}`
-
   const stub: StripeStub = {
     port: 0,
     baseUrl: '',
@@ -182,27 +196,27 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
     stop: () => {},
   }
 
-  const handle = async (req: Request): Promise<Response> => {
-    const url = new URL(req.url)
+  const handle = async (req: IncomingMessage): Promise<StubResponse> => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
-    const method = req.method.toUpperCase()
+    const method = (req.method ?? 'GET').toUpperCase()
 
     // Página de checkout "hosted": lo único que se sirve sin API key.
     const checkout = path.match(/^\/checkout\/([^/]+)$/)
     if (method === 'GET' && checkout) {
       const id = checkout[1]!
       const session = stub.sessions.get(id)
-      if (!session) return new Response('Not found', { status: 404 })
+      if (!session) return { status: 404, contentType: 'text/plain', body: 'Not found' }
       const html = `<!doctype html><html><body>`
         + `<h1 data-testid="stripe-stub-checkout">Stripe stub checkout</h1>`
         + `<p data-testid="stripe-stub-session-id">${id}</p>`
         + `<p>${session.amount_total} ${session.currency}</p>`
         + `</body></html>`
-      return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+      return { status: 200, contentType: 'text/html; charset=utf-8', body: html }
     }
 
     // Autenticación al estilo Stripe: sin Bearer no hay API.
-    const auth = req.headers.get('authorization') || ''
+    const auth = req.headers.authorization || ''
     if (!auth.startsWith('Bearer ')) {
       return stripeError(401, 'invalid_request_error',
         'You did not provide an API key. You need to provide your API key in the Authorization header, using Bearer auth (e.g. \'Authorization: Bearer YOUR_SECRET_KEY\').')
@@ -211,7 +225,7 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
     // stripe-node manda los params de GET en la query string y los de POST en el body form-urlencoded.
     const body: FormObject = method === 'GET' || method === 'DELETE'
       ? parseStripeForm(url.search.replace(/^\?/, ''))
-      : parseStripeForm(await req.text())
+      : parseStripeForm(await readBody(req))
     stub.requests.push({ method, path, body })
     const expand = Object.values(asRecord(body.expand)).filter((v): v is string => typeof v === 'string')
 
@@ -324,14 +338,26 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
     return stripeError(404, 'invalid_request_error', `Unrecognized request URL (${method}: ${path}).`)
   }
 
-  const server = Bun.serve({
-    port: opts.port ?? 0,
-    hostname: '127.0.0.1',
-    fetch: (req) => handle(req).catch((e: unknown) => stripeError(500, 'api_error', String(e))),
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    handle(req)
+      .catch((e: unknown) => stripeError(500, 'api_error', String(e)))
+      .then((out) => {
+        res.writeHead(out.status, { 'content-type': out.contentType, 'content-length': Buffer.byteLength(out.body) })
+        res.end(out.body)
+      })
   })
-  stub.port = server.port
-  stub.baseUrl = `http://127.0.0.1:${server.port}`
-  stub.stop = () => server.stop(true)
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(opts.port ?? 0, '127.0.0.1', () => resolve())
+  })
+  const address = server.address()
+  if (!address || typeof address !== 'object') throw new Error('stripe-stub: el servidor no expone su puerto')
+  stub.port = address.port
+  stub.baseUrl = `http://127.0.0.1:${address.port}`
+  stub.stop = () => {
+    server.closeAllConnections()
+    server.close()
+  }
   return stub
 }
 
@@ -372,10 +398,9 @@ export interface StubEvent {
   livemode: false
 }
 
-let eventSeq = 0
 function buildEvent(type: string, session: StubSession): StubEvent {
   return {
-    id: `evt_test_${++eventSeq}`,
+    id: nextId('evt'),
     object: 'event',
     type,
     created: now(),
@@ -416,7 +441,8 @@ async function selftest(): Promise<void> {
     const created = await fetch(`${stub.baseUrl}/v1/checkout/sessions`, { method: 'POST', headers, body: form })
     assert(created.status === 200, `crear session: ${created.status}`)
     const s1 = await created.json() as StubSession
-    assert(s1.id.startsWith('cs_test_'), `id de session: ${s1.id}`)
+    assert(/^cs_test_[0-9a-f]{8}_\d+$/.test(s1.id), `id de session con prefijo por proceso: ${s1.id}`)
+    assert(/^pi_test_[0-9a-f]{8}_\d+$/.test(s1.payment_intent), `id de PI: ${s1.payment_intent}`)
     assert(s1.amount_total === 2000, `amount_total 1000×2 esperaba 2000, vino ${s1.amount_total}`)
     assert(s1.metadata.reservationId === 'r1', 'metadata[reservationId] no llegó')
     assert(s1.client_reference_id === 'ref-1', 'client_reference_id no llegó')
@@ -434,6 +460,7 @@ async function selftest(): Promise<void> {
     const refRes = await fetch(`${stub.baseUrl}/v1/refunds`, { method: 'POST', headers, body: `payment_intent=${s1.payment_intent}&amount=500` })
     const refund = await refRes.json() as RefundRecord
     assert(refund.status === 'succeeded' && refund.amount === 500, 'refund por fetch')
+    assert(/^re_test_[0-9a-f]{8}_\d+$/.test(refund.id), `id de refund: ${refund.id}`)
     assert(stub.refunds.length === 1, 'refunds no registrado')
     assert(stub.refunds[0]!.payment_intent === s1.payment_intent, 'refunds: PI equivocado')
     const page = await (await fetch(s1.url)).text()
@@ -476,6 +503,7 @@ async function selftest(): Promise<void> {
 
     // 6. La firma valida con el verificador real del SDK (constructEventAsync, como en el backend).
     const event = buildCheckoutCompletedEvent(paid)
+    assert(/^evt_test_[0-9a-f]{8}_\d+$/.test(event.id), `id de evento: ${event.id}`)
     const { payload, signature } = signStripeEvent('whsec_stub', event)
     const verified = await stripe.webhooks.constructEventAsync(payload, signature, 'whsec_stub')
     assert(verified.type === 'checkout.session.completed' && verified.id === event.id, 'firma: evento no coincide')
