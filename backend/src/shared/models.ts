@@ -216,6 +216,11 @@ export function registerSharedModels(orm: ORM): void {
       roomId: { type: 'string', required: true, indexed: true },
       amenityKey: { type: 'string', required: true },
       isShared: { type: 'boolean', default: false },
+      // Amenidad personalizada (#290): key `custom:<slug>` + name + price >= 0. Las keys fijas del
+      // catálogo siguen con name '' / price 0 (features gratuitas). isActive = estado/disponibilidad.
+      // orm.migrate agrega las columnas nuevas vía ALTER TABLE, sin script de migración.
+      name: { type: 'string', default: '' },
+      price: { type: 'number', default: 0 },
       isActive: { type: 'boolean', default: true },
     },
   })

@@ -501,6 +501,28 @@ export interface ReservationDetailAddon {
   quantity?: number
 }
 
+/** Una factura de la reserva tal como la muestra el detalle (REQ-FDR-01, #252). Vienen de la más
+ *  reciente a la más vieja; espejo EXACTO del backend `reservas/usecases/reservation-invoices.ts`. */
+export interface ReservationInvoiceView {
+  id: string
+  /** Número visible/imprimible de la factura. */
+  number: string
+  /** 'invoice' | 'credit_note'. */
+  type: string
+  /** 'pending' | 'paid' | 'overdue' | 'cancelled' | 'draft'. */
+  status: string
+  /** TOTAL de la factura (impuestos incluidos). */
+  amount: number
+  taxes: number
+  amountPaid: number
+  /** `amount − amountPaid`, ya derivado por el backend. */
+  balance: number
+  currency: string
+  issuedAt: string
+  /** Comprobante fiscal (RD). `null` cuando la factura no lo lleva. */
+  ncf: string | null
+}
+
 export interface CurrencyConfig {
   secondaryCurrency?: string
   exchangeRate?: number
@@ -662,6 +684,8 @@ export interface ReservationDetail {
   payments?: ReservationDetailPayment[]
   messageLogs?: ReservationDetailMessageLog[]
   addons?: ReservationDetailAddon[]
+  /** Facturas de la reserva, de la más reciente a la más vieja (REQ-FDR-01, #252). */
+  invoices?: ReservationInvoiceView[]
 }
 
 // === FOLIO ===

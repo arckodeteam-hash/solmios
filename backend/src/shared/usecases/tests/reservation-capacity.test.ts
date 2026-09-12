@@ -3,9 +3,11 @@
 // `assertReservationFitsCapacity` es el ÚNICO punto que valida capacidad para Administración
 // (`reservas/usecases/crud.ts`, creación y edición) y los agentes de IA (`ai-gerente`,
 // `ai-recepcionista`) — reutiliza `fitsRoomCapacity`/`effectiveRoomCapacity`/`resolveChildPolicy`,
-// las MISMAS funciones que ya usa el motor público y el reagendado. Cero reglas nuevas.
+// las MISMAS funciones que ya usa el motor público y el reagendado. REQ-03 (#235) suma el tope de
+// niños sin plaza (`freeChildrenLimitError`), también compartido con el motor público.
 
 import { describe, it, expect } from 'bun:test'
+import { ConflictError } from 'arckode-framework'
 import { assertReservationFitsCapacity } from '../reservation-capacity'
 
 const HOTEL = 'h1'
@@ -63,5 +65,38 @@ describe('assertReservationFitsCapacity', () => {
     const room = { type: 'double', capacity: 2 }
     const call = assertReservationFitsCapacity(undefined, room, { hotelId: HOTEL, adults: 4, children: 0 })
     await expect(call).rejects.toThrow('admite hasta 2')
+  })
+})
+
+describe('assertReservationFitsCapacity — REQ-03 (#235) máximo de niños que no consumen plaza', () => {
+  const room = { type: 'family', capacity: 4 }
+  const policy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxFreeChildrenPerRoom: 2 }
+
+  it('rechaza con ConflictError cuando hay más niños libres que el máximo (3 libres, max 2)', async () => {
+    const call = assertReservationFitsCapacity(configRepo({ childPolicy: policy }), room, {
+      hotelId: HOTEL, adults: 2, children: 3, childrenAges: [1, 2, 3],
+    })
+    await expect(call).rejects.toBeInstanceOf(ConflictError)
+    await expect(call).rejects.toThrow('no consumen plaza')
+    await expect(call).rejects.toThrow('Esta habitación admite hasta 2 niño(s) que no consumen plaza; la reserva tiene 3')
+  })
+
+  it('acepta cuando los niños libres no superan el máximo (2 libres, max 2)', async () => {
+    await expect(assertReservationFitsCapacity(configRepo({ childPolicy: policy }), room, {
+      hotelId: HOTEL, adults: 2, children: 2, childrenAges: [1, 2],
+    })).resolves.toBeUndefined()
+  })
+
+  it('sin childrenAges no aplica: la composición conservadora no tiene niños libres que contar', async () => {
+    await expect(assertReservationFitsCapacity(configRepo({ childPolicy: policy }), { type: 'family', capacity: 5 }, {
+      hotelId: HOTEL, adults: 2, children: 3,
+    })).resolves.toBeUndefined()
+  })
+
+  it('policy sin maxFreeChildrenPerRoom (null = sin límite): 3 libres pasan', async () => {
+    const { maxFreeChildrenPerRoom: _omit, ...unlimited } = policy
+    await expect(assertReservationFitsCapacity(configRepo({ childPolicy: unlimited }), room, {
+      hotelId: HOTEL, adults: 2, children: 3, childrenAges: [1, 2, 3],
+    })).resolves.toBeUndefined()
   })
 })

@@ -273,6 +273,49 @@ upsells + amenidades) → base imponible → impuestos → total cobrado, y
 `priceBreakdown.childAmenitiesTotal` lo desglosa (`public-booking.ts`,
 `public-booking-group.ts`).
 
+REQ-01 (#290) agrega, con el mismo patrón, las **amenidades personalizadas de la
+habitación**: filas `RoomAmenities` con `amenityKey` `custom:<slug>`, `name`, `price` >= 0
+e `isActive`, configuradas desde el formulario de CADA habitación (las keys fijas del
+catálogo siguen siendo features gratuitas). Como el huésped elige un TIPO y no una unidad,
+`GET /api/public/hotels/:slug/room-amenities` expone por `roomType` la unión (por key) de
+las custom activas de sus habitaciones vendibles con el precio MÍNIMO
+(`public-room-amenities.ts`). El cliente las pide por habitación (`roomAmenities: [{key}]`
+en el body single y en cada `rooms[i]` del grupo); el backend prefiere, entre las unidades
+libres del tipo, las que ofrecen TODAS las keys pedidas, cobra el precio REAL de las filas
+`RoomAmenities` de la unidad asignada (NUNCA el del body), ignora con warn una key fija,
+inactiva o no ofrecida por esa unidad, y persiste en cada fila `reservations` el snapshot
+`roomAmenities` `[{key,name,price,quantity,total}]` + `roomAmenitiesTotal`. Su importe entra
+en `subtotal` y `priceBreakdown.roomAmenitiesTotal` lo desglosa; en un grupo cada unidad
+física resuelve contra sus propias filas (dos unidades del mismo tipo pueden cobrar la misma
+key a precio distinto) y lleva su propio snapshot. Sin `roomAmenities` en el body nada de
+esto se lee y el flujo queda idéntico al anterior.
+
+REQ-03 (#235) agrega a `child_policy` el **máximo de niños que no consumen plaza por
+habitación** (`maxFreeChildrenPerRoom`): lo define cada hotel en Configuración junto a las demás
+políticas infantiles, es general del hotel (NO por tipo de habitación) y se aplica a CADA
+habitación/línea de la reserva. `null`/ausente = sin límite — el sistema NUNCA asume un número
+por default; al guardar (`hoteles-queries.ts`) se exige entero ≥ 0 y al leer
+(`resolveChildPolicy`) cualquier basura cae a `null`. Los `freeChildren` (bebés incluidos) siguen
+sin consumir `capacity`/`maxChildren`, pero cuentan para este tope: `freeChildrenLimitError`
+(`child-composition.ts`) devuelve el motivo específico y lo aplican el motor público (single y
+por línea del grupo, 409 antes de resolver unidad), `assertReservationFitsCapacity` (panel/API/IA
+con `childrenAges`; sin edades no aplica) y el reagendado sobre las edades proyectadas al nuevo
+check-in. El composer público (`useGuestComposer`) bloquea "Agregar" con el mismo motivo y lo
+re-evalúa en vivo al cambiar la edad de un menor.
+
+#### Scenario: Amenidad de habitación que solo ofrece una unidad del tipo
+
+- GIVEN tipo "double" con dos unidades libres, la más barata sin "Cuna" y la otra con
+  "Cuna" activa a 15 en sus `RoomAmenities`, y un POST single con `roomType: 'double'` y
+  `roomAmenities: [{key:'custom:cuna', price: 0.01}]`
+- THEN el backend asigna la unidad que ofrece la cuna, `priceBreakdown.roomAmenitiesTotal`
+  = 15 (el precio del server, no el del body), el subtotal y el total lo incluyen, y la
+  reserva persiste `roomAmenities` `[{key:'custom:cuna', name:'Cuna', price:15, quantity:1,
+  total:15}]` y `roomAmenitiesTotal` = 15
+- AND una key que ninguna unidad del tipo ofrece, una key fija o una inactiva se ignora sin
+  error y no se cobra; en un grupo, solo las filas de la línea que la pidió llevan snapshot,
+  cada una al precio de su propia habitación
+
 #### Scenario: Grupo de dos habitaciones con bebé en una
 
 - GIVEN hotel con cribAvailable y una reserva grupal de 2 líneas, una con bebé + cuna
@@ -288,6 +331,17 @@ upsells + amenidades) → base imponible → impuestos → total cobrado, y
   primera línea no lleva amenidades
 - AND una amenidad inactiva, de otro hotel o pedida en una línea sin menores se ignora
   sin error y no se cobra
+
+#### Scenario: Máximo de niños sin plaza por habitación (REQ-03)
+
+- GIVEN hotel con `child_policy.maxFreeChildrenPerRoom = 1`, `maxFreeAge = 5`, y una línea con
+  2 adultos y `childrenAges: [1, 2]` en una habitación de `capacity` 2
+- THEN la capacidad física NO se excede (los dos niños son libres) pero el motor rechaza con 409
+  "admite hasta 1 niño(s) que no consumen plaza; la reserva tiene 2"; con `[1]` se crea, y sin
+  `maxFreeChildrenPerRoom` configurado `[1, 2]` también se crea
+- AND en un grupo solo la línea que excede rechaza (el mensaje la nombra); el panel con
+  `childrenAges` y el reagendado aplican el mismo tope; un caller sin `childrenAges` no se ve
+  afectado
 
 #### Scenario: Regla de capacidad explica qué se incumple
 
@@ -319,8 +373,8 @@ La lectura es best-effort: es bitácora, no dinero — un fallo del puerto NUNCA
 
 ### Requirement: Registrar pago manual con evidencia (REQ-RWP-06)
 
-`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — el único endpoint del módulo
-con permiso de facturación, porque registra dinero; ownership post-findById con bypass
+`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — con `POST /:id/invoice`, los dos únicos endpoints
+del módulo con permiso de facturación, porque tocan dinero; ownership post-findById con bypass
 `super_admin`) recibe `{method: cash|transfer|card|other, amount > 0, reference?, note?}`
 y MUST: rechazar con 400 `reference` vacía para `transfer`/`card` (evidencia para
 conciliar con el banco; `cash`/`other` no la exigen), rechazar con 400
@@ -367,6 +421,61 @@ refrescan el detalle (badge y "Historial de cobros" con "Registró: {nombre}") y
 
 - GIVEN un rol sin `billing:create` (p.ej. housekeeper)
 - WHEN `POST /:id/mark-paid`
+- THEN 403 sin efectos
+
+### Requirement: Emitir factura desde la reserva, con o sin folio (REQ-FDR-02)
+
+`POST /api/reservas/:id/invoice` (permiso `billing:create` — el mismo que
+`POST /api/facturas`; ownership post-findById con bypass `super_admin`; body `{notes?}`
+validado, ≤ 500 caracteres) emite la factura de la reserva en UNA sola operación del
+servidor y el camino NO lo elige el cliente (`usecases/issue-invoice.ts`): con folio
+`open` (lector `folioReader`, mismo criterio que la guarda de deuda del checkout) delega
+en `folios.closeAndCreateInvoice` — el folio queda `closed` con `invoiceId` y la factura
+lleva los cargos del folio, exactamente como `POST /api/folios/:id/invoice`; sin folio (o
+con el folio ya cerrado) delega en `facturas.invoiceFromReservation`
+(`facturas/usecases/invoice-from-reservation.ts`): items = alojamiento
+(`chargeableTotal`) + extras (`reservation_addons`, descuentos con signo) + otros cobros,
+llevados a neto con la tasa de `configuration('taxes')` (fallback `hotels.taxRate`,
+nada hardcodeado) porque `reservations.totalAmount` es bruto; numeración y NCF por el
+contador atómico de `facturas`; moneda de la reserva. La factura VINCULA los
+`payments` de la reserva (`status` `completed`/`refunded`, `invoiceId` vacío) escribiendo
+`payments.invoiceId` por el puerto `facturas-payments`, `amountPaid` = Σ neto de refunds,
+`status:'paid'` si `amountPaid ≥ amount − BALANCE_EPSILON`; MUST NOT crear filas en
+`payments`. Idempotente: reserva con factura `type:'invoice'` no `cancelled` → 409 con
+`invoiceId` de la existente (anular ≠ borrar: una factura anulada sí deja emitir otra).
+Reserva `cancelled` → 409. Sin conector `reservas-facturas` → 400 (fail-closed, nunca
+"ok" sin factura). Audit `invoice.issued_from_reservation`. Respuesta 201 con
+`{invoiceId, invoiceNumber, source: 'folio'|'reservation', folioId?, linkedPayments?,
+amountPaid?}`. `reservas` NO importa `facturas` ni `folios`: `ReservationInvoicingPort`
+lo inyecta `connectors/reservas-facturas.ts`.
+
+#### Scenario: Reserva pagada online sin folio
+
+- GIVEN reserva `confirmed` sin folio, total bruto 590 con impuesto del hotel 18 % en
+  `configuration('taxes')`, y un `payment` `charge`/`completed` de 590 por Stripe con
+  `reservationId` y sin `invoiceId`
+- WHEN `POST /:id/invoice`
+- THEN 201 `source:'reservation'`, la factura es `type:'invoice'`, `status:'paid'`,
+  `amount ≈ 590`, `taxes ≈ 90`, el payment queda con `invoiceId` = la factura y la tabla
+  `payments` tiene la misma cantidad de filas que antes
+
+#### Scenario: Segunda emisión
+
+- GIVEN la reserva ya tiene una factura `invoice` viva
+- WHEN `POST /:id/invoice` otra vez
+- THEN 409 con `invoiceId` de la existente y no se crea ninguna factura
+
+#### Scenario: Con folio abierto
+
+- GIVEN reserva `checked_in` con folio `open`
+- WHEN `POST /:id/invoice`
+- THEN 201 `source:'folio'`, el folio queda `closed` con `invoiceId` y la factura incluye
+  los cargos del folio (camino `folios-facturas` existente)
+
+#### Scenario: Sin permiso de facturación
+
+- GIVEN un rol sin `billing:create` (p.ej. housekeeper)
+- WHEN `POST /:id/invoice`
 - THEN 403 sin efectos
 
 ### Requirement: Estado de pago por fila en el listado y origen web (REQ-RWP-04)
@@ -417,6 +526,39 @@ debajo del estado y no se oculta.
 - GIVEN filas `direct`+`accessToken`, `direct` sin token y `booking`
 - WHEN corre el backfill dos veces
 - THEN sólo la primera pasa a `web` en la primera corrida y la segunda corrida cambia 0 filas
+
+### Requirement: Facturas de la reserva en el detalle (REQ-FDR-01)
+
+El detalle extendido (`GET /api/reservations/:id`, `usecases/detail.ts`) MUST devolver
+`invoices: ReservationInvoiceView[]` — `{ id, number, type, status, amount, taxes,
+amountPaid, balance, currency, issuedAt, ncf }` — con las facturas de la reserva de la más
+reciente a la más vieja (`issueDate` desc, desempate `createdAt` desc). Es una PROYECCIÓN
+(`usecases/reservation-invoices.ts`): `number` ← `invoices.invoiceNumber`, `issuedAt` ←
+`invoices.issueDate`, `balance = amount − amountPaid` derivado; MUST NOT exponer la fila cruda
+del módulo `facturas` (`hotelId`, `reservationId`, `notes`, …). Las filas se leen por el
+puerto reserva→facturas ya cableado por `connectors/reservas-money.ts`
+(`ReservationMoneyPort.invoices` → `FacturasService.invoicesOfReservation`), SIEMPRE con el
+hotel de la reserva; `reservas` MUST NOT importar `modules/facturas`. Best-effort: si el
+puerto falla, `invoices: []` y el detalle se devuelve igual (200). El frontend espeja el
+tipo en `types/index.ts` (`ReservationInvoiceView`, `ReservationDetail.invoices?`).
+
+#### Scenario: Reserva con una factura
+
+- GIVEN una reserva con una factura `F-0001` de 500 con `amountPaid` 200
+- WHEN `GET /api/reservations/:id`
+- THEN `invoices[0].number` es `F-0001` y `invoices[0].balance` es 300
+
+#### Scenario: Más reciente primero
+
+- GIVEN dos facturas emitidas el 2026-08-01 y el 2026-09-05
+- WHEN se pide el detalle
+- THEN `invoices[0]` es la de septiembre
+
+#### Scenario: El puerto de facturas falla
+
+- GIVEN el puerto reserva→facturas lanza
+- WHEN se pide el detalle
+- THEN responde 200 con `invoices: []` y el resto del detalle intacto
 
 ### Requirement: Transversales de toda operación de reservas
 

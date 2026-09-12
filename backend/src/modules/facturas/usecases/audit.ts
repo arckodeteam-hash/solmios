@@ -13,6 +13,8 @@ export type AuditAction =
   | 'invoice.delete'
   | 'invoice.credit_note'
   | 'invoice.email'
+  /** #253 — factura emitida desde la reserva (sin folio), vinculando pagos existentes. */
+  | 'invoice.issued_from_reservation'
 
 export interface AuditEntry {
   hotelId?: string

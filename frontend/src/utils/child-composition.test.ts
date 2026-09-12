@@ -2,7 +2,7 @@
 // Misma fórmula, mismos casos — si el frontend y el backend alguna vez calculan distinto, el
 // huésped ve un precio en el widget y le cobran otro al crear la reserva.
 import { describe, it, expect } from 'vitest'
-import { resolveChildComposition, fitsRoomCapacity, classifyAge, DEFAULT_CHILD_POLICY, type ChildPolicy } from './child-composition'
+import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, DEFAULT_CHILD_POLICY, type ChildPolicy } from './child-composition'
 
 const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
 
@@ -125,5 +125,39 @@ describe('classifyAge / resolveChildComposition — bebé', () => {
   it('maxBabyAge=0 (default): nadie clasifica como bebé salvo edad exactamente 0', () => {
     const c = resolveChildComposition(2, [1, 2], DEFAULT_CHILD_POLICY)
     expect(c.babies).toBe(0)
+  })
+})
+
+// REQ-03 (#235) — espejo de los casos del backend para `freeChildrenLimitError`.
+describe('REQ-03 (#235) — freeChildrenLimitError', () => {
+  const composition = (freeChildren: number) => resolveChildComposition(2, Array.from({ length: freeChildren }, () => 1), POLICY)
+
+  it('maxFreeChildrenPerRoom null → sin límite (null)', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: null }, composition(5))).toBeNull()
+  })
+
+  it('maxFreeChildrenPerRoom ausente (default) → sin límite (null)', () => {
+    expect(DEFAULT_CHILD_POLICY.maxFreeChildrenPerRoom).toBeNull()
+    expect(freeChildrenLimitError(POLICY, composition(5))).toBeNull()
+  })
+
+  it('max 2 con 3 libres → mensaje que nombra el máximo y los que tiene la reserva', () => {
+    const err = freeChildrenLimitError({ maxFreeChildrenPerRoom: 2 }, composition(3))
+    expect(err).toContain('no consumen plaza')
+    expect(err).toContain('hasta 2')
+    expect(err).toContain('tiene 3')
+  })
+
+  it('max 2 con 2 libres → entra (null, frontera inclusive)', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 2 }, composition(2))).toBeNull()
+  })
+
+  it('max 0 con 1 libre → error (0 es un límite real, no "sin límite")', () => {
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 0 }, composition(1))).toContain('no consumen plaza')
+  })
+
+  it('los niños con plaza no cuentan contra el tope', () => {
+    const c = resolveChildComposition(2, [8, 9, 10], POLICY) // todos > maxFreeAge=3
+    expect(freeChildrenLimitError({ maxFreeChildrenPerRoom: 0 }, c)).toBeNull()
   })
 })

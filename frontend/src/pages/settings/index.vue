@@ -298,6 +298,12 @@
 
     <!-- ========== AMENITIES ========== -->
     <div v-if="activeTab === 'amenities'" class="space-y-6">
+      <!-- Las amenidades por habitación (con precio y disponibilidad) viven en Habitaciones (#290). -->
+      <div class="rounded-2xl bg-cyan/10 border border-cyan/20 px-5 py-4 text-sm text-navy" data-testid="amenities-config-hint">
+        Las amenidades de cada habitación (cuna, cama extra, precios y disponibilidad) se configuran en
+        <router-link to="/panel/config/habitaciones" class="font-bold text-navy underline underline-offset-2 hover:text-cyan">Habitaciones → Crear/Editar habitación</router-link>.
+        Acá solo se define el catálogo general del hotel.
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div v-for="(items, category) in amenityCatalog" :key="category" class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
           <h3 class="font-extrabold text-navy mb-4 capitalize">{{ categoryLabels[category] || category }}</h3>
@@ -509,6 +515,16 @@
             <div>
               <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima considerada bebé</label>
               <input v-model.number="childPolicy.maxBabyAge" type="number" min="0" :max="childPolicy.maxFreeAge" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
+            </div>
+            <!-- REQ-03 (#235) — tope de niños/bebés que NO consumen plaza por habitación. Vacío = sin
+                 límite (null); nunca se precarga un número por default. -->
+            <div>
+              <label for="settings-max-free-children" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Máximo de niños que no consumen plaza por habitación</label>
+              <input id="settings-max-free-children" name="maxFreeChildrenPerRoom" v-model="childPolicy.maxFreeChildrenPerRoom" type="number" min="0" step="1" placeholder="Sin límite" aria-label="Máximo de niños que no consumen plaza por habitación" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
+              <p class="text-[10px] text-text-muted mt-1">
+                Se aplica a cada habitación de la reserva, sin importar su tipo. Vacío = sin límite.
+                Los niños y bebés que no consumen plaza no ocupan capacidad, pero cuentan para este máximo.
+              </p>
             </div>
             <p v-if="childPolicyError" class="text-[10px] font-bold text-danger">{{ childPolicyError }}</p>
             <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
@@ -874,16 +890,27 @@ async function saveAutomation() {
 // del precio completo de ocupante, SOLO si el hotel lo habilita.
 // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable` reemplaza el checklist
 // de "amenidades para bebé" (isChildAmenity sobre upsells) por un único toggle a nivel hotel.
+// REQ-03 (#235) — `maxFreeChildrenPerRoom`: tope de niños/bebés que no consumen plaza por
+// habitación (entero ≥ 0). `null` = sin límite; el input vacío se guarda como null, NUNCA se
+// precarga un número por default. El backend lo aplica por habitación en motor público, panel,
+// API/IA y reagendado.
 const childPolicy = reactive({
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
   childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  maxFreeChildrenPerRoom: null as number | string | null,
 })
+/** REQ-03 — input vacío/null → null (sin límite); cualquier otra cosa → Number (validado aparte). */
+function normalizeMaxFreeChildren(v: number | string | null): number | null {
+  if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null
+  return Number(v)
+}
 const childPolicySaving = ref(false)
 async function loadChildPolicy() {
   try {
     const c = await ConfigService.get('child_policy') as {
       acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number; maxBabyAge?: number
       childrenDiscountEnabled?: boolean; childrenRatePercent?: number; cribAvailable?: boolean
+      maxFreeChildrenPerRoom?: number | null
     } | null
     if (c) {
       childPolicy.acceptChildren = c.acceptChildren !== false
@@ -893,6 +920,8 @@ async function loadChildPolicy() {
       childPolicy.childrenDiscountEnabled = c.childrenDiscountEnabled === true
       childPolicy.childrenRatePercent = Number.isFinite(c.childrenRatePercent) ? Number(c.childrenRatePercent) : 50
       childPolicy.cribAvailable = c.cribAvailable === true
+      childPolicy.maxFreeChildrenPerRoom = Number.isInteger(c.maxFreeChildrenPerRoom) && Number(c.maxFreeChildrenPerRoom) >= 0
+        ? Number(c.maxFreeChildrenPerRoom) : null
     }
   } catch { /* default: acepta niños, sin plaza gratis hasta 0 años, nadie es "bebé", sin descuento ni cuna */ }
 }
@@ -907,6 +936,9 @@ const childPolicyError = computed(() => {
     const pct = childPolicy.childrenRatePercent
     if (!Number.isFinite(pct) || pct < 1 || pct > 100) return 'El porcentaje de tarifa para niños debe estar entre 1% y 100%'
   }
+  // REQ-03 (#235) — vacío/null es válido (sin límite); si hay valor, entero ≥ 0 (mismo criterio que el backend).
+  const maxFree = normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom)
+  if (maxFree !== null && (!Number.isInteger(maxFree) || maxFree < 0)) return 'El máximo de niños que no consumen plaza por habitación debe ser un entero mayor o igual a 0'
   return ''
 })
 async function saveChildPolicy() {
@@ -918,6 +950,7 @@ async function saveChildPolicy() {
       maxFreeAge: childPolicy.maxFreeAge, maxBabyAge: childPolicy.maxBabyAge,
       childrenDiscountEnabled: childPolicy.childrenDiscountEnabled, childrenRatePercent: childPolicy.childrenRatePercent,
       cribAvailable: childPolicy.cribAvailable,
+      maxFreeChildrenPerRoom: normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom),
     })
     await nextTick()
     markClean()
@@ -995,11 +1028,12 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
       // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      // "Amenities de habitación", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
+      // "Catálogo de amenities", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
       // las que salen en la landing) se editan en Página pública → General. Dos catálogos
       // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
-      // aclaratoria para que no se confundieran.
-      { value: 'amenities', label: 'Amenities de habitación' },
+      // aclaratoria para que no se confundieran. Y "catálogo" porque las amenidades de CADA
+      // habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones (#290).
+      { value: 'amenities', label: 'Catálogo de amenities' },
       // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },

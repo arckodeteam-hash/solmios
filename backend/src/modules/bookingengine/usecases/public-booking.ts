@@ -19,6 +19,10 @@
 //     habitación. Se gatean por composición (al menos un menor declarado + acceptChildren), se
 //     validan contra el catálogo activo del hotel, se suman al subtotal y se persisten como
 //     snapshot con precio en `Reservations.childAmenities` + `childAmenitiesTotal`.
+//   - `roomAmenities` (REQ-01 #290): keys `custom:*` de las amenidades PERSONALIZADAS de la
+//     habitación (filas `RoomAmenities` con name/price). Mismo patrón que childAmenities, pero
+//     el catálogo es POR HABITACIÓN FÍSICA: se prefiere la unidad del tipo que las ofrece y se
+//     cobra el precio real de la asignada (nunca el del body). Ver `public-room-amenities.ts`.
 //
 // Robustez F0 (pagos en prod, spec booking-unification §"PRECAUCIÓN CRÍTICA"):
 //   Si `gw.createCharge` falla (hotel sin Stripe configurado, gateway caído, error de red,
@@ -54,8 +58,9 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
-import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
+import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 
 const MS_PER_DAY = 86_400_000
 
@@ -154,7 +159,7 @@ export interface PublicBookingExtraDeps {
  * Todos los importes en `hotels.currency` (multi-moneda es display only — el cobro es en base).
  */
 export interface TotalBreakdown {
-  /** room.basePrice × nights + upsellsTotal + childAmenitiesTotal (antes de promo e impuestos). */
+  /** room.basePrice × nights + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal (antes de promo e impuestos). */
   subtotal: number
   /** Descuento del promo (0 si no hay promo). Siempre >= 0. */
   promoDiscount: number
@@ -163,6 +168,10 @@ export interface TotalBreakdown {
   /** REQ-01 (#233) — Σ amenidad.price × unidades (amenidades para niños/bebés, por habitación).
    *  0 si no se pidió ninguna o si la reserva no tiene menores. Ya incluido en `subtotal`. */
   childAmenitiesTotal: number
+  /** REQ-01 (#290) — Σ amenidad.price × unidades de las amenidades PERSONALIZADAS de la
+   *  habitación asignada (`RoomAmenities` custom). 0 si no se pidió ninguna. Ya incluido en
+   *  `subtotal`. */
+  roomAmenitiesTotal: number
   /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). Es la suma de `taxBreakdown`. */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. `taxes` es su suma exacta. */
@@ -295,6 +304,9 @@ export async function createPublicBookingDirect(
     // REQ-01 (#233) — amenidades para niños/bebés elegidas para ESTA habitación: `[{id}]`. Se
     // validan contra el catálogo del hotel y se gatean por composición (ver más abajo).
     childAmenities: rawChildAmenities,
+    // REQ-01 (#290) — amenidades personalizadas de la habitación: `[{key: 'custom:<slug>'}]`. Se
+    // resuelven contra las filas `RoomAmenities` de la unidad asignada (precio del server).
+    roomAmenities: rawRoomAmenities,
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09) — Sí/No únicamente; solo tiene efecto
     // si la composición tiene al menos un bebé (Tarea 21) Y el hotel habilitó la cuna; ver el
     // gateo más abajo, después de calcular `childComposition`.
@@ -384,6 +396,14 @@ export async function createPublicBookingDirect(
         babies: 0,
         chargeableOccupancy: Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0),
       }
+  // REQ-03 (#235) — tope de niños que NO consumen plaza por habitación (`maxFreeChildrenPerRoom`,
+  // null = sin límite). Es una regla del HOTEL, no de la unidad física: se decide acá, ANTES de
+  // resolver habitación/capacidad, y solo con edades reales (`hasChildrenAges`) — un caller
+  // legacy con contador plano no tiene niños "libres" que contar. No toca `fitsRoomCapacity`.
+  if (hasChildrenAges && childPolicy) {
+    const freeLimitError = freeChildrenLimitError(childPolicy, childComposition)
+    if (freeLimitError) return { status: 409, body: { error: freeLimitError } }
+  }
   // Ocupación para CAPACIDAD (cuántas plazas físicas ocupa): adultos + niños con plaza + niños
   // sin plaza — un niño "libre" no cuenta para el precio pero sigue siendo una persona física en
   // el cuarto. Legacy (sin edades): adults+kids, igual que el `totalGuests` de siempre.
@@ -438,6 +458,11 @@ export async function createPublicBookingDirect(
   // habitación para 2.
   const totalGuests = capacityGuests
 
+  // REQ-01 (#290) — keys `custom:*` pedidas. Sin keys, NADA de lo que sigue lee `RoomAmenities`
+  // (cero cambio de comportamiento para un caller que no las manda).
+  const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities)
+  let amenitiesByRoom = new Map<string, any[]>()
+
   // ─── Resolución de la habitación (FIX 2026-07-30, ver cabecera del archivo) ────────
   // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, se usa tal
   //    cual — comportamiento intacto.
@@ -464,7 +489,7 @@ export async function createPublicBookingDirect(
     // usa el precio más bajo del type). Capacidad ANTES que precio: dentro del mismo tipo puede
     // haber unidades de capacidad distinta (`public-rates-occupancy-integrity.test.ts` cubre un
     // tipo "familiar" con unidades de capacidad 2 y 4 a la vez).
-    const freeOfType = availableOfType
+    let freeOfType = availableOfType
       // `room_blocks` descuenta unidades igual que una reserva: la habitación puede no tener
       // reservas y aun así estar cerrada por mantenimiento para ese rango.
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id))
@@ -475,9 +500,29 @@ export async function createPublicBookingDirect(
       // fechas — 409, no 404.
       return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
     }
+    // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas
+    // (orden estable: dentro de cada grupo sigue mandando el precio). El catálogo público mostró
+    // la unión del tipo; acá se intenta honrarla con una unidad que realmente la tenga.
+    if (roomAmenityKeys.length > 0) {
+      amenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
+      freeOfType = preferRoomsOffering(freeOfType, amenitiesByRoom, roomAmenityKeys)
+    }
     room = freeOfType[0]
   }
   const resolvedRoomId: string = room.id
+
+  // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra las filas de ESA unidad ──
+  // Cubre los dos paths (`roomType` resuelto arriba y `roomId` explícito): key no ofrecida o
+  // inactiva en la asignada → se ignora con warn; el precio SIEMPRE sale de `RoomAmenities`.
+  let roomAmenityLines: RoomAmenityLine[] = []
+  let roomAmenitiesTotal = 0
+  if (roomAmenityKeys.length > 0) {
+    if (!amenitiesByRoom.has(resolvedRoomId)) amenitiesByRoom = await loadRoomAmenitiesFor(orm, [resolvedRoomId])
+    const resolved = resolveRoomAmenityLines(amenitiesByRoom.get(resolvedRoomId) ?? [], roomAmenityKeys, 1, logger)
+    roomAmenityLines = resolved.lines
+    roomAmenitiesTotal = resolved.total
+  }
+  const roomAmenitiesSummary = roomAmenityLines.map((l) => `${l.name}=${l.total.toFixed(2)}`)
 
   // Red de seguridad final: cubre el path de `roomId` explícito (arriba nunca filtró por
   // capacidad porque no pasa por la resolución de `roomType`) y actúa como defensa en
@@ -606,7 +651,7 @@ export async function createPublicBookingDirect(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal
+    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
     const result = await validatePromoCode(
       { promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal,
     )
@@ -629,13 +674,13 @@ export async function createPublicBookingDirect(
   }
 
   // ─── F2 2.5 — Cálculo del total con impuestos ──────────────────────────────────────
-  // Orden: subtotal (room + upsells + amenidades niños) - promoDiscount = base imponible; taxes sobre base;
+  // Orden: subtotal (room + upsells + amenidades niños + amenidades habitación) - promoDiscount = base imponible; taxes sobre base;
   // total = base + taxes. Mismo fallback que folios/facturas: configuration('taxes') y si
   // está vacío, hotels.taxRate.
   // Tarea 24 (#88): impuesto por impuesto (nombre, %, importe), con el MISMO lector y la MISMA
   // cuenta que `/rates` y que el widget: cada línea redondeada aparte, `taxes` = suma de líneas.
   // Así lo que el huésped ve fila por fila antes de pagar es exactamente lo que cobra Stripe.
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -648,6 +693,7 @@ export async function createPublicBookingDirect(
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
     childAmenitiesTotal: round2(childAmenitiesTotal),
+    roomAmenitiesTotal: round2(roomAmenitiesTotal),
     taxes,
     taxBreakdown,
     total: totalAmount,
@@ -670,6 +716,9 @@ export async function createPublicBookingDirect(
   // REQ-01 (#233) — el detalle estructurado vive en `childAmenities` (snapshot json); acá queda
   // el vistazo rápido para el recepcionista, igual que los upsells.
   if (childAmenitiesSummary.length > 0) notesParts.push(`Amenidades niños: ${childAmenitiesSummary.join(', ')}`)
+  // REQ-01 (#290) — ídem para las amenidades personalizadas de la habitación (snapshot en
+  // `roomAmenities`; acá solo el vistazo rápido).
+  if (roomAmenitiesSummary.length > 0) notesParts.push(`Amenidades habitación: ${roomAmenitiesSummary.join(', ')}`)
   // Tarea 22 — el detalle estructurado vive en needsCrib/cribCount (columnas propias, ver
   // reservas/model.ts), pero también queda acá para que el recepcionista lo vea de un vistazo en
   // las notas, igual que el resto de los extras de esta reserva. Sí/No únicamente (2026-09-09) —
@@ -747,6 +796,10 @@ export async function createPublicBookingDirect(
         // habitación (ya validadas/gateadas arriba) + su total, que ya está dentro de `totalAmount`.
         childAmenities: childAmenityLines,
         childAmenitiesTotal: round2(childAmenitiesTotal),
+        // REQ-01 (#290) — snapshot con precio congelado de las amenidades personalizadas de la
+        // habitación ASIGNADA (validadas arriba contra sus filas `RoomAmenities`) + su total.
+        roomAmenities: roomAmenityLines,
+        roomAmenitiesTotal: round2(roomAmenitiesTotal),
         totalAmount, deposit: 0,
         // Tarea 24 (#88): el desglose que el huésped vio y aceptó se guarda con la reserva, para
         // que la confirmación (y cualquier pantalla posterior) muestre lo mismo que el paso de

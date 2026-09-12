@@ -4,6 +4,7 @@ import { addonsTotal, chargeableTotal, pendingBalance, creditBalance, paymentSta
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { reservationPaymentHistory, type PaymentHistoryEntry } from '../../../shared/usecases/reservation-payment-history'
 import { toMessageLogViews, type MessageLogSource } from './message-log'
+import { toReservationInvoiceViews, type ReservationInvoiceView } from './reservation-invoices'
 import { resolveChildPolicy, describeChildrenAges, type ChildAgeDescription } from '../../../shared/usecases/child-composition'
 import { toPaymentAttemptViews, type PaymentAttemptView } from '../../../shared/usecases/payment-attempt-view'
 
@@ -62,6 +63,18 @@ export async function getExtendedDetail(
   } catch {
     // Vacío: el modal no muestra el bloque en vez de romper el detalle entero.
   }
+  // REQ-FDR-01 (issue #252): el modal muestra e imprime la factura de la reserva. Se lee por el
+  // MISMO puerto reserva→facturas con el que `paid` llega a `invoices` (`money-port.ts`), no
+  // importando el módulo facturas, y SIEMPRE con el hotel de la reserva (multi-tenancy). Se
+  // proyecta (`reservation-invoices.ts`), no se devuelve la fila cruda de otro módulo. Best-effort:
+  // que el puerto falle no puede tumbar el detalle entero.
+  let invoices: ReservationInvoiceView[] = []
+  try {
+    const rows = await queries.paidRepos.invoiceRepo.findMany({ hotelId: r.hotelId, reservationId: r.id } as any)
+    invoices = toReservationInvoiceViews(rows as Record<string, any>[])
+  } catch {
+    // Se devuelve vacío: el modal muestra "sin facturas" en vez de romperse.
+  }
   const CARD_FIELDS = ['cardHolder', 'cardBrand', 'cardLast4', 'cardExpMonth', 'cardExpYear']
   const safeReservation = Object.fromEntries(Object.entries(r).filter(([k]) => !CARD_FIELDS.includes(k)))
   // Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — desglose POR NIÑO
@@ -107,6 +120,9 @@ export async function getExtendedDetail(
     paymentHistory,
     /** REQ-RWP-02 — intentos de cobro en la pasarela (más reciente primero), proyectados. */
     paymentAttempts,
+    /** REQ-FDR-01 (#252) — facturas de la reserva, de la más reciente a la más vieja, proyectadas
+     *  (número, estado, total, saldo, NCF). [] si no hay o si el puerto falló. */
+    invoices,
     /** Requerimiento 13 — desglose por niño (edad declarada, edad efectiva hoy, balde). [] si no
      *  hay `childrenAges`. */
     childrenAgesDetail,

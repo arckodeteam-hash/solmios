@@ -330,3 +330,54 @@ describe('reschedule — Requerimiento 12: proyección de edades al check-in nue
     expect(result2.reservation.children).toBe(1)
   })
 })
+
+// ─── REQ-03 (#235) — máximo de niños que NO consumen plaza por habitación ─────────────────────
+// Reagendar revalida el tope del hotel (`maxFreeChildrenPerRoom`, null = sin límite) sobre la
+// composición proyectada al nuevo check-in, con el MISMO motivo que el motor público.
+describe('reschedule — REQ-03 (#235): máximo de niños que no consumen plaza', () => {
+  const policyDeps = (maxFreeChildrenPerRoom: number | null) => ({
+    configRepo: { findOne: async (f: any) => (f.key === 'child_policy'
+      ? { hotelId: HOTEL, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxFreeChildrenPerRoom } }
+      : null) },
+  })
+  // capacity 5: la capacidad física nunca es el motivo acá (2 adultos + 3 niños entran incluso
+  // con el conteo conservador de `updateReservation`, que no recibe `configRepo` desde el commit).
+  const rooms = () => ({
+    'room-1': { id: 'room-1', hotelId: HOTEL, basePrice: 100, capacity: 5 },
+    'room-2': { id: 'room-2', hotelId: HOTEL, basePrice: 120, capacity: 5 },
+  })
+
+  it('3 niños libres con máximo 2: rechaza (quote Y commit) con el motivo del tope, no escribe nada', async () => {
+    const reserva = makeReservation({ adults: 2, children: 3, childrenAges: [1, 2, 3], childrenAgesAsOf: '2030-01-10' })
+    let updates = 0
+    const deps: RescheduleDeps = { ...makeDeps(reserva, rooms(), { update: async () => { updates++; return reserva } }), ...policyDeps(2) }
+    await expect(quoteReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin))
+      .rejects.toThrow('Esta habitación admite hasta 2 niño(s) que no consumen plaza; la reserva tiene 3')
+    await expect(commitReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin))
+      .rejects.toThrow('no consumen plaza')
+    expect(updates).toBe(0)
+  })
+
+  it('3 niños libres con máximo 3: pasa (control)', async () => {
+    const reserva = makeReservation({ adults: 2, children: 3, childrenAges: [1, 2, 3], childrenAgesAsOf: '2030-01-10' })
+    const deps: RescheduleDeps = { ...makeDeps(reserva, rooms()), ...policyDeps(3) }
+    const result = await commitReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin)
+    expect(result.reservation.roomId).toBe('room-2')
+  })
+
+  it('sin límite configurado (null): 3 niños libres pasan', async () => {
+    const reserva = makeReservation({ adults: 2, children: 3, childrenAges: [1, 2, 3], childrenAgesAsOf: '2030-01-10' })
+    const deps: RescheduleDeps = { ...makeDeps(reserva, rooms()), ...policyDeps(null) }
+    const result = await commitReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin)
+    expect(result.reservation.roomId).toBe('room-2')
+  })
+
+  it('proyección al nuevo check-in: un niño que cruza maxFreeAge deja de contar como libre y el reagendado pasa', async () => {
+    // 3 libres hoy (max 2 → rechazaría), pero al mover el check-in 3 años el de 3 pasa a 6 (> maxFreeAge 5)
+    // y quedan 2 libres: entra en el tope; la capacidad sigue alcanzando (2 adultos + 1 con plaza).
+    const reserva = makeReservation({ adults: 2, children: 3, childrenAges: [1, 2, 3], childrenAgesAsOf: '2030-01-10' })
+    const deps: RescheduleDeps = { ...makeDeps(reserva, rooms()), ...policyDeps(2) }
+    const result = await commitReschedule(deps, 'r1', { checkIn: '2033-01-10', checkOut: '2033-01-12' }, hotelAdmin)
+    expect(result.reservation.checkIn).toBe('2033-01-10')
+  })
+})

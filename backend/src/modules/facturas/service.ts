@@ -1,10 +1,10 @@
 // facturas/service.ts — Casos de uso de facturación del hotel.
 // Delega la lógica pura a ./usecases/ para mantenerse < 200 líneas.
 
-import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
+import { NotFoundError, type RepositoryAdapter, type Logger, type CacheAdapter, type Auth } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { invoicesOfReservation, reservationIdOfInvoice } from './usecases/reservation-money'
-import { NotFoundError } from 'arckode-framework'
+import { invoiceFromReservation, type InvoiceFromReservationInput, type InvoiceFromReservationResult } from './usecases/invoice-from-reservation'
 import type { FacturasDTO, CreateFacturasDTO, UpdateFacturasDTO, PayFacturasDTO, FacturasQuery, FacturasListResult, CurrentUser, FacturasStats } from './types'
 import type { FacturasSockets } from './sockets'
 import { enrichInvoice, assertOwnership, hotelFilterFor, type EnrichDeps } from './usecases/billing'
@@ -44,6 +44,7 @@ export class FacturasService {
     private readonly itemRepo: RepositoryAdapter<any>,
     // Fallback de taxRateFor a hotels.taxRate (ver comentario en usecases/billing.ts).
     private readonly hotelsForTaxRepo?: RepositoryAdapter<any>,
+    private readonly addonsRepo?: RepositoryAdapter<any>, // #253 — `ReservationAddons` (extras de la reserva)
   ) {
     this.enrichDeps = deps
   }
@@ -70,12 +71,20 @@ export class FacturasService {
   invoicesOfReservation(hotelId: string, reservationId: string): Promise<FacturasDTO[]> { return invoicesOfReservation(this.repo, hotelId, reservationId) }
   reservationIdOfInvoice(hotelId: string, invoiceId: string): Promise<string | null> { return reservationIdOfInvoice(this.repo, hotelId, invoiceId) }
 
+  /** #253 — POST /api/reservas/:id/invoice (puerto de `connectors/reservas-facturas`). Ownership la valida el caller sobre la reserva; acá el hotel es el del usuario. */
+  async invoiceFromReservation(hotelId: string, input: InvoiceFromReservationInput, user: CurrentUser): Promise<InvoiceFromReservationResult> {
+    const result = await invoiceFromReservation({
+      repo: this.repo, configRepo: this.configRepo, itemRepo: this.itemRepo, logger: this.logger, hotelsRepo: this.hotelsForTaxRepo,
+      reservationRepo: this.enrichDeps.reservation, addonsRepo: this.addonsRepo ?? { findMany: async () => [] },
+      paymentPort: this.paymentPort, auditPort: this.auditPort,
+    }, hotelId, input, user)
+    await this.sockets.onFacturasCreated?.(result.invoice)
+    await invalidateFacturasCaches(this.cache, hotelId)
+    return result
+  }
+
   async list(query?: FacturasQuery, user?: CurrentUser): Promise<FacturasListResult> {
-    return listInvoices(
-      { repo: this.repo, itemRepo: this.itemRepo, cache: this.cache, logger: this.logger, enrichDeps: this.enrichDeps },
-      query,
-      user,
-    )
+    return listInvoices({ repo: this.repo, itemRepo: this.itemRepo, cache: this.cache, logger: this.logger, enrichDeps: this.enrichDeps }, query, user)
   }
 
   async getById(id: string, user?: CurrentUser): Promise<FacturasDTO> {
@@ -90,9 +99,7 @@ export class FacturasService {
     // Ownership en el ALTA (ver resolveInvoiceHotelId): el hotel sale del JWT, no de dto.hotelId.
     const hotelId = await resolveInvoiceHotelId(this.userRepo, user, dto.hotelId)
     const { item, invoiceNumber, amount, currency } = await createInvoice(
-      { repo: this.repo, configRepo: this.configRepo, itemRepo: this.itemRepo, logger: this.logger, hotelsRepo: this.hotelsForTaxRepo },
-      dto,
-      hotelId,
+      { repo: this.repo, configRepo: this.configRepo, itemRepo: this.itemRepo, logger: this.logger, hotelsRepo: this.hotelsForTaxRepo }, dto, hotelId,
     )
     await auditSafely(this.auditPort, this.logger, {
       hotelId, userId: user.id, action: 'invoice.create', entityId: item.id,
@@ -121,9 +128,7 @@ export class FacturasService {
     if (!inv) throw new NotFoundError('Factura no encontrada')
     await assertOwnership(this.userRepo, this.auth,inv.hotelId, user.id, user.role)
 
-    const { updated, applied, balance, paymentId } = await payInvoice(
-      this.repo, this.logger, this.paymentPort, inv, dto,
-    )
+    const { updated, applied, balance, paymentId } = await payInvoice(this.repo, this.logger, this.paymentPort, inv, dto)
 
     await auditSafely(this.auditPort, this.logger, {
       hotelId: inv.hotelId, userId: user.id, action: 'invoice.pay', entityId: id,
@@ -150,9 +155,7 @@ export class FacturasService {
     await deleteItems(this.itemRepo, id)
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Factura no encontrada')
-    this.logger.info('Factura eliminada', {
-      id, invoiceNumber: existing.invoiceNumber, amount: existing.amount, hotelId: existing.hotelId,
-    })
+    this.logger.info('Factura eliminada', { id, invoiceNumber: existing.invoiceNumber, amount: existing.amount, hotelId: existing.hotelId })
     await auditSafely(this.auditPort, this.logger, {
       hotelId: existing.hotelId, userId: user.id, action: 'invoice.delete', entityId: id,
       detail: `${existing.invoiceNumber} · ${existing.amount} ${existing.currency} · estado ${existing.status}`,
@@ -163,9 +166,8 @@ export class FacturasService {
 
   async creditNote(id: string, reason: string, user: CurrentUser): Promise<CreditNoteResult> {
     return creditNoteFlow({
-      repo: this.repo, userRepo: this.userRepo, auth: this.auth, logger: this.logger,
-      cache: this.cache, auditPort: this.auditPort,
-      onUpdated: (inv) => this.sockets.onFacturasUpdated?.(inv),
+      repo: this.repo, userRepo: this.userRepo, auth: this.auth, logger: this.logger, cache: this.cache,
+      auditPort: this.auditPort, onUpdated: (inv) => this.sockets.onFacturasUpdated?.(inv),
     }, id, reason, user)
   }
 
@@ -184,9 +186,7 @@ export class FacturasService {
     if (!this.emailPort) throw new NotFoundError('Servicio de email no configurado')
     const invoice = await this.getById(id, user)
     if (!(await this.emailPort.isConfigured(invoice.hotelId))) {
-      this.logger.warn('Envío de factura omitido: el hotel no tiene email configurado', {
-        id, hotelId: invoice.hotelId,
-      })
+      this.logger.warn('Envío de factura omitido: el hotel no tiene email configurado', { id, hotelId: invoice.hotelId })
       return { sent: false, to, subject: '', messageId: '', configured: false }
     }
     const result = await sendInvoiceByEmail({ invoice, to, hotelRepo: this.hotelRepo ?? undefined, emailPort: this.emailPort })

@@ -43,7 +43,8 @@ import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
 import { normalizeChildAmenityIds, resolveChildAmenityLines } from './public-booking'
-import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 86_400_000
@@ -75,6 +76,10 @@ export interface RoomLineInput {
    *  menores. Gateado server-side contra los menores de ESTA línea Y `childPolicy.acceptChildren`;
    *  cada unidad física de la línea las lleva (Σ price × quantity de la línea). */
   childAmenities?: Array<{ id: string }>
+  /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
+   *  por línea. Se prefieren las unidades del tipo que las ofrecen y cada unidad física elegida
+   *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). */
+  roomAmenities?: Array<{ key: string }>
 }
 
 class RoomTakenConcurrentlyError extends Error {
@@ -105,11 +110,14 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     // REQ-01 (#233) — se conservan los ids únicos; el gateo por menores de la línea y la
     // validación contra el catálogo pasan más abajo, cuando se conoce la composición.
     const childAmenities = normalizeChildAmenityIds(r?.childAmenities).map((id) => ({ id }))
+    // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
+    const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities).map((key) => ({ key }))
     if (!roomType) continue
     out.push({
       roomType, adults, children, quantity, ...(childrenAges.length > 0 ? { childrenAges } : {}),
       ...(needsCrib ? { needsCrib } : {}),
       ...(childAmenities.length > 0 ? { childAmenities } : {}),
+      ...(roomAmenities.length > 0 ? { roomAmenities } : {}),
     })
   }
   return out.length > 0 ? out : null
@@ -224,6 +232,10 @@ export async function createPublicBookingGroup(
     // línea) y su total; cada fila física persiste su propio snapshot con quantity 1.
     childAmenities: ChildAmenityLine[]
     childAmenitiesTotal: number
+    // REQ-01 (#290) — snapshot de amenidades de habitación POR UNIDAD FÍSICA elegida (cada una
+    // cobra el precio de SUS filas `RoomAmenities`); `roomAmenitiesTotal` es la Σ de la línea.
+    roomAmenitiesByRoom: Map<string, RoomAmenityLine[]>
+    roomAmenitiesTotal: number
   }
   const resolvedLines: ResolvedLine[] = []
 
@@ -242,7 +254,7 @@ export async function createPublicBookingGroup(
     logger?.warn('createPublicBookingGroup: childAmenities en rooms[] sin extraDeps.childAmenities cableado — se ignoran (no se puede validar ni cotizar)', { hotelId })
   }
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const hasAges = (line.childrenAges?.length ?? 0) > 0
     // FIX (mismo bug que public-booking.ts, encontrado en revisión Requerimiento 2, 2026-09-03):
     // la composición legacy tiene que contar `line.children` para que `fitsRoomCapacity` (de acá
@@ -258,6 +270,19 @@ export async function createPublicBookingGroup(
           babies: 0,
           chargeableOccupancy: line.adults + Math.max(0, line.children ?? 0),
         }
+    // REQ-03 (#235) — tope de niños que NO consumen plaza POR HABITACIÓN (`maxFreeChildrenPerRoom`,
+    // null = sin límite): se aplica a CADA línea por separado, con sus propias edades. Es regla
+    // del hotel, no de la unidad física (no toca `fitsRoomCapacity`), así que se corta acá antes
+    // de buscar unidades; el mensaje nombra la línea para que el huésped sepa cuál corregir.
+    if (hasAges && childPolicy) {
+      const freeLimitError = freeChildrenLimitError(childPolicy, composition)
+      if (freeLimitError) {
+        return {
+          status: 409,
+          body: { error: `Línea ${lineIndex + 1} ("${line.roomType}"): ${freeLimitError}`, roomType: line.roomType },
+        }
+      }
+    }
     // Ocupación para PRECIO/cierre por ocupación: chargeable (adultos + niños con plaza) si la
     // línea declaró edades, o `line.adults` tal cual para un caller legacy — mismo criterio que
     // `public-booking.ts`.
@@ -279,7 +304,7 @@ export async function createPublicBookingGroup(
     const totalGuestsForLine = hasAges
       ? composition.effectiveAdults + composition.payingChildren + composition.freeChildren
       : Math.max(1, line.adults + Math.max(0, line.children ?? 0))
-    const freeOfType = roomsOfType
+    let freeOfType = roomsOfType
       .filter((r: any) => isRoomSellable(r.status))
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
       // Requerimiento 2: unificado con el path de edades — la política de tipo (si el hotel la
@@ -298,8 +323,29 @@ export async function createPublicBookingGroup(
       }
     }
 
+    // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas por
+    // ESTA línea (orden estable, mismo criterio que public-booking.ts). Sin keys no se lee nada.
+    const lineRoomAmenityKeys = (line.roomAmenities ?? []).map((a) => a.key)
+    let lineAmenitiesByRoom = new Map<string, any[]>()
+    if (lineRoomAmenityKeys.length > 0) {
+      lineAmenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
+      freeOfType = preferRoomsOffering(freeOfType, lineAmenitiesByRoom, lineRoomAmenityKeys)
+    }
     const chosen = freeOfType.slice(0, line.quantity)
     for (const r of chosen) claimedIds.add(r.id)
+
+    // REQ-01 (#290) — cada unidad física elegida resuelve contra SUS propias filas (quantity 1,
+    // total = price): dos unidades del mismo tipo pueden cobrar la misma key a precio distinto,
+    // y una que no la ofrezca la ignora con warn.
+    const roomAmenitiesByRoom = new Map<string, RoomAmenityLine[]>()
+    let lineRoomAmenitiesTotal = 0
+    if (lineRoomAmenityKeys.length > 0) {
+      for (const r of chosen) {
+        const resolved = resolveRoomAmenityLines(lineAmenitiesByRoom.get(r.id) ?? [], lineRoomAmenityKeys, 1, logger)
+        roomAmenitiesByRoom.set(r.id, resolved.lines)
+        lineRoomAmenitiesTotal += resolved.total
+      }
+    }
 
     const fallbackNightly = Number(chosen[0].basePrice) || 0
     // Tarea "Cobro % niños" (2026-09-09) — POR LÍNEA, mismo criterio que public-booking.ts: solo
@@ -354,6 +400,7 @@ export async function createPublicBookingGroup(
       needsCrib: lineNeedsCrib, cribCount: lineCribCount,
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
       childAmenities: lineChildAmenities, childAmenitiesTotal: lineChildAmenitiesTotal,
+      roomAmenitiesByRoom, roomAmenitiesTotal: round2(lineRoomAmenitiesTotal),
     })
   }
 
@@ -362,6 +409,8 @@ export async function createPublicBookingGroup(
   )
   // REQ-01 (#233) — Σ de las amenidades infantiles de TODAS las líneas (cada una ya × su quantity).
   const childAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.childAmenitiesTotal, 0))
+  // REQ-01 (#290) — Σ de las amenidades de habitación de TODAS las unidades de todas las líneas.
+  const roomAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.roomAmenitiesTotal, 0))
 
   // ─── Upsells (mismo criterio que el flujo de 1 habitación: Σ price × qty, por GRUPO no por línea) ──
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
@@ -388,7 +437,7 @@ export async function createPublicBookingGroup(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal
+    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
     const result = await validatePromoCode({ promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal)
     if (!result.valid) {
       return { status: 400, body: { error: 'promo_invalid', promoReason: result.reason ?? 'not_found' } }
@@ -399,7 +448,7 @@ export async function createPublicBookingGroup(
   }
 
   // Tarea 24 (#88): mismo lector y misma cuenta que public-booking.ts (impuesto por impuesto).
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -412,6 +461,7 @@ export async function createPublicBookingGroup(
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
     childAmenitiesTotal,
+    roomAmenitiesTotal,
     taxes,
     taxBreakdown,
     total: totalAmount,
@@ -433,6 +483,16 @@ export async function createPublicBookingGroup(
     .filter((l) => l.childAmenities.length > 0)
     .map((l) => `${l.roomType}: ${l.childAmenities.map((a) => `${a.name}=${a.total.toFixed(2)}`).join(', ')}`)
   if (childAmenitiesSummary.length > 0) notesParts.push(`Amenidades niños: ${childAmenitiesSummary.join('; ')}`)
+  // REQ-01 (#290) — vistazo rápido por tipo (Σ de la línea); el snapshot por unidad vive en
+  // `roomAmenities` de CADA fila.
+  const roomAmenitiesSummary = resolvedLines
+    .filter((l) => Array.from(l.roomAmenitiesByRoom.values()).some((ls) => ls.length > 0))
+    .map((l) => {
+      const byKey = new Map<string, number>()
+      for (const ls of l.roomAmenitiesByRoom.values()) for (const a of ls) byKey.set(a.name, (byKey.get(a.name) ?? 0) + a.total)
+      return `${l.roomType}: ${Array.from(byKey.entries()).map(([name, t]) => `${name}=${t.toFixed(2)}`).join(', ')}`
+    })
+  if (roomAmenitiesSummary.length > 0) notesParts.push(`Amenidades habitación: ${roomAmenitiesSummary.join('; ')}`)
   // Tarea 22 — mismo criterio que el resto: el detalle estructurado vive en las columnas propias
   // de CADA fila (needsCrib/cribCount), esto es solo para el vistazo rápido. Sí/No únicamente
   // (2026-09-09) — se lista qué tipos la pidieron, sin cantidad.
@@ -501,6 +561,9 @@ export async function createPublicBookingGroup(
             // SU total: el de la línea es × quantity, el de la fila es el de una habitación.
             childAmenities: line.childAmenities.map((a) => ({ ...a, quantity: 1, total: a.price })),
             childAmenitiesTotal: round2(line.childAmenities.reduce((s, a) => s + a.price, 0)),
+            // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
+            roomAmenities: line.roomAmenitiesByRoom.get(roomId) ?? [],
+            roomAmenitiesTotal: round2((line.roomAmenitiesByRoom.get(roomId) ?? []).reduce((s, a) => s + a.total, 0)),
             // Cada fila lleva SU propio importe (para que folios/reportes sumen bien) — el
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,

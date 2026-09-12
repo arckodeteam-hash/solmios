@@ -1,9 +1,9 @@
 import { assertDebtAcknowledged } from './usecases/checkout-debt-guard'
 import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-framework'
-import { validateSchema, OrmRepository } from 'arckode-framework'
+import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -456,6 +456,23 @@ export class ReservasController {
       if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
       if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
       if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
+  // ── ISSUE INVOICE (#253, REQ-FDR-02): factura desde la reserva, con o sin folio abierto ──
+  async issueInvoice(req: HttpRequest) {
+    try {
+      const body = validateSchema(IssueInvoiceSchema, req.body ?? {}) as { notes?: string }
+      const result = await this.service.issueInvoice(req.params.id, { notes: body.notes }, req.user as any)
+      return { status: 201, body: result }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message, ...(e.fields ? { fields: e.fields } : {}) } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      // `instanceof` y no `e.name`: el 409 idempotente de facturas (`ReservationAlreadyInvoicedError`)
+      // es una subclase y trae `invoiceId` para que el cliente pueda abrir la factura existente.
+      if (e instanceof ConflictError || e.name === 'ConflictError') return { status: 409, body: { error: e.message, ...(e.invoiceId ? { invoiceId: e.invoiceId } : {}) } }
       return { status: 500, body: { error: e.message } }
     }
   }
