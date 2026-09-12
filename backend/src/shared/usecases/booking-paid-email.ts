@@ -34,6 +34,7 @@ import { cancellationPolicyText } from './cancellation-text'
 import { hotelCancellationTypeOf } from './cancellation-math'
 import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-schedule'
 import { DEFAULT_PLATFORM_IDENTITY, resolvePlatformIdentity } from '../utils/platform-identity'
+import { confirmationFragments } from './confirmation-email-variables'
 
 export interface BookingPaidEmailDeps {
   emailSender: EmailSender
@@ -291,6 +292,14 @@ export async function sendBookingPaidEmail(
     const childrenAges: unknown[] = Array.isArray(reservation.childrenAges) ? reservation.childrenAges : []
 
     const attachments = receiptAttachmentOf(deps, reservationId, locator)
+    const manageUrl = canLink ? `${publicUrl}/h/${encodeURIComponent(hotel.slug)}/confirm?${query}` : ''
+    const receiptUrl = publicUrl
+      ? `${publicUrl}/api/public/reservations/${encodeURIComponent(reservation.id)}/receipt.pdf?${publicQuery({ token })}`
+      : ''
+    const adults = Number(reservation.adults ?? 0) || 0
+    const children = Number(reservation.children ?? 0) || childrenAges.length
+    const promoCode = String(reservation.promoCode ?? '').trim()
+    const promoDiscount = money(breakdown.promoDiscount, currency)
 
     await emailSender.enqueueNotification({
       to,
@@ -312,8 +321,8 @@ export async function sendBookingPaidEmail(
         // Horario EFECTIVO: lo acordado con este huésped pisa el general del hotel.
         checkin_time: effectiveCheckInTime(reservation, hotel),
         checkout_time: effectiveCheckOutTime(reservation, hotel),
-        adults: String(Number(reservation.adults ?? 0) || 0),
-        children: String(Number(reservation.children ?? 0) || childrenAges.length),
+        adults: String(adults),
+        children: String(children),
         children_ages: childrenAges.map(a => String(a)).join(', '),
         crib: reservation.needsCrib ? yes : no,
         meal_plan: String(reservation.mealPlan ?? '').trim() || ROOM_ONLY[language],
@@ -324,8 +333,8 @@ export async function sendBookingPaidEmail(
         extras_lines: linesHtml(upsellLines.map(l => upsellLine(l, currency, language))),
         child_amenities_lines: linesHtml(childAmenities.map(l => pricedLine(l, currency))),
         room_amenities_lines: linesHtml(roomAmenities.map(l => pricedLine(l, currency))),
-        promo_code: String(reservation.promoCode ?? '').trim(),
-        promo_discount: money(breakdown.promoDiscount, currency),
+        promo_code: promoCode,
+        promo_discount: promoDiscount,
         tax_lines: linesHtml(taxBreakdown.map(t => taxLine(t, currency))),
         subtotal: money(breakdown.subtotal, currency),
         total_amount: money(total, currency),
@@ -334,10 +343,11 @@ export async function sendBookingPaidEmail(
         payment_method: PAYMENT_LABELS[method]?.[language] ?? (method || '—'),
         cancellation_policy: cancellationPolicyText(cancellationType, language),
         locator,
-        manage_url: canLink ? `${publicUrl}/h/${encodeURIComponent(hotel.slug)}/confirm?${query}` : '',
-        receipt_url: publicUrl
-          ? `${publicUrl}/api/public/reservations/${encodeURIComponent(reservation.id)}/receipt.pdf?${publicQuery({ token })}`
-          : '',
+        manage_url: manageUrl,
+        receipt_url: receiptUrl,
+        // Bloques que sólo existen si hay dato (niños, promo, botones, mención al recibo): el
+        // renderer no tiene condicionales, así que llegan ya armados o vacíos.
+        ...confirmationFragments(language, { adults, children, childrenAges, promoCode, promoDiscount, manageUrl, receiptUrl }),
         // La habitación y el código NO viajan acá a propósito: van 24 h antes de la llegada.
         room_number: '',
         room_type: '',

@@ -12,7 +12,10 @@ import { confirmationVariableDefaults } from '../../../shared/usecases/confirmat
 const LANGS = ['es', 'en', 'pt'] as const
 const templateOf = (lang: string) => (NOTIFICATION_DEFAULTS as any).reservation_confirmed[lang] as { subject: string; body: string }
 
-async function variablesFor(language: string): Promise<Record<string, string | number>> {
+async function variablesFor(
+  language: string,
+  over: { configRow?: unknown; dto?: Record<string, unknown> } = {},
+): Promise<Record<string, string | number>> {
   const sent: any[] = []
   await enqueueReservationEmail({
     emailSender: { enqueueNotification: async (i: any) => { sent.push(i); return 'q1' } },
@@ -20,7 +23,8 @@ async function variablesFor(language: string): Promise<Record<string, string | n
     roomRepo: { findById: async () => ({ id: 'r1', hotelId: 'h1', number: '101', type: 'double', basePrice: 100 }) } as any,
     hotelRepo: { findById: async () => ({ id: 'h1', name: 'Hotel Test', phone: '555' }) } as any,
     logger: silentLogger(),
-  }, { hotelId: 'h1', guestId: 'g1', roomId: 'r1', checkIn: '2026-10-10', checkOut: '2026-10-12', communicateClient: 'email_confirmation', totalAmount: 200, deposit: 50, paymentMethod: 'card' } as any,
+    ...(over.configRow !== undefined ? { configRepo: { findOne: async () => over.configRow } } : {}),
+  }, { hotelId: 'h1', guestId: 'g1', roomId: 'r1', checkIn: '2026-10-10', checkOut: '2026-10-12', communicateClient: 'email_confirmation', totalAmount: 200, deposit: 50, paymentMethod: 'card', ...(over.dto ?? {}) } as any,
   { id: 'res-1', locator: 'ABC123' })
   expect(sent).toHaveLength(1)
   expect(sent[0].event).toBe('reservation_confirmed')
@@ -40,6 +44,40 @@ describe('reservation_confirmed desde el panel (#270)', () => {
     expect(variables.locator).toBe('ABC123')
     expect(variables.room_number).toBe('101')
     expect(String(variables.platform_name)).not.toBe('')
+  })
+
+  it('platform_name sale de Configuración → Plataforma, no de una marca fija', async () => {
+    const v = await variablesFor('es', { configRow: { value: JSON.stringify({ platformName: 'HotelSoft' }) } })
+    expect(v.platform_name).toBe('HotelSoft')
+    // Sin configRepo cae al default (no revienta).
+    expect(String((await variablesFor('es')).platform_name)).not.toBe('')
+  })
+
+  it.each([...LANGS])('%s: una reserva del panel NO ofrece "Ver mi reserva" ni "Descargar recibo" (sin enlace público)', async (lang) => {
+    const v = await variablesFor(lang)
+    const body = renderTemplate(templateOf(lang).body, v, true)
+    expect(v.manage_url).toBe('')
+    expect(v.receipt_url).toBe('')
+    expect(v.actions_lines).toBe('')
+    expect(body).not.toContain('href=""')
+    expect(body).not.toMatch(/Ver mi reserva|View my reservation|Ver a minha reserva/)
+    expect(body).not.toMatch(/PDF/)
+    expect(body).not.toMatch(/recibo de su pago|payment receipt|recibo do seu pagamento/)
+  })
+
+  it('sin niños ni promo no aparece "0 niños ()" ni "Código promocional  −—"', async () => {
+    const v = await variablesFor('es', { dto: { adults: 2, children: 0 } })
+    const body = renderTemplate(templateOf('es').body, v, true)
+    expect(v.occupancy).toBe('2 adultos')
+    expect(body).not.toContain('niños')
+    expect(body).not.toContain('()')
+    expect(body).not.toContain('Código promocional')
+    expect(body).not.toContain('−—')
+  })
+
+  it('con niños los muestra con sus edades', async () => {
+    const v = await variablesFor('es', { dto: { adults: 2, children: 1, childrenAges: [6] } })
+    expect(v.occupancy).toBe('2 adultos · 1 niño (6)')
   })
 
   it.each([...LANGS])('%s: la base neutra cubre TODOS los placeholders de la plantilla', (lang) => {

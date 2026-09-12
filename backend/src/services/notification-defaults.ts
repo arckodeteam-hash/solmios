@@ -31,6 +31,10 @@ export interface NotificationDefault {
 // shared/usecases/booking-paid-email.ts (hay test de contrato en
 // shared/usecases/tests/booking-paid-email.test.ts: NO inventar variables acá).
 // Las `*_lines` llegan ya como HTML (<ul><li>…</li></ul>) o '' y se insertan sin escapar.
+// Lo que puede no existir (niños, promo, botones "Ver mi reserva"/"Descargar recibo", la mención
+// al recibo) llega como fragmento condicional de shared/usecases/confirmation-email-variables.ts
+// (`{occupancy}`, `{promo_lines}`, `{actions_lines}`, `{receipt_intro}`): el renderer no tiene
+// condicionales y una reserva del panel no tiene enlaces públicos ni recibo.
 // El evento también lo dispara reservas/usecases/reservation-email.ts (reserva creada desde el
 // panel), que no tiene desglose ni enlaces públicos: parte de la base neutra de
 // shared/usecases/confirmation-email-variables.ts (test en reservas/tests/reservation-email-
@@ -48,13 +52,13 @@ const CONFIRMED_ES = `<!DOCTYPE html>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
     <p style="font-size:16px;">Estimado/a {guest_name},</p>
-    <p>Su reserva ha sido confirmada. A continuación encontrará el detalle de su estancia y el recibo de su pago.</p>
+    <p>Su reserva ha sido confirmada. A continuación encontrará el detalle de su estancia{receipt_intro}.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estancia</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Huéspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adultos · {children} niños ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Huéspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{occupancy}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Cuna</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Régimen</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Llegada estimada</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
@@ -75,7 +79,7 @@ const CONFIRMED_ES = `<!DOCTYPE html>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Amenidades de habitación</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Código promocional {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        {promo_lines}
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Impuestos</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
         <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
@@ -90,10 +94,7 @@ const CONFIRMED_ES = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
-    <p style="text-align:center;margin:20px 0;">
-      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">Ver mi reserva</a>
-      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Descargar recibo (PDF)</a>
-    </p>
+    {actions_lines}
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelación</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
@@ -120,13 +121,13 @@ const CONFIRMED_EN = `<!DOCTYPE html>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
     <p style="font-size:16px;">Dear {guest_name},</p>
-    <p>Your reservation is confirmed. Below you will find the details of your stay and your payment receipt.</p>
+    <p>Your reservation is confirmed. Below you will find the details of your stay{receipt_intro}.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Stay</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Guests</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adults · {children} children ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Guests</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{occupancy}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Crib</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Meal plan</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Estimated arrival</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
@@ -147,7 +148,7 @@ const CONFIRMED_EN = `<!DOCTYPE html>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Room amenities</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Promo code {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        {promo_lines}
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Taxes</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
         <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
@@ -162,10 +163,7 @@ const CONFIRMED_EN = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Booking ref: <strong>{locator}</strong></p>
-    <p style="text-align:center;margin:20px 0;">
-      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">View my reservation</a>
-      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Download receipt (PDF)</a>
-    </p>
+    {actions_lines}
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cancellation policy</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
@@ -192,13 +190,13 @@ const CONFIRMED_PT = `<!DOCTYPE html>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
     <p style="font-size:16px;">Prezado(a) {guest_name},</p>
-    <p>A sua reserva está confirmada. A seguir encontrará os detalhes da sua estadia e o recibo do seu pagamento.</p>
+    <p>A sua reserva está confirmada. A seguir encontrará os detalhes da sua estadia{receipt_intro}.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estadia</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Hóspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adultos · {children} crianças ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Hóspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{occupancy}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Berço</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Regime</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Chegada estimada</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
@@ -219,7 +217,7 @@ const CONFIRMED_PT = `<!DOCTYPE html>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Comodidades do quarto</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Código promocional {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        {promo_lines}
         <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Impostos</td></tr>
         <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
         <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
@@ -234,10 +232,7 @@ const CONFIRMED_PT = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
-    <p style="text-align:center;margin:20px 0;">
-      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">Ver a minha reserva</a>
-      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Baixar recibo (PDF)</a>
-    </p>
+    {actions_lines}
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelamento</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>

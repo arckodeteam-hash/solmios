@@ -3,6 +3,7 @@ import { silentLogger } from 'arckode-framework/testing'
 import { sendBookingPaidEmail } from '../booking-paid-email'
 import { cancellationPolicyText } from '../cancellation-text'
 import { NOTIFICATION_DEFAULTS } from '../../../services/notification-defaults'
+import { renderTemplate, escapeHtml } from '../../../services/notification-renderer'
 
 const HOTEL = {
   id: 'h1', name: 'Hotel Boutique Palma', phone: '+1 809 555 0100', email: 'info@palma.com',
@@ -243,6 +244,29 @@ describe('recibo completo (#270)', () => {
     expect(v.platform_name).toBe('SolmiOS')
     expect(v.rooms_lines).toBe('')
     expect(v.rooms_count).toBe('1')
+    // Fragmentos condicionales: con dato, aparecen.
+    expect(v.occupancy).toBe('2 adultos · 1 niño (6)')
+    expect(v.promo_lines).toContain('Código promocional VERANO10')
+    expect(v.promo_lines).toContain('−10.00 USD')
+    expect(v.receipt_intro).toBe(' y el recibo de su pago')
+    expect(v.actions_lines).toContain(`<a href="${escapeHtml(String(v.manage_url))}"`)
+    expect(v.actions_lines).toContain(`<a href="${escapeHtml(String(v.receipt_url))}"`)
+    expect(v.actions_lines).toContain('Ver mi reserva')
+    expect(v.actions_lines).toContain('Descargar recibo (PDF)')
+  })
+
+  it('sin niños, sin promo y sin URL pública: ni "0 niños ()", ni fila de promo, ni botones, ni mención al recibo', async () => {
+    const h = harness({ reserva: { ...RESERVA, adults: 2, children: 0 } }); await h.run()
+    const v = h.sent[0].variables
+    expect(v.occupancy).toBe('2 adultos')
+    expect(v.promo_lines).toBe('')
+    expect(v.actions_lines).toBe('')
+    expect(v.receipt_intro).toBe('')
+    const body = renderTemplate((NOTIFICATION_DEFAULTS as any).reservation_confirmed.es.body, v, true)
+    expect(body).not.toContain('niños')
+    expect(body).not.toContain('Código promocional')
+    expect(body).not.toContain('href=""')
+    expect(body).not.toMatch(/\{\w+\}/)
   })
 
   it('(a ter) un upsell por persona y noche muestra personas × noches; per_night sólo noches', async () => {

@@ -37,10 +37,13 @@ describe('notification-defaults (spec 11.1.6)', () => {
   describe('reservation_confirmed (#270)', () => {
     const langs: NotificationLanguage[] = ['es', 'en', 'pt']
     const confirmed = (lang: unknown) => getCodeDefault('reservation_confirmed', lang as NotificationLanguage)
+    // Niños, promo, botones y la mención al recibo llegan como fragmentos condicionales
+    // (`{occupancy}`, `{promo_lines}`, `{actions_lines}`, `{receipt_intro}` de
+    // shared/usecases/confirmation-email-variables.ts): el renderer no tiene condicionales.
     const REQUIRED = [
       '{extras_lines}', '{tax_lines}', '{rooms_lines}', '{rooms_count}', '{child_amenities_lines}', '{room_amenities_lines}',
-      '{manage_url}', '{receipt_url}', '{platform_name}', '{crib}', '{meal_plan}', '{estimated_arrival}', '{special_requests}',
-      '{adults}', '{children}', '{children_ages}', '{subtotal}', '{promo_code}', '{promo_discount}', '{total_amount}',
+      '{actions_lines}', '{receipt_intro}', '{platform_name}', '{crib}', '{meal_plan}', '{estimated_arrival}', '{special_requests}',
+      '{occupancy}', '{subtotal}', '{promo_lines}', '{total_amount}',
       '{deposit_amount}', '{pending_amount}', '{payment_method}', '{locator}', '{cancellation_policy}', '{hotel_address}',
     ]
 
@@ -49,11 +52,19 @@ describe('notification-defaults (spec 11.1.6)', () => {
       for (const v of REQUIRED) expect(body).toContain(v)
     })
 
-    it.each(langs)('%s: enlaces "Ver mi reserva" y "Descargar recibo" como href', (lang) => {
+    it.each(langs)('%s: sin botones con href vacío ni "0 niños ()" ni "Código promocional  −—" fijos en la plantilla', (lang) => {
       const { body } = confirmed(lang)
-      expect(body).toContain('<a href="{manage_url}"')
-      expect(body).toContain('<a href="{receipt_url}"')
-      expect(body).toMatch(/PDF/)
+      // Los enlaces NO van fijos: sin URL pública (reserva del panel) no hay botón.
+      expect(body).not.toContain('href="{manage_url}"')
+      expect(body).not.toContain('href="{receipt_url}"')
+      expect(body).not.toMatch(/PDF/)
+      // Niños y promo tampoco: sin dato el fragmento es ''.
+      expect(body).not.toContain('{children}')
+      expect(body).not.toContain('{children_ages}')
+      expect(body).not.toContain('{promo_code}')
+      expect(body).not.toContain('{promo_discount}')
+      // La mención al recibo es condicional, no texto fijo.
+      expect(body).not.toMatch(/recibo de su pago|payment receipt|recibo do seu pagamento/)
     })
 
     it.each(langs)('%s: subject con hotel y localizador', (lang) => {
