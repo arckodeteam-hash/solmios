@@ -327,6 +327,21 @@
         </button>
       </section>
 
+      <!-- EXPIRED (#266) — venció el plazo de pago: cancelada por el sistema, no por un pago fallido. -->
+      <section v-else-if="pollingState === 'expired'" class="text-center py-6" data-testid="booking-expired">
+        <div class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-gold/10 text-gold [&_svg]:h-9 [&_svg]:w-9" v-html="ICON_CLOCK" />
+        <h2 class="mt-4 text-2xl font-black text-navy">{{ t('confirm.expiredTitle') }}</h2>
+        <p class="text-sm text-text-secondary mt-2">{{ t('confirm.expiredBody') }}</p>
+        <router-link
+          v-if="slug"
+          :to="`/book/${slug}`"
+          class="mt-5 inline-flex min-h-12 items-center justify-center rounded-xl bg-cyan px-6 py-3 text-sm font-black text-white shadow-card transition hover:bg-cyan-light focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50"
+          data-testid="booking-expired-cta"
+        >
+          {{ t('confirm.expiredCta') }}
+        </router-link>
+      </section>
+
       <!-- ERROR -->
       <section v-else class="text-center py-6">
         <div class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-danger/10 text-danger [&_svg]:h-9 [&_svg]:w-9" v-html="ICON_WARNING" />
@@ -402,7 +417,9 @@ const route = useRoute()
 const i18n = useBookingI18nStore()
 const { t } = i18n
 
-type PollingState = 'loading' | 'success' | 'pending' | 'error'
+/** 'expired' (#266): cancelada por vencimiento del plazo de pago (`cancellationReason ===
+ *  'payment_timeout'`) — no es un error del huésped, se le ofrece volver a reservar. */
+type PollingState = 'loading' | 'success' | 'pending' | 'expired' | 'error'
 const pollingState = ref<PollingState>('loading')
 const reservation = ref<PublicReservationResponse | null>(null)
 const errorMessage = ref(t('confirm.errorDefault'))
@@ -623,6 +640,14 @@ async function tick(): Promise<void> {
       pollingState.value = 'success'
       clearStoredReservation(slug.value) // limpieza: reserva confirmada
       firePurchaseTracking(res.reservation.id, res.reservation.totalAmount)
+      return
+    }
+    // #266 (MR-01): el cron / checkout.session.expired cancelan la reserva pendiente sin pago con
+    // cancellationReason='payment_timeout'. No es "pago rechazado": venció. Se le dice y se le
+    // ofrece reservar de nuevo (la habitación ya volvió a estar disponible).
+    if (rs === 'cancelled' && res.reservation.cancellationReason === 'payment_timeout') {
+      pollingState.value = 'expired'
+      clearStoredReservation(slug.value)
       return
     }
     if (ps === 'failed' || rs === 'cancelled' || rs === 'no_show') {
