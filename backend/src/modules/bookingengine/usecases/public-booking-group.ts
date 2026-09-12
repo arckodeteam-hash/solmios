@@ -42,6 +42,7 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
 import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
@@ -215,9 +216,15 @@ export async function createPublicBookingGroup(
   let bookingConfig: any = null
   if (extraDeps?.bookingConfig) {
     bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
-    if (bookingConfig && bookingConfig.enabled === false) {
-      return { status: 404, body: { error: 'Hotel no encontrado' } }
-    }
+  }
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // el POST recibe `hotelId` (no slug), así que el hotel se carga por id vía `extraDeps.hotels` y
+  // se pasa por el MISMO `isEngineOpen` que los GET (plataforma + hotel) con el MISMO 404 body.
+  // Compat: sin `hotels` cableado (callers/tests viejos con orm fake sin `Hotels`) se conserva
+  // el chequeo sólo por `booking_config.enabled`, que era el comportamiento anterior.
+  const hotel = extraDeps?.hotels ? await extraDeps.hotels.findOne({ id: hotelId }) : null
+  if (extraDeps?.hotels ? !isEngineOpen(hotel, bookingConfig) : bookingConfig?.enabled === false) {
+    return engineClosed()
   }
 
   const stayNightDates = stayNights(checkIn, checkOut)

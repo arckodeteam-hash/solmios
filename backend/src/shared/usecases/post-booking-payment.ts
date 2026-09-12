@@ -47,6 +47,7 @@ export async function postBookingPayment(
     status: 'completed',
     amount,
     currency: (booking.currency || 'USD').toUpperCase(),
+    // #276: `guestName` viaja en el payload de `onBookingPaid` (resuelto desde Guests en settle()).
     description: `Reserva web · ${booking.guestName || 'huésped'} · ${booking.checkIn}`,
     reference: sessionId,
     stripeSessionId: sessionId,

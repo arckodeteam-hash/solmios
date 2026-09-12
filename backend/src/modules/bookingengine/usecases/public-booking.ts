@@ -60,6 +60,7 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
@@ -157,6 +158,10 @@ export interface PublicBookingExtraDeps {
    *  `/rates` bloquea por `enabled=false` un guest normal nunca llega acá, pero un caller
    *  directo del POST sí podría — mismo gate acá. Opcional (compat callers/tests viejos). */
   bookingConfig?: RepositoryAdapter<any>
+  /** #276 (MR-11) — Repo de `hotels`. Con él el POST pasa por el MISMO `isEngineOpen` que los
+   *  GET (`hotels.onlineBookingStatus` + `booking_config.enabled`). Opcional (compat callers/
+   *  tests viejos): sin él, sólo se mira `booking_config.enabled`, como antes. */
+  hotels?: RepositoryAdapter<any>
 }
 
 /**
@@ -366,9 +371,15 @@ export async function createPublicBookingDirect(
   let bookingConfig: any = null
   if (extraDeps?.bookingConfig) {
     bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
-    if (bookingConfig && bookingConfig.enabled === false) {
-      return { status: 404, body: { error: 'Hotel no encontrado' } }
-    }
+  }
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // el POST recibe `hotelId` (no slug), así que el hotel se carga por id vía `extraDeps.hotels` y
+  // se pasa por el MISMO `isEngineOpen` que los GET (plataforma + hotel) con el MISMO 404 body.
+  // Compat: sin `hotels` cableado (callers/tests viejos con orm fake sin `Hotels`) se conserva
+  // el chequeo sólo por `booking_config.enabled`, que era el comportamiento anterior.
+  const hotel = extraDeps?.hotels ? await extraDeps.hotels.findOne({ id: hotelId }) : null
+  if (extraDeps?.hotels ? !isEngineOpen(hotel, bookingConfig) : bookingConfig?.enabled === false) {
+    return engineClosed()
   }
 
   // ─── FIX (room_blocks + stop-sell) — paridad con AvailabilityUseCase y /calendar ──────

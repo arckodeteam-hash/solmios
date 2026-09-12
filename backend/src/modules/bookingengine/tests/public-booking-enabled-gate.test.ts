@@ -39,7 +39,7 @@ function makeOrm() {
 }
 
 describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profundidad)', () => {
-  it('enabled=false → 404 "Hotel no encontrado" (mismo criterio anti-enumeración que /rates)', async () => {
+  it('enabled=false → 404 "Hotel not found" (MISMO body anti-enumeración que los GET — #276 MR-11)', async () => {
     const { orm } = makeOrm()
     const bookingConfig = { findOne: async () => ({ hotelId: 'h1', enabled: false }) }
     const res = await createPublicBookingDirect(
@@ -47,7 +47,7 @@ describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profun
       { bookingConfig: bookingConfig as any },
     )
     expect(res.status).toBe(404)
-    expect(res.body.error).toBe('Hotel no encontrado')
+    expect(res.body.error).toBe('Hotel not found')
   })
 
   it('enabled=true → sigue el flujo normal (201)', async () => {
