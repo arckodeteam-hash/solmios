@@ -211,37 +211,51 @@
                 </div>
 
                 <!--
-                  RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`).
-                  "Sólo alojamiento" es la base implícita. Los otros 3 códigos vienen de
-                  `store.mealPlans` (solo los `active` llegan del backend); sin fila = el hotel
-                  no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta). Un
-                  régimen con costo aparte se muestra informativo con su precio ("Próximamente")
-                  — todavía no es seleccionable ni afecta el cobro (ver alcance del plan aprobado).
+                  RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`;
+                  MR-03 #268 lo hace RESERVABLE). Mismo radio POR TARJETA que RoomsStep.vue
+                  (/book/:slug): "Sólo alojamiento" es la base implícita; los otros 3 códigos
+                  vienen de `store.mealPlans` (solo los `active` llegan del backend); sin fila =
+                  el hotel no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta).
+                  `included` → "Incluido"; con costo → el importe para la composición ACTUAL
+                  (`price × personas × noches`, el backend recalcula), en chargeCurrency (D10:
+                  nunca se convierte — ver `moneyCharge`).
                 -->
                 <div class="mt-3">
-                  <p class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Régimen</p>
-                  <div class="mt-1 flex flex-wrap gap-1.5">
-                    <span class="inline-flex items-center gap-1 rounded-full bg-navy px-2.5 py-1 text-[11px] font-bold text-white">
-                      <span aria-hidden="true">●</span>Sólo alojamiento
-                    </span>
-                    <span
-                      v-for="plan in boardPlanRows"
-                      :key="plan.code"
+                  <p :id="`meal-plan-label-${rt.id}`" class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Régimen</p>
+                  <div class="mt-1 flex flex-wrap gap-1.5" role="radiogroup" :aria-labelledby="`meal-plan-label-${rt.id}`" data-testid="meal-plan-options">
+                    <label
+                      v-for="opt in mealPlanOptions(rt)"
+                      :key="opt.code"
+                      :for="`meal-plan-${rt.id}-${opt.code}`"
                       :class="[
-                        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold',
-                        plan.state === 'included'
+                        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold',
+                        mealPlanCode(rt) === opt.code
                           ? 'bg-navy text-white'
-                          : plan.state === 'upcoming'
-                            ? 'border border-cyan/40 bg-cyan/10 text-navy'
+                          : opt.available
+                            ? 'cursor-pointer border border-border bg-white text-navy hover:bg-surface'
                             : 'cursor-not-allowed border border-border bg-surface text-text-muted',
                       ]"
-                      :title="plan.title"
-                      :aria-disabled="plan.state === 'unavailable' ? 'true' : undefined"
+                      :title="opt.available ? undefined : 'Este hotel no ofrece este régimen'"
+                      data-testid="meal-plan-option"
                     >
-                      <span aria-hidden="true">{{ plan.state === 'included' ? '●' : '○' }}</span>{{ plan.label }}
-                      <span v-if="plan.state === 'upcoming'" class="ml-0.5 text-[9px] font-black uppercase text-cyan">Próximamente</span>
-                    </span>
+                      <input
+                        :id="`meal-plan-${rt.id}-${opt.code}`"
+                        :name="`meal-plan-${rt.id}`"
+                        type="radio"
+                        class="h-3.5 w-3.5 border-border text-cyan"
+                        :value="opt.code"
+                        :checked="mealPlanCode(rt) === opt.code"
+                        :disabled="!opt.available"
+                        @change="setMealPlan(rt, opt.code)"
+                      />
+                      <span>{{ BOARD_PLAN_LABELS[opt.code] }}</span>
+                      <span v-if="opt.priceMode === 'included'" class="text-[10px] font-black uppercase opacity-80">· Incluido</span>
+                      <span v-else-if="opt.priceMode === 'per_person_per_night'" class="tabular-nums opacity-90" data-testid="meal-plan-price">· {{ moneyCharge(opt.total) }}</span>
+                    </label>
                   </div>
+                  <p v-if="selectedMealPlanOption(rt)?.priceMode === 'per_person_per_night'" class="mt-1 text-[11px] text-text-muted" data-testid="meal-plan-hint">
+                    {{ moneyCharge(selectedMealPlanOption(rt)!.unitPrice) }} por persona y noche
+                  </p>
                 </div>
 
                 <!--
@@ -299,12 +313,14 @@
                     </label>
                   </div>
 
-                  <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No — mismo bloque
-                       que RoomsStep.vue (/book/:slug): solo aparece con un bebé en ESTA tarjeta Y
-                       el hotel habilitó la cuna (Página pública → Motor de Reservas). Sin cantidad. -->
+                  <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292 cuna por
+                       habitación — mismo bloque que RoomsStep.vue (/book/:slug): solo aparece con
+                       un bebé en ESTA tarjeta Y el tipo publica la amenidad `custom:cuna`
+                       (`store.roomAmenitiesFor`, precio "desde" del tipo, mostrado en la pregunta si
+                       es > 0). "Sí" agrega la key a la tarjeta y suma al "+ $X". Sin cantidad. -->
                   <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
                     <div class="flex items-center justify-between gap-3">
-                      <span class="text-sm font-bold text-navy">¿Necesita cuna?</span>
+                      <span class="text-sm font-bold text-navy" data-testid="crib-question">{{ cribQuestionLabel(rt) }}</span>
                       <div class="flex overflow-hidden rounded-full border border-border text-xs font-bold">
                         <button type="button" data-testid="crib-yes"
                           class="px-3 py-1.5 transition"
@@ -320,37 +336,40 @@
                     </div>
                   </div>
 
-                  <!-- REQ-01 (#233, amenidades para niños y bebés) — mismo checklist POR HABITACIÓN
-                       que RoomsStep.vue (/book/:slug): solo con un menor en ESTA tarjeta Y catálogo
-                       activo del hotel (`store.childAmenities`, nunca nombres ni precios en código).
-                       Precio a la vista ANTES de tildar; lo elegido suma al total de la línea. -->
-                  <div v-if="shouldOfferChildAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="child-amenities">
-                    <span class="block text-sm font-bold text-navy">Amenidades para niños y bebés</span>
+                  <!-- REQ-01 (#290, amenidades de la habitación) — mismo checklist POR HABITACIÓN
+                       que RoomsStep.vue (/book/:slug): las amenidades personalizadas (cama extra…)
+                       que el hotel configuró para ESTE tipo (`offeredRoomAmenities`:
+                       `store.roomAmenitiesFor(rt.id)` SIN `custom:cuna`, que se ofrece sólo vía
+                       "¿Necesita cuna?" arriba; precio "desde" del tipo). NO depende de la
+                       composición ni de la política de niños: se ofrece a cualquier huésped. Lo
+                       elegido suma al total de la línea (cuna incluida en el "+ $X"). -->
+                  <div v-if="shouldOfferRoomAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="room-amenities">
+                    <span class="block text-sm font-bold text-navy">Amenidades de la habitación</span>
                     <label
-                      v-for="a in store.childAmenities"
-                      :key="a.id"
-                      :for="`child-amenity-${rt.id}-${a.id}`"
+                      v-for="a in offeredRoomAmenities(rt)"
+                      :key="a.key"
+                      :for="`room-amenity-${rt.id}-${a.key}`"
                       class="flex cursor-pointer items-center justify-between gap-3 text-sm text-navy"
-                      data-testid="child-amenity-option"
+                      data-testid="room-amenity-option"
                     >
                       <span class="flex items-center gap-2">
                         <input
-                          :id="`child-amenity-${rt.id}-${a.id}`"
-                          :name="`child-amenity-${rt.id}-${a.id}`"
+                          :id="`room-amenity-${rt.id}-${a.key}`"
+                          :name="`room-amenity-${rt.id}-${a.key}`"
                           type="checkbox"
                           class="h-4 w-4 rounded border-border text-cyan"
-                          :value="a.id"
-                          :checked="isChildAmenitySelected(rt, a.id)"
-                          @change="toggleChildAmenity(rt, a.id)"
+                          :value="a.key"
+                          :checked="isRoomAmenitySelected(rt, a.key)"
+                          @change="toggleRoomAmenity(rt, a.key)"
                         />
                         <span>{{ a.name }}</span>
                       </span>
-                      <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="child-amenity-price">
-                        {{ Number(a.price) > 0 ? money(Number(a.price)) : 'Sin cargo' }}
+                      <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="room-amenity-price">
+                        {{ Number(a.price) > 0 ? money(Number(a.price)) : 'Gratis' }}
                       </span>
                     </label>
-                    <p v-if="composedChildAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="child-amenities-total">
-                      + {{ money(composedChildAmenitiesTotal(rt)) }}
+                    <p v-if="composedRoomAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="room-amenities-total">
+                      + {{ money(composedRoomAmenitiesTotal(rt)) }}
                     </p>
                   </div>
 
@@ -362,6 +381,10 @@
                       <template v-else-if="matchedRow(rt) === null || matchedRow(rt)!.available">
                         <span class="block text-sm font-black tabular-nums text-navy">{{ money(composedPrice(rt)) }}</span>
                         <span class="block text-[11px] tabular-nums text-text-muted">total · {{ money(composedPricePerNight(rt)) }}/noche</span>
+                        <!-- MR-03 (#268) — el régimen elegido suma aparte, como las amenidades. -->
+                        <span v-if="composedMealPlanTotal(rt) > 0" class="block text-[11px] font-bold tabular-nums text-navy" data-testid="meal-plan-total">
+                          + {{ moneyCharge(composedMealPlanTotal(rt)) }} · {{ BOARD_PLAN_LABELS[mealPlanCode(rt)] }}
+                        </span>
                       </template>
                       <span v-else class="block text-[11px] font-bold text-text-secondary">{{ unavailableLabel(matchedRow(rt)!.unavailableReason) }}</span>
                     </span>
@@ -422,6 +445,16 @@
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <span class="font-black tabular-nums text-navy">{{ money(line.unitPrice * line.quantity) }}</span>
+                  <!-- REQ-02 (#234) — devuelve UNA unidad de esta línea al composer de su tarjeta con
+                       los mismos datos (adultos/edades/cuna/amenidades) para corregirla sin rearmarla.
+                       Mismo comportamiento que RoomsStep.vue (widget /book/:slug). -->
+                  <button
+                    type="button"
+                    class="cursor-pointer text-xs font-bold text-cyan-700 hover:underline"
+                    data-testid="cart-edit"
+                    aria-label="Editar"
+                    @click="editCartLine(line)"
+                  >Editar</button>
                   <button
                     type="button"
                     class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-danger/10 hover:text-danger"
@@ -476,22 +509,30 @@
                     <span class="mt-1 block text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ UPSELL_KIND_LABEL[up.kind] }}</span>
                   </span>
                 </label>
-                <span class="shrink-0 text-right font-black tabular-nums text-navy">{{ money(up.price) }}</span>
+                <!-- MR-10 (#275): precio calculado PARA ESTA ESTADÍA (per_night → × noches,
+                     ppn → × personas × noches); en esos kinds el unitario de catálogo va chico. -->
+                <span class="shrink-0 text-right">
+                  <span class="block font-black tabular-nums text-navy" data-testid="upsell-stay-price">{{ money(store.upsellStayPrice(up)) }}</span>
+                  <span v-if="up.kind === 'per_night' || up.kind === 'per_person_per_night'" class="block text-[11px] text-text-muted" data-testid="upsell-unit-price">{{ money(up.price) }} · {{ UPSELL_KIND_LABEL[up.kind] }}</span>
+                </span>
               </div>
 
-              <div v-if="isSelectedUpsell(up.id) && up.kind !== 'per_stay'" class="mt-3 flex items-center gap-2">
+              <!-- Cantidad sólo en per_room/per_person; per_stay/per_night/ppn van fijos en 1 (MR-10). -->
+              <div v-if="isSelectedUpsell(up.id) && upsellHasQty(up.kind)" class="mt-3 flex items-center gap-2">
                 <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Cantidad</span>
                 <button
                   type="button"
                   :aria-label="`Quitar una unidad de ${up.name}`"
-                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface"
+                  :disabled="upsellQty(up.id) <= 1"
+                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-30"
                   @click="setUpsellQty(up.id, upsellQty(up.id) - 1)"
                 >−</button>
                 <span class="w-6 text-center font-black tabular-nums text-navy">{{ upsellQty(up.id) }}</span>
                 <button
                   type="button"
                   :aria-label="`Agregar una unidad de ${up.name}`"
-                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface"
+                  :disabled="upsellQty(up.id) >= store.upsellMaxQty(up.kind)"
+                  class="grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-border font-black text-navy transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-30"
                   @click="setUpsellQty(up.id, upsellQty(up.id) + 1)"
                 >+</button>
               </div>
@@ -729,13 +770,20 @@
               <span class="font-bold tabular-nums text-navy">{{ money(store.roomsSubtotal) }}</span>
             </div>
             <div v-for="line in store.upsellLines" :key="line.id" class="flex justify-between" data-testid="upsell-line">
-              <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
+              <span class="text-text-muted">{{ upsellLineLabel(line) }} <span class="text-[11px]">· sin impuestos</span></span>
               <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
             </div>
-            <!-- REQ-01 (#233) — amenidades infantiles, una fila por habitación × amenidad. -->
-            <div v-for="line in store.childAmenityLines" :key="`${line.lineKey}-${line.id}`" class="flex justify-between" data-testid="child-amenity-line">
+            <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292 incluida), una fila por
+                 habitación × amenidad. -->
+            <div v-for="line in store.roomAmenityLines" :key="`${line.lineKey}-${line.key}`" class="flex justify-between" data-testid="room-amenity-line">
               <span class="text-text-muted">{{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
               <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
+            </div>
+            <!-- MR-03 (#268) — régimen, una fila por habitación con régimen (incluido → sin importe). -->
+            <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
+              <span class="text-text-muted">Régimen: {{ BOARD_PLAN_LABELS[line.code] }} · {{ line.persons }} pers × {{ line.nights }} {{ line.nights === 1 ? 'noche' : 'noches' }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
+              <span v-if="line.priceMode === 'included'" class="font-bold text-teal">incluido</span>
+              <span v-else class="font-bold tabular-nums text-navy">{{ moneyCharge(line.total) }}</span>
             </div>
             <div v-if="store.promoDiscount > 0" class="flex justify-between text-teal">
               <span>Descuento</span>
@@ -831,9 +879,11 @@ import Stepper from '@/components/booking/Stepper.vue'
 import EstimatedTotals from '@/components/booking/EstimatedTotals.vue'
 
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
-import { useGuestComposer } from '@/composables/useGuestComposer'
+import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { formatMoney, formatShortDate, nightsBetween } from '@/utils/rate-calendar'
+import { classifyAge } from '@/utils/child-composition'
+import { isCribAmenityKey } from '@/utils/crib-amenity'
 import type {
   MealPlanCode,
   OccupancyUnavailableReason,
@@ -868,16 +918,30 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
-  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
-  // REQ-01 (#233) — amenidades para niños/bebés por habitación.
-  shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
+  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib, cribPrice,
+  // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
+  editCartLine,
+  // REQ-01 (#290) — amenidades de la habitación (cama extra…) por habitación.
+  offeredRoomAmenities, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
+  // MR-03 (#268) — régimen por habitación (radio por tarjeta).
+  mealPlanCode, setMealPlan, mealPlanOptions, composedMealPlanTotal,
 } = useGuestComposer()
+
+/** #292 — "¿Necesita cuna?" con el precio "desde" de `custom:cuna` del tipo cuando lo tiene
+ *  ("¿Necesita cuna? (+ $15.00)"), mismo `money()` que el resto de la tarjeta. Sin cargo → la
+ *  pregunta pelada. Mismo criterio que `cribQuestionLabel` en RoomsStep.vue. */
+function cribQuestionLabel(rt: RoomTypeRate): string {
+  const price = cribPrice(rt)
+  return price > 0 ? `¿Necesita cuna? (+ ${money(price)})` : '¿Necesita cuna?'
+}
 
 /** Requerimiento 6 (2026-09-03) — mismo criterio que RoomsStep.vue: texto del motivo cuando
  *  `capacityBlockReason` bloquea por maxAdults/maxChildren del tipo (la matriz no lo sabe). */
-function maxLabel(reason: 'max_adults' | 'max_children' | 'capacity'): string {
+function maxLabel(reason: 'max_adults' | 'max_children' | 'max_free_children' | 'capacity'): string {
   if (reason === 'max_adults') return 'Supera el máximo de adultos de esta habitación'
   if (reason === 'max_children') return 'Supera el máximo de niños de esta habitación'
+  // REQ-03 (#235) — tope hotel-wide de niños sin plaza por habitación.
+  if (reason === 'max_free_children') return `Supera el máximo de ${store.childPolicy.maxFreeChildrenPerRoom ?? 0} niño(s) que no consumen plaza por habitación`
   return unavailableLabel('over_capacity')
 }
 
@@ -1082,34 +1146,22 @@ function urgency(count: number): string {
   return ''
 }
 
-// ─── Régimen de alimentación (tasks.md 2.2/2.4) ───────────────────────────────
-type BoardPlanState = 'included' | 'upcoming' | 'unavailable'
-interface BoardPlanRow { code: MealPlanCode; label: string; state: BoardPlanState; title: string }
-
-/** Orden fijo — mismo criterio que el backend (`public-meal-plans.ts` CODE_ORDER). No usa el
- *  store de i18n (la landing no soporta locale) — mismas strings hardcodeadas que el resto del
- *  modal. */
-const BOARD_PLAN_LABELS: Record<MealPlanCode, string> = {
+// ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable) ─────────────────────
+/** Etiqueta por código. No usa el store de i18n (la landing no soporta locale) — mismas strings
+ *  hardcodeadas que el resto del modal. Las opciones (disponibilidad, importe para la
+ *  composición actual) las arma `useGuestComposer.mealPlanOptions`, compartido con RoomsStep.vue. */
+const BOARD_PLAN_LABELS: Record<MealPlanCode | 'room_only', string> = {
+  room_only: 'Sólo alojamiento',
   breakfast: 'Desayuno incluido',
   half_board: 'Desayuno y cena',
   all_inclusive: 'Todo incluido',
 }
-const BOARD_PLAN_ORDER: MealPlanCode[] = ['breakfast', 'half_board', 'all_inclusive']
 
-/** Mapea el catálogo fijo contra `store.mealPlans` (solo trae los `active`): sin fila → el
- *  hotel no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta). */
-const boardPlanRows = computed<BoardPlanRow[]>(() =>
-  BOARD_PLAN_ORDER.map((code) => {
-    const label = BOARD_PLAN_LABELS[code]
-    const found = store.mealPlans.find((m) => m.code === code)
-    if (!found) return { code, label, state: 'unavailable', title: 'Este hotel no ofrece este régimen' }
-    if (found.priceMode === 'included') return { code, label, state: 'included', title: '' }
-    return {
-      code, label, state: 'upcoming',
-      title: `Disponible como upgrade por ${moneyCharge(found.price)} — todavía no se puede agregar al carrito`,
-    }
-  }),
-)
+/** La opción elegida en esta tarjeta (para la ayuda "{price} por persona y noche"). */
+function selectedMealPlanOption(rt: RoomTypeRate): MealPlanOption | undefined {
+  const code = mealPlanCode(rt)
+  return mealPlanOptions(rt).find((o) => o.code === code)
+}
 
 /** Motivo → texto. Mapa explícito: un motivo nuevo en el backend rompe el typecheck acá en vez
  *  de mostrarle al huésped una fila muda o un código en inglés. */
@@ -1138,13 +1190,33 @@ function cartLineGuestsLabel(line: CartLine): string {
   if (line.adults === undefined || line.childrenAges === undefined) return `para ${line.occupancy}`
   const base = line.childrenAges.length === 0
     ? plural(line.adults, 'adulto', 'adultos')
-    : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.join(', ')} años)`
+    // REQ-02 (#234) — cada menor con su edad Y su clasificación (bebé / niño sin plaza / niño con
+    // plaza) según la política del hotel, para que el huésped confirme cómo quedó contado cada uno
+    // en ESTA habitación. Ej: "1 adulto · 2 niños (1 año · bebé, 8 años · niño, consume plaza)".
+    : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.map(childAgeLabel).join(', ')})`
   // Tarea 22 (Cuna, corrección 2026-09-09) — antes esta línea no mostraba la cuna en NINGÚN
   // resumen ya agregado (el dato se guardaba bien, pero no se veía).
   const withCrib = line.needsCrib ? `${base} · Cuna` : base
-  // REQ-01 (#233) — amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot).
-  const amenities = (line.childAmenities ?? []).map((a) => a.name)
-  return amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
+  // REQ-01 (#290) — amenidades de la habitación elegidas para ESTA habitación, por nombre
+  // (snapshot de la línea). La cuna (#292, `isCribAmenityKey`) ya se nombró arriba: no se repite.
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
+  const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
+  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
+  return line.mealPlan && line.mealPlan.code !== 'room_only'
+    ? `${withRoomAmenities} · ${BOARD_PLAN_LABELS[line.mealPlan.code]}`
+    : withRoomAmenities
+}
+
+/** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato que RoomsStep/PayStep (widget).
+ *  'adult' (edad > maxChildAge, no debería llegar al carrito) cae en "consume plaza" como fallback. */
+function childAgeLabel(age: number): string {
+  const kind = classifyAge(age, store.childPolicy)
+  const classification = kind === 'baby'
+    ? 'bebé'
+    : kind === 'free'
+      ? 'niño, no consume plaza'
+      : 'niño, consume plaza'
+  return `${plural(age, 'año', 'años')} · ${classification}`
 }
 
 /** Ícono de persona(s) de la fila (single/dos siluetas), sin emoji — mismo trazo que
@@ -1158,6 +1230,23 @@ const UPSELL_KIND_LABEL: Record<UpsellKind, string> = {
   per_room: 'Por habitación',
   per_person: 'Por persona',
   per_stay: 'Por estadía',
+  per_night: 'Por noche',
+  per_person_per_night: 'Por persona y noche',
+}
+
+/** Etiqueta de una línea de extra del resumen con su multiplicador explícito (MR-10 #275):
+ *  "Desayuno × 2 pers. × 3 noches" (ppn), "Parking × 3 noches" (per_night), "Late checkout × 2". */
+function upsellLineLabel(line: { name: string; quantity: number; nights?: number; persons?: number }): string {
+  const parts = [line.name]
+  if (line.quantity > 1) parts.push(`× ${line.quantity}`)
+  if (line.persons !== undefined) parts.push(`× ${line.persons} pers.`)
+  if ((line.nights ?? 1) > 1) parts.push(`× ${line.nights} ${line.nights === 1 ? 'noche' : 'noches'}`)
+  return parts.join(' ')
+}
+
+/** MR-10 (#275): sólo per_room/per_person tienen cantidad elegible; el resto va fijo en 1. */
+function upsellHasQty(kind: UpsellKind): boolean {
+  return kind === 'per_room' || kind === 'per_person'
 }
 
 function isSelectedUpsell(id: string): boolean {
@@ -1175,23 +1264,22 @@ function toggleUpsell(id: string, checked: boolean): void {
     return
   }
   const up = store.upsells.find((u) => u.id === id)
-  // Cantidad por defecto según cómo se cobra: por habitación → habitaciones del carrito; por
-  // persona → ocupación FÍSICA de la reserva (los niños también desayunan, incluso los que no
-  // consumen plaza). `cartTotalGuests` ya incluye a los niños con plaza (es ocupación chargeable);
-  // sumar `cartTotalChildren` (TODOS) los contaría dos veces — solo se suma
-  // `cartTotalFreeChildren` (Requerimiento 7, fix 2026-09-03: bug encontrado en la propia
-  // implementación del Requerimiento 3, que sí duplicaba a los niños con plaza).
-  const qty = up?.kind === 'per_room'
-    ? store.cartTotalRooms
-    : up?.kind === 'per_person'
-      ? store.cartTotalGuests + store.cartTotalFreeChildren
-      : 1
+  // Cantidad por defecto según cómo se cobra = el tope del kind (`store.upsellMaxQty`, MR-10
+  // #275, espejo del backend): por habitación → habitaciones del carrito; por persona →
+  // ocupación FÍSICA de la reserva sin bebés (los niños también desayunan, incluso los que no
+  // consumen plaza — `cartTotalGuests` + `cartTotalFreeChildren` − bebés, sin duplicar al niño
+  // con plaza, Requerimiento 7 fix 2026-09-03); por estadía / por noche / por persona y noche → 1.
+  const qty = up ? store.upsellMaxQty(up.kind) : 1
   store.setSelectedUpsells([...rest, { id, quantity: Math.max(1, qty) }])
 }
 
+/** Acota la cantidad a [1, tope del kind] — el mismo tope con el que el backend responde 400
+ *  `upsell_quantity_out_of_range` (nada de un 20 arbitrario). */
 function setUpsellQty(id: string, qty: number): void {
   const rest = store.selectedUpsells.filter((u) => u.id !== id)
-  store.setSelectedUpsells([...rest, { id, quantity: Math.max(1, Math.min(20, qty)) }])
+  const up = store.upsells.find((u) => u.id === id)
+  const max = up ? store.upsellMaxQty(up.kind) : Infinity
+  store.setSelectedUpsells([...rest, { id, quantity: Math.min(Math.max(1, qty), max) }])
 }
 
 // ─── Paso datos ───────────────────────────────────────────────────────────────

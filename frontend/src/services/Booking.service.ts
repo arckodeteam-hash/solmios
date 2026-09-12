@@ -5,7 +5,6 @@
 //   - GET  /api/public/hotels/:slug/rates          → tarifa derivada + availableCount (D11)
 //   - GET  /api/public/hotels/:slug/upsells         → upsells activos
 //   - GET  /api/public/hotels/:slug/meal-plans      → regímenes activos (tasks.md 2.2/2.4)
-//   - GET  /api/public/hotels/:slug/child-amenities → amenidades niños/bebés activas (REQ-01 #233)
 //   - POST /api/public/hotels/:slug/promo/validate  → {valid, discount, reason?}
 //   - POST /api/public/booking                      → crea reserva pending + redirige a Stripe
 //   - GET  /api/public/reservations/:id             → polling post-redirect (valida token HMAC)
@@ -30,8 +29,9 @@ import type {
   CancelReservationResponse,
   PublicCalendarQuery,
   PublicCalendarResponse,
-  PublicChildAmenity,
   PublicMealPlan,
+  PublicRoomAmenitiesResponse,
+  PublicRoomAmenity,
   PublicRatesQuery,
   PublicRatesResponse,
   PublicReservationResponse,
@@ -59,6 +59,8 @@ interface RawCreateBookingResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  /** Revisión #292 — sólo viene (true) si se pidió cuna y la unidad asignada no la ofrece. */
+  cribUnavailable?: boolean
 }
 
 /** Respuesta cruda de `POST /api/public/booking/group` (`createPublicBookingGroup`) — YA plana
@@ -69,6 +71,7 @@ interface RawCreateBookingGroupResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  cribUnavailable?: boolean
 }
 
 export const BookingService = {
@@ -115,9 +118,14 @@ export const BookingService = {
       body.needsCrib = true
       body.cribCount = dto.cribCount ?? 0
     }
-    // REQ-01 (#233) — amenidades para niños/bebés de la habitación: solo si hay alguna elegida
-    // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía).
-    if (dto.childAmenities && dto.childAmenities.length > 0) body.childAmenities = dto.childAmenities
+    // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…): solo si hay alguna elegida
+    // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía). Viaja solo la
+    // `key`; el precio lo resuelve el backend.
+    if (dto.roomAmenities && dto.roomAmenities.length > 0) body.roomAmenities = dto.roomAmenities
+    // #265/#268 MR-03 — mismo defecto que la cuna: `mealPlan` estaba en `CreateBookingDTO` y
+    // el carrito lo mostraba, pero nunca viajaba en el POST → el backend guardaba `room_only`
+    // con `mealPlanTotal=0`. Solo se manda si viene (igual que `upsells`/`needsCrib`).
+    if (dto.mealPlan) body.mealPlan = dto.mealPlan
     if (dto.successUrl) body.successUrl = dto.successUrl
     if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
     if (dto.idempotencyKey) body.idempotencyKey = dto.idempotencyKey
@@ -130,6 +138,7 @@ export const BookingService = {
       totalBreakdown: raw.totalBreakdown,
     }
     if (raw.paymentError) response.paymentError = raw.paymentError
+    if (raw.cribUnavailable === true) response.cribUnavailable = true
     return response
   },
 
@@ -150,11 +159,15 @@ export const BookingService = {
       hotelId: hotel.id,
       checkIn: dto.checkIn,
       checkOut: dto.checkOut,
-      // REQ-01 (#233) — `childAmenities` viaja DENTRO de cada línea (por habitación, igual que
-      // `needsCrib`), y solo si esa línea eligió alguna: la clave vacía no se manda.
+      // REQ-01 (#290) — `roomAmenities` (amenidades de la habitación) viaja DENTRO de cada línea
+      // (por habitación, igual que `needsCrib`), y solo si esa línea eligió alguna: la clave vacía
+      // no se manda.
       rooms: dto.rooms.map((line) => {
-        const { childAmenities, ...rest } = line
-        return childAmenities && childAmenities.length > 0 ? { ...rest, childAmenities } : rest
+        const { roomAmenities, ...rest } = line
+        return {
+          ...rest,
+          ...(roomAmenities && roomAmenities.length > 0 ? { roomAmenities } : {}),
+        }
       }),
       guestName: dto.guest.name,
       guestEmail: dto.guest.email,
@@ -176,6 +189,7 @@ export const BookingService = {
       totalBreakdown: raw.totalBreakdown,
     }
     if (raw.paymentError) response.paymentError = raw.paymentError
+    if (raw.cribUnavailable === true) response.cribUnavailable = true
     return response
   },
 
@@ -270,11 +284,13 @@ export const BookingService = {
     return http.get<PublicMealPlan[]>(`/public/hotels/${encodeURIComponent(slug)}/meal-plans`)
   },
 
-  /** REQ-01 (#233) — Amenidades para niños/bebés ACTIVAS del hotel, ordenadas por `sortOrder`.
-   *  Público, sin auth. El catálogo (nombres y precios) lo define el hotel en Motor de Reservas
-   *  — el widget nunca tiene una lista propia. Lista vacía = el hotel no ofrece ninguna. */
-  getChildAmenities(slug: string): Promise<PublicChildAmenity[]> {
-    return http.get<PublicChildAmenity[]>(`/public/hotels/${encodeURIComponent(slug)}/child-amenities`)
+  /** REQ-01 (#290) — Amenidades PERSONALIZADAS de habitación (cuna, cama extra…) vendibles, por
+   *  tipo de habitación (`byRoomType`, misma `id` de tipo que `/rates`). Público, sin auth. Las
+   *  configura el hotel en cada habitación (nombre + precio + estado) — el widget nunca tiene una
+   *  lista propia. `{}` = ningún tipo ofrece amenidades (o el body vino sin `byRoomType`). */
+  async getRoomAmenities(slug: string): Promise<Record<string, PublicRoomAmenity[]>> {
+    const res = await http.get<PublicRoomAmenitiesResponse>(`/public/hotels/${encodeURIComponent(slug)}/room-amenities`)
+    return res && typeof res === 'object' && res.byRoomType && typeof res.byRoomType === 'object' ? res.byRoomType : {}
   },
 
   /**

@@ -34,12 +34,23 @@ export interface CreateBookingUpsell {
   quantity: number
 }
 
-/** REQ-01 (#233) — una amenidad infantil elegida, tal como viaja al backend: SOLO el id. El
- *  precio lo resuelve el backend contra su catálogo (el snapshot con precio que guarda el
- *  carrito es para mostrar, nunca para cobrar). */
-export interface CreateBookingChildAmenity {
-  id: string
+/** REQ-01 (#290) — una amenidad DE LA HABITACIÓN (cuna, cama extra… configuradas por el hotel en
+ *  cada habitación) elegida para una línea, tal como viaja al backend: SOLO la `key`
+ *  (`custom:<slug>`). El precio lo resuelve el backend contra las filas `RoomAmenities` de la
+ *  habitación que asigna (el snapshot con precio del carrito es para mostrar, nunca para cobrar). */
+export interface CreateBookingRoomAmenity {
+  key: string
 }
+
+/** #292 — la cuna de una habitación ES una amenidad personalizada (RoomAmenities, con precio por
+ *  habitación) que `isCribAmenityKey` reconoce (`utils/crib-amenity.ts`: `custom:cuna`,
+ *  `custom:crib`, o cualquier `custom:*` cuyo nombre diga "cuna"/"crib"/"berço" — el slug sale del
+ *  nombre, así que "Cuna para bebé" NO es `custom:cuna`). El motor público ofrece "¿Necesita cuna?"
+ *  sólo si la tarjeta tiene un bebé Y el tipo publica una amenidad así en
+ *  `/public/hotels/:slug/room-amenities`; "Sí" agrega SU key a `roomAmenityKeys` y se cobra por el
+ *  mecanismo de amenidades de habitación. `CRIB_AMENITY_KEY` es la key canónica (sugerencia del
+ *  panel); espejo de `backend/src/shared/usecases/crib-amenity.ts`. */
+export { CRIB_AMENITY_KEY } from '@/utils/crib-amenity'
 
 /** DTO friendly que recibe `BookingService.createBooking`. El service resuelve slug→hotelId,
  *  mapea `guest` → `guestName/guestEmail/guestPhone`, y postea al backend con el shape del
@@ -67,18 +78,23 @@ export interface CreateBookingDTO {
   guest: CreateBookingGuest
   promoCode?: string
   upsells?: CreateBookingUpsell[]
-  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — solo tiene efecto si la
-   *  composición de ESTA habitación tiene al menos un bebé Y el hotel habilitó la cuna; el
-   *  backend re-valida, nunca confía en esto. `cribCount` es siempre 1 cuando `needsCrib` es
-   *  true — no existe cantidad configurable. */
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 cuna por habitación) —
+   *  solo tiene efecto si la composición de ESTA habitación tiene al menos un bebé Y el tipo
+   *  publica `custom:cuna` (`CRIB_AMENITY_KEY`); el backend re-valida, nunca confía en esto, y si
+   *  queda en true fuerza la línea `custom:cuna` en `roomAmenities` (precio real de la habitación).
+   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233, amenidades para niños y bebés) — ids del catálogo del hotel
-   *  (`GET /public/hotels/:slug/child-amenities`) elegidos para ESTA habitación. Mismo criterio
-   *  que `needsCrib`: por habitación, y el backend solo las acepta si la composición tiene al
-   *  menos un menor (`childrenAges` no vacío) y `childPolicy.acceptChildren`; re-valida ids y
-   *  precios contra su catálogo, nunca confía en el cliente. */
-  childAmenities?: CreateBookingChildAmenity[]
+  /** REQ-01 (#290) — keys del catálogo por tipo (`GET /public/hotels/:slug/room-amenities`)
+   *  elegidas para ESTA habitación. NO depende de la composición (aplica a cualquier línea); el
+   *  backend prefiere una habitación del tipo que las ofrezca y cobra el precio real de la
+   *  asignada — una key que esa habitación no ofrece se ignora. */
+  roomAmenities?: CreateBookingRoomAmenity[]
+  /** MR-03 (#268) — régimen elegido para ESTA habitación (`'breakfast' | 'half_board' |
+   *  'all_inclusive'`; omitido = solo alojamiento). El backend re-resuelve el precio contra su
+   *  catálogo activo (`meal_plans`) y cobra `price × (adultos + niños con plaza) × noches`; un
+   *  código que el hotel no tiene activo responde 400 `meal_plan_unavailable`. */
+  mealPlan?: string
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
   successUrl?: string
@@ -106,6 +122,9 @@ export interface CreateBookingResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  /** Revisión #292 — `true` sólo si se pidió cuna (había bebé) y la habitación asignada no la
+   *  ofrece: la reserva se creó sin cuna y el hotel se pondrá en contacto. */
+  cribUnavailable?: boolean
 }
 
 // ─── POST /api/public/booking/group (Tarea 10, QA 2026-08-20/21) ──────────────────────────
@@ -133,9 +152,12 @@ export interface CreateBookingRoomLine {
    *  propio bebé. Sí/No únicamente — `cribCount` es siempre 1 cuando `needsCrib` es true. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación (POR LÍNEA, igual que
-   *  `needsCrib`; a diferencia de `upsells`, global al carrito). Ver `CreateBookingDTO`. */
-  childAmenities?: CreateBookingChildAmenity[]
+  /** REQ-01 (#290) — amenidades de la habitación de ESTA línea (POR LÍNEA, igual que
+   *  `needsCrib`; sin gateo por niños). Ver `CreateBookingDTO.roomAmenities`. */
+  roomAmenities?: CreateBookingRoomAmenity[]
+  /** MR-03 (#268) — régimen de ESTA línea (POR LÍNEA, igual que `childAmenities`: cada
+   *  habitación del grupo puede llevar el suyo). Ver `CreateBookingDTO.mealPlan`. */
+  mealPlan?: string
 }
 
 export interface CreateBookingGroupDTO {
@@ -263,6 +285,11 @@ export interface PublicRatesResponse {
   /** F5 #627 — Política estructurada para mostrar al huésped (tiers + ventana gratuita).
    *  null si no hay repo cableado o falla → el widget cae al texto libre `cancellationPolicy`. */
   cancellationSummary: CancellationSummary | null
+  /** MR-03 (#268) — regímenes ACTIVOS del hotel con el precio ya resuelto para esta búsqueda
+   *  (`perNight`/`totalForStay`), siempre en `chargeCurrency`. Opcional por el mismo motivo que
+   *  `occupancies`: backend viejo o respuesta cacheada → `undefined`, y el widget sigue usando
+   *  `store.mealPlans` (`GET /meal-plans`) + el cálculo local por composición. */
+  mealPlans?: PublicRateMealPlan[]
 }
 
 /**
@@ -395,7 +422,15 @@ export interface OpenBookingOptions {
   skipToRooms?: boolean
 }
 
-export type UpsellKind = 'per_room' | 'per_person' | 'per_stay'
+/**
+ * Cómo se cobra un upsell (MR-10, #275). Espejo de `backend/bookingengine/types.ts`:
+ *  - `per_room`   → price × qty (qty ≤ habitaciones del carrito)
+ *  - `per_person` → price × qty (qty ≤ personas sin bebés)
+ *  - `per_stay`   → price × 1
+ *  - `per_night`  → price × noches (qty forzada a 1)
+ *  - `per_person_per_night` → price × personas × noches (qty forzada a 1)
+ */
+export type UpsellKind = 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night'
 
 /**
  * Upsell activo del hotel (`GET /api/public/hotels/:slug/upsells`). Público, sin auth.
@@ -423,8 +458,10 @@ export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 /**
  * Régimen de alimentación activo del hotel (`GET /api/public/hotels/:slug/meal-plans`).
  * Público, sin auth. "Solo alojamiento" NO viene acá — es la base implícita que arma el
- * widget (ver RoomsStep.vue). `priceMode:'per_person_per_night'` es informativo esta fase
- * (no seleccionable/cobrable todavía — tasks.md 2.2/2.4).
+ * widget (ver RoomsStep.vue / useGuestComposer.ts). MR-03 (#268): los regímenes son
+ * SELECCIONABLES por habitación y `priceMode:'per_person_per_night'` se cobra
+ * `price × (adultos + niños con plaza) × noches` (el backend recalcula; `included` → 0).
+ * `price` está SIEMPRE en `hotels.currency` (chargeCurrency), nunca convertido.
  */
 export interface PublicMealPlan {
   code: MealPlanCode
@@ -432,18 +469,45 @@ export interface PublicMealPlan {
   price: number
 }
 
+/** MR-03 (#268) — ítem de `PublicRatesResponse.mealPlans`: `PublicMealPlan` + el precio ya
+ *  resuelto para la búsqueda (`guests × nights`). Espejo de `PublicRateMealPlan` del backend. */
+export interface PublicRateMealPlan extends PublicMealPlan {
+  /** `price × guests` (0 si `included`). */
+  perNight: number
+  /** `price × guests × nights` (0 si `included`). */
+  totalForStay: number
+}
+
+/** MR-03 (#268) — SNAPSHOT del régimen elegido en una línea del carrito (`CartLine.mealPlan`),
+ *  tomado del catálogo `store.mealPlans` al agregar: si el hotel cambia el precio después, la
+ *  línea sigue mostrando lo que el huésped vio. `persons` = adultos + niños con plaza de ESA
+ *  línea; `total` = `unitPrice × persons × nights` por unidad (0 si `included`). Solo se guarda
+ *  para códigos ≠ `room_only` (el flujo base no lleva snapshot). */
+export interface CartLineMealPlan {
+  code: MealPlanCode | 'room_only'
+  priceMode: MealPlanPriceMode | null
+  unitPrice: number
+  persons: number
+  total: number
+}
+
 /**
- * REQ-01 (#233) — Amenidad para niños/bebés ACTIVA del hotel
- * (`GET /api/public/hotels/:slug/child-amenities`). Público, sin auth. Solo llegan las activas,
- * ya ordenadas por `sortOrder` ASC (desempate por nombre). `price` está en `hotels.currency`
- * (cobro en la moneda base, igual que `Upsell.price`); `0` = sin cargo. El catálogo lo mantiene
- * el hotel desde Motor de Reservas — NUNCA hay lista ni precios en código.
+ * REQ-01 (#290) — Amenidad PERSONALIZADA de habitación vendible en el motor público
+ * (`GET /api/public/hotels/:slug/room-amenities`). `key` es `custom:<slug>` (las keys fijas del
+ * catálogo — wifi, tv — son features gratuitas y no llegan acá). `price` en `hotels.currency`, es
+ * el MÍNIMO entre las habitaciones del tipo que la ofrecen ("desde"); al reservar se cobra el
+ * precio real de la habitación asignada. `0` = sin cargo.
  */
-export interface PublicChildAmenity {
-  id: string
+export interface PublicRoomAmenity {
+  key: string
   name: string
   price: number
-  sortOrder: number
+}
+
+/** Body de `GET /api/public/hotels/:slug/room-amenities`: catálogo agrupado por `roomType` (el
+ *  `id` que devuelve `/rates`). Un tipo sin amenidades personalizadas activas NO aparece. */
+export interface PublicRoomAmenitiesResponse {
+  byRoomType: Record<string, PublicRoomAmenity[]>
 }
 
 export type PromoValidationReason =
@@ -475,15 +539,45 @@ export interface TotalBreakdown {
   subtotal: number
   promoDiscount: number
   upsellsTotal: number
-  /** REQ-01 (#233) — Σ de las amenidades infantiles de todas las habitaciones de la reserva
-   *  (`subtotal` = alojamiento + `upsellsTotal` + `childAmenitiesTotal`). Opcional: las reservas
-   *  creadas ANTES de esta feature persistieron un `totalBreakdown` sin el campo — tratar
-   *  `undefined` como 0. */
+  /** Snapshot HISTÓRICO (#233, catálogo global dado de baja en #292): Σ de las amenidades
+   *  infantiles de reservas creadas mientras existió ese catálogo (entra en `subtotal`). Las
+   *  reservas nuevas lo persisten en 0 y las anteriores a #233 no lo traen — tratar `undefined`
+   *  como 0. Se conserva sólo para leer reservas viejas. */
   childAmenitiesTotal?: number
+  /** REQ-01 (#290) — Σ de las amenidades de habitación (cuna, cama extra…) de todas las
+   *  habitaciones de la reserva; entra en `subtotal`. Opcional: reservas anteriores a la feature
+   *  no lo tienen — tratar `undefined` como 0. */
+  roomAmenitiesTotal?: number
+  /** MR-03 (#268) — régimen: `unitPrice × (adultos + niños con plaza) × noches` (Σ de las líneas
+   *  en un grupo); entra en `subtotal` igual que los anteriores. Opcional por el mismo motivo:
+   *  reservas anteriores a la feature no lo tienen — tratar `undefined` como 0. */
+  mealPlanTotal?: number
   /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */
   taxBreakdown: RoomTypeTaxItem[]
+  /** MR-10 (#275) — cada extra cotizado por el backend (`resolveUpsellLines`), con el
+   *  multiplicador por `kind` explícito. Opcional: reservas anteriores no lo tienen. */
+  upsells?: UpsellBreakdownLine[]
+  total: number
+}
+
+/**
+ * Línea de upsell cotizada por el backend (`priceBreakdown.upsells[]`, MR-10 #275). Espejo de
+ * `UpsellPricedLine` de `backend/bookingengine/usecases/upsell-pricing.ts`. Invariante:
+ * `unitPrice × quantity × nights × (persons ?? 1) === total` (redondeado).
+ */
+export interface UpsellBreakdownLine {
+  id: string
+  name: string
+  kind: UpsellKind
+  unitPrice: number
+  /** Cantidad efectiva: la pedida en per_room/per_person, 1 en per_stay/per_night/ppn. */
+  quantity: number
+  /** Noches por las que se multiplica: las de la estadía en per_night/ppn, 1 en el resto. */
+  nights: number
+  /** Personas por las que se multiplica — sólo en `per_person_per_night`. */
+  persons?: number
   total: number
 }
 
@@ -491,8 +585,14 @@ export interface TotalBreakdown {
 export interface UpsellLine {
   id: string
   name: string
+  /** MR-10 (#275) — para que PayStep/ConfirmStep puedan mostrar "× 2 personas × 3 noches". */
+  kind?: UpsellKind
   quantity: number
   unitPrice: number
+  /** Noches por las que se multiplica (per_night/ppn); 1 en el resto. */
+  nights?: number
+  /** Personas por las que se multiplica — sólo en `per_person_per_night`. */
+  persons?: number
   total: number
 }
 
@@ -527,6 +627,15 @@ export interface PublicReservation {
    *  para que la pantalla de confirmación pueda mostrárselo (no un dato interno del hotel). */
   needsCrib?: boolean
   cribCount?: number
+  /** Revisión #292 — pidió cuna y la habitación asignada no la ofrece: la confirmación le avisa
+   *  que el hotel se pondrá en contacto. Ausente/false en el resto. */
+  cribUnavailable?: boolean
+  /** MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado en la reserva).
+   *  `null`/`undefined`/`'room_only'` = solo alojamiento; `mealPlanTotal` 0 con `included`. */
+  mealPlan?: MealPlanCode | 'room_only' | null
+  mealPlanPriceMode?: MealPlanPriceMode | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
   totalAmount?: number
   /** Tarea 24 (#88): el desglose que el huésped aceptó en el paso de pago. `null` en reservas
    *  viejas o creadas desde el panel — entonces se muestra solo el total. */
@@ -541,13 +650,53 @@ export interface PublicReservation {
   promoCode?: string | null
   /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación
    *  instantánea" y todavía no revisó esta reserva. null = no aplica. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #271 (MR-06) — plazo (horas) en que el hotel se compromete a revisar una reserva
+   *  pendiente. Default 24 si el hotel no lo configuró. */
+  approvalDeadlineHours?: number
+  /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: el motivo que el hotel
+   *  escribió para el huésped. `null` en cualquier otro estado. */
+  rejectionReason?: string | null
+  /** #266 (MR-01) — motivo de cancelación. 'payment_timeout' = venció sin completar el pago
+   *  (cron / checkout.session.expired): la confirmación muestra "venció, volvé a reservar". */
+  cancellationReason?: string | null
+  /** #272 (MR-07) — snapshot de la cancelación y estado REAL del reembolso en Stripe.
+   *  `refundStatus`: 'none' = sin reembolso que procesar (o reserva vieja), 'pending' = en curso,
+   *  'done' = la pasarela lo aceptó, 'failed' = falló y el hotel lo reintenta desde el panel.
+   *  Ausentes en reservas canceladas antes de esta feature. `refundAmount` es siempre número
+   *  (0 sin nada que devolver); en un rechazo del hotel (#271 MR-06) es el 100% de lo cobrado. */
+  cancellationFee?: number
+  refundAmount?: number
+  refundStatus?: PublicRefundStatus
+  refundedAt?: string | null
+  cancelledAt?: string | null
+}
+
+/** #272 — estado del reembolso tal como lo persiste `reservations.refundStatus`. */
+export type PublicRefundStatus = 'none' | 'pending' | 'done' | 'failed'
+
+/** #272 — una habitación de una reserva de varias (mismo token compartido). `id` es el
+ *  reservationId de esa habitación. */
+export interface PublicGroupRoom {
+  id: string
+  roomType: string
+  adults: number
+  children: number
+  status: string
+}
+
+/** #272 — el grupo al que pertenece la reserva consultada. `null` si es de una sola habitación. */
+export interface PublicReservationGroup {
+  id: string
+  rooms: PublicGroupRoom[]
 }
 
 export interface PublicReservationResponse {
   reservation: PublicReservation
   guest: PublicReservationGuest | null
   paymentStatus: string
+  /** #272 — presente (no null) solo cuando la reserva es parte de un grupo de N habitaciones. */
+  group?: PublicReservationGroup | null
 }
 
 /** F4 #627 — Respuesta de auto-cancelación pública del huésped. */
@@ -559,4 +708,10 @@ export interface CancelReservationResponse {
   policyApplied: { tiers: unknown[]; policyId: string; source: string; label?: string } | null
   /** true si la reserva ya estaba cancelada (idempotente — no se re-procesó). */
   idempotent?: boolean
+  /** #272 — cascada al grupo: todas las reservas canceladas (incluida ésta) y cuántas eran. */
+  reservationIds?: string[]
+  roomsCount?: number
+  /** #272 — estado real del reembolso al volver del POST (Stripe ya corrió, o falló). */
+  refundStatus?: PublicRefundStatus
+  refundedAt?: string | null
 }

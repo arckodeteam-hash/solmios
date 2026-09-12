@@ -35,6 +35,12 @@ export interface BookingIngestDeps {
   cancelReservation: ReservationCancelPort
   /** Para dejar rastro de las cancelaciones OTA que no se pueden aplicar (ver más abajo). */
   logger?: { error: (msg: string, meta?: Record<string, unknown>) => void }
+  /**
+   * #246 — Aviso de ALTA (socket `onOtaBookingIngested` del service). Solo se dispara cuando se
+   * crea una reserva nueva: dedupe, modificación y cancelación no avisan. Best-effort: si el aviso
+   * falla, la ingesta ya está hecha y la revisión se ackea igual.
+   */
+  onIngested?: (data: { hotelId: string; reservationId: string; ota: string }) => Promise<void>
 }
 
 /** Resultado de aplicar una revisión: distingue reserva creada vs dedupe (ya existía). */
@@ -144,6 +150,10 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
   // Resolver roomId: Channex referencia roomTypeId (tipo), el PMS exige habitación individual.
   const { channexRoomTypeId, channexRevisionId, channexBookingId, ...payload } = dto
   let roomId: string | null = null
+  // REQ-HAC-01 (#258): el tipo vendido viaja en la fila (`rooms.type` de la unidad elegida), igual
+  // que en el panel y el motor público — sin él, soltar la unidad después dejaba la reserva sin
+  // tipo contra el cual validar ni contar disponibilidad.
+  let roomType: string | undefined
   if (channexRoomTypeId) {
     const rt = await channex.getRoomTypeById(apiKey, channexRoomTypeId)
     if (rt?.title) {
@@ -152,18 +162,29 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
       // auto-asignación y terminaba en una habitación de otro tipo.
       const rooms = await orm.findMany('Rooms', { hotelId, type: localRoomTypeFromTitle(rt.title) })
       roomId = rooms?.[0]?.id || null
+      roomType = rooms?.[0]?.type ? String(rooms[0].type) : undefined
     }
   }
   if (!roomId) {
     // Fallback: cualquier habitación del hotel + flag de auto-asignación (nunca dropear un OTA booking).
     const any = await orm.findMany('Rooms', { hotelId })
     roomId = any?.[0]?.id || null
+    roomType = any?.[0]?.type ? String(any[0].type) : undefined
     if (roomId && payload.notes) payload.notes = `${payload.notes} | ⚠ AUTO-ASSIGNED ROOM (no type match)`
   }
   if (!roomId) throw new Error(`Sin habitaciones para el hotel ${hotelId}`)
 
   payload.id = crypto.randomUUID()
   payload.roomId = roomId
+  if (roomType) payload.roomType = roomType
   await orm.create('Reservations', payload)
+  // La reserva ya está guardada: un aviso que falla no la deshace ni frena el ack de la revisión.
+  try {
+    await deps.onIngested?.({ hotelId, reservationId: payload.id, ota: dto.channel || 'OTA' })
+  } catch (e) {
+    deps.logger?.error('No se pudo avisar la reserva OTA ingresada', {
+      hotelId, reservationId: payload.id, externalLocator: dto.externalLocator, channel: dto.channel, error: (e as Error).message,
+    })
+  }
   return { created: true }
 }

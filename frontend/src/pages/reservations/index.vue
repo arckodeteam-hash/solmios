@@ -64,13 +64,22 @@
           <option value="checked_in">Check-in</option>
           <option value="checked_out">Check-out</option>
           <option value="cancelled">Canceladas</option>
+          <!-- REQ-HAC-06 (#261) — reservas vigentes (pendiente/confirmada) que todavía no tienen
+               unidad asignada (`roomId` vacío). Filtro local: el backend no lo expone como query. -->
+          <option value="unassigned">Sin asignar</option>
         </select>
         <select id="reservations-filter-channel" name="filterChannel" aria-label="Filtrar reservas por canal" v-model="filterChannel" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los canales</option>
           <option value="direct">Directa</option>
+          <option value="web">Web</option>
           <option value="booking">Booking</option>
           <option value="expedia">Expedia</option>
           <option value="airbnb">Airbnb</option>
+        </select>
+        <!-- MR-03 (#268) — régimen: `regime` (editable en el panel) o, si no vino, `mealPlan` (snapshot web). -->
+        <select id="reservations-filter-meal-plan" name="filterMealPlan" aria-label="Filtrar reservas por régimen" data-testid="reservations-filter-meal-plan" v-model="filterMealPlan" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
+          <option value="">Todos los regímenes</option>
+          <option v-for="(label, code) in MEAL_PLAN_LABELS" :key="code" :value="code">{{ label }}</option>
         </select>
         <span class="text-xs text-text-muted ml-auto font-medium">{{ filtered.length }} reservas encontradas</span>
       </div>
@@ -87,6 +96,7 @@
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Check-out</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">N</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Estado</th>
+            <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider hidden md:table-cell">Pago</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Canal</th>
             <th class="text-right px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Total</th>
             <th class="px-4 py-3"></th>
@@ -108,7 +118,25 @@
               </div>
             </td>
             <td class="px-4 py-5">
-              <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+              <!-- REQ-HAC-06 (#261) — la reserva vendió un TIPO; hasta que recepción asigne la
+                   unidad, `roomId` viene vacío y se muestra el tipo en vez de un número. -->
+              <span v-if="!r.roomId" data-testid="unassigned-badge"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 whitespace-nowrap">
+                <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"></span>Sin asignar · {{ typeLabel(r.roomType) }}
+              </span>
+              <div v-else class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+                <!-- #274 — cuna / amenidades infantiles pedidas al reservar; el tooltip lista qué preparar. -->
+                <span v-if="childSetupSummary(r)" :title="childSetupSummary(r)" :aria-label="childSetupSummary(r)" data-testid="crib-badge"
+                  class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-warning/10 text-warning text-[10px] font-bold">
+                  <Icon name="crib" :size="12" />{{ r.needsCrib ? 'Cuna' : 'Bebé' }}
+                </span>
+              </div>
+              <!-- MR-03 (#268) — régimen (solo si no es "solo alojamiento"). El tooltip no afirma que el
+                   importe esté dentro del total: en una reserva de grupo NO lo está (se cobró con el
+                   total del grupo). -->
+              <span v-if="r.mealPlanLabel" data-testid="reservation-meal-plan-badge" :title="mealPlanTitle(r)"
+                class="block mt-1 w-fit px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple/10 text-purple whitespace-nowrap">{{ r.mealPlanLabel }}</span>
             </td>
             <td class="px-4 py-5">
               <div class="flex items-baseline gap-1">
@@ -139,7 +167,18 @@
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
                   <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
                 </span>
+                <!-- #271 MR-06 — el hotel la rechazó (reembolso 100% por Stripe + email al huésped). -->
+                <span v-else-if="r.approvalStatus === 'rejected'" data-testid="reservation-rejected-badge"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-coral/10 text-coral">
+                  <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-coral"></span>Rechazada
+                </span>
+                <!-- REQ-RWP-04 — en <768px la columna "Pago" se oculta y el badge va acá, debajo del estado. -->
+                <span data-testid="reservation-payment-badge" class="md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
               </div>
+            </td>
+            <!-- REQ-RWP-04 — estado real de cobro (`paymentState` del backend, desde `payments`). -->
+            <td class="px-4 py-5 hidden md:table-cell">
+              <span data-testid="reservation-payment-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
             </td>
             <td class="px-4 py-5">
               <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="srcClass(r.source)">
@@ -166,6 +205,14 @@
                   </svg>
                   {{ approving===r.id ? 'Aprobando…' : 'Aprobar' }}
                 </button>
+                <!-- #271 MR-06 — contracara de Aprobar: abre el modal de motivo; el rechazo real
+                     (cancelar + reembolsar 100% por Stripe + email) lo hace POST /reservas/:id/reject. -->
+                <button v-if="r.approvalStatus==='pending'" data-testid="reservation-row-reject" :disabled="rejecting===r.id || approving===r.id" @click="openReject(r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-coral/10 text-coral rounded-lg text-[10px] font-bold cursor-pointer hover:bg-coral/20 transition-colors disabled:opacity-50">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                  {{ rejecting===r.id ? 'Rechazando…' : 'Rechazar' }}
+                </button>
                 <button v-if="r.status==='confirmed'" @click="confirmAction('checkin',r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-teal/10 text-teal rounded-lg text-[10px] font-bold cursor-pointer hover:bg-teal/20 transition-colors">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/>
@@ -184,6 +231,8 @@
                     <div class="fixed inset-0 z-20" @click="openMenuId = ''"></div>
                     <div class="absolute right-0 top-8 z-30 w-36 rounded-xl border border-border bg-white shadow-lg py-1 text-left" @click.stop>
                       <button @click="openEdit(r); openMenuId=''" data-testid="reservation-row-edit" class="w-full text-left px-3 py-2 text-xs font-semibold text-text-secondary hover:bg-surface cursor-pointer">Editar</button>
+                      <!-- REQ-HAC-06 (#261) — elegir/cambiar la unidad concreta (RoomAssignModal). -->
+                      <button v-if="canAssignRoom(r)" @click="openAssign(r); openMenuId=''" data-testid="reservation-row-assign-room" class="w-full text-left px-3 py-2 text-xs font-semibold text-text-secondary hover:bg-surface cursor-pointer">{{ r.roomId ? 'Cambiar habitación' : 'Asignar habitación' }}</button>
                       <button v-if="r.status==='pending'||r.status==='cancelled'" @click="confirmAction('delete',r); openMenuId=''" class="w-full text-left px-3 py-2 text-xs font-semibold text-coral hover:bg-coral/10 cursor-pointer">Eliminar</button>
                     </div>
                   </template>
@@ -238,6 +287,17 @@
     <CancelReservationModal :open="cancelDlg.show" :reservation="cancelDlg.res"
       @close="cancelDlg.show = false" @cancelled="load" />
 
+    <!-- REQ-HAC-06 (#261) — asignar/cambiar la habitación desde el menú ⋯ de la fila. El toast
+         de éxito y el 409 traducido los maneja el modal; acá sólo se recarga el listado. -->
+    <RoomAssignModal :open="assignDlg.show" :reservation-id="assignDlg.id" :room-type="assignDlg.roomType"
+      :current-room-id="assignDlg.roomId" @close="assignDlg.show = false" @assigned="onAssigned" />
+
+    <!-- #271 MR-06 — rechazo de una reserva pendiente de aprobación: motivo libre (≥10, lo lee el
+         huésped por email) y el monto a reembolsar a la vista antes de confirmar. -->
+    <RejectReservationModal v-if="rejectDlg" :guest-name="rejectDlg.guestName" :refund-amount="rejectDlg.refundAmount"
+      :is-group="rejectDlg.isGroup" :loading="rejecting === rejectDlg.id"
+      @confirm="rejectReservation" @close="rejectDlg = null" />
+
     <!-- ═══ Vista de DETALLE (F3 match-misterplan) ═══ -->
     <ReservationModal
       v-if="detailId"
@@ -250,17 +310,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
-import { ReservationService } from '@/services/Reservation.service'
+import { paymentStateBadge } from '@/utils/payment-state'
+import { effectiveMealPlan, hasMealPlan, mealPlanLabel, MEAL_PLAN_LABELS } from '@/utils/meal-plans'
+import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
+import Icon from '@/components/ui/Icon.vue'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
+import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { usePermissions } from '@/composables/usePermissions'
 import { useRoute, useRouter } from 'vue-router'
 import type { CancellableReservation } from '@/types'
 
@@ -268,6 +334,7 @@ const loading = ref(true)
 
 const auth = useAuthStore()
 const toast = useToast()
+const { can } = usePermissions()
 const route = useRoute()
 const router = useRouter()
 const hid = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
@@ -278,6 +345,18 @@ const filterStatus = ref('')
 const filterChannel = ref('')
 // Tarea 3.4 (corrección 2026-08-25) — '' | 'pending'. Eje independiente de filterStatus.
 const filterApproval = ref('')
+// REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
+const filterPayment = ref('')
+// MR-03 (#268) — '' | código de régimen. Compara contra `effectiveMealPlan` de cada fila
+// (`regime` editable manda; `mealPlan` es el snapshot web). Etiquetas: `utils/meal-plans.ts`.
+const filterMealPlan = ref('')
+/** Tooltip del badge: importe del régimen reservado en la web y, en grupo, dónde se cobró. */
+function mealPlanTitle(r: { mealPlanTotal: number; groupId?: string | null }): string {
+  if (!(r.mealPlanTotal > 0)) return 'Régimen sin cargo aparte'
+  return `Régimen: $${r.mealPlanTotal}${r.groupId ? ' · cobrado con el total del grupo (reserva principal)' : ''}`
+}
+// #274 — "Llegan hoy": toggle del KPI "Check-ins Hoy". Mismo criterio que `checkinsTodayCount`.
+const filterArrivalsToday = ref(false)
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -287,6 +366,8 @@ const cfg = ref({ show: false, icon: '', title: '', msg: '', btn: '', fn: () => 
 const cancelDlg = ref<{ show: boolean; res: CancellableReservation | null }>({ show: false, res: null })
 // Menú contextual (⋮) de la fila abierta en la tabla de reservas
 const openMenuId = ref('')
+// REQ-HAC-06 (#261) — RoomAssignModal para la fila elegida en el menú ⋯.
+const assignDlg = ref<{ show: boolean; id: string; roomType: string | null; roomId: string | null }>({ show: false, id: '', roomType: null, roomId: null })
 
 const MS_PER_DAY = 86_400_000
 
@@ -308,6 +389,22 @@ const pendingCount = computed(() => list.value.filter((r: any) => r.status === '
 const confirmedCount = computed(() => list.value.filter((r: any) => r.status === 'confirmed').length)
 // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status` (ver comentario en `load()`).
 const approvalPendingCount = computed(() => list.value.filter((r: any) => r.approvalStatus === 'pending').length)
+// #271 MR-06 — cuánto lleva esperando la pendiente más vieja (booking_config.approvalDeadlineHours
+// es el plazo de revisión; el cron del backend recuerda al hotel cuando se pasa). Horas enteras
+// desde `createdAt`; a partir de 48 h se muestra en días. Sin pendientes → caption de siempre.
+const MS_PER_HOUR = 3_600_000
+const HOURS_PER_DAY = 24
+const OLDEST_PENDING_DAYS_FROM_HOURS = 48
+const oldestPendingLabel = computed(() => {
+  const times = list.value
+    .filter((r: any) => r.approvalStatus === 'pending' && r.createdAt)
+    .map((r: any) => new Date(r.createdAt).getTime())
+    .filter((t: number) => Number.isFinite(t))
+  if (!times.length) return 'Confirmación manual'
+  const hours = Math.max(0, Math.floor((Date.now() - Math.min(...times)) / MS_PER_HOUR))
+  if (hours >= OLDEST_PENDING_DAYS_FROM_HOURS) return `Más antigua: hace ${Math.floor(hours / HOURS_PER_DAY)} d`
+  return `Más antigua: hace ${hours} h`
+})
 
 // "vs ayer": mismas métricas de check-in/out/ingresos pero con fecha de ayer — ya tenemos
 // todas las reservas cargadas en `list`, no hace falta pedir un histórico aparte.
@@ -330,30 +427,44 @@ const totalBilledAnim = useCountUp(totalBilledAmount)
 const pendingAnim = useCountUp(pendingCount)
 const confirmedAnim = useCountUp(confirmedCount)
 const approvalPendingAnim = useCountUp(approvalPendingCount)
+// REQ-RWP-04 — reservas con el cobro completo según `paymentState` (backend), sin las anuladas.
+const paidCount = computed(() => list.value.filter((r: any) => r.paymentState === 'paid' && r.status !== 'cancelled').length)
+const paidAnim = useCountUp(paidCount)
 
 function setStatusFilter(status: string) { filterStatus.value = status }
 // Tarea 3.4 (corrección 2026-08-25) — toggle: un segundo click sobre la misma vista la
 // apaga (mismo criterio que un filtro de chip, no un radio permanente).
 function toggleApprovalFilter() { filterApproval.value = filterApproval.value === 'pending' ? '' : 'pending' }
+function togglePaidFilter() { filterPayment.value = filterPayment.value === 'paid' ? '' : 'paid' }
+function toggleArrivalsFilter() { filterArrivalsToday.value = !filterArrivalsToday.value }
 
 const statsCards = computed(() => [
-  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
+  // #274 — click = filtro "Llegan hoy" (toggle), para ver de un vistazo cuáles piden cuna.
+  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: (filterArrivalsToday.value ? 'Filtro: Llegan hoy' : undefined) as string | undefined, link: toggleArrivalsFilter as (() => void) | undefined },
   { label: 'Check-outs Hoy', value: checkoutsAnim.value, icon: 'checkout' as const, accent: 'rose' as const, trend: checkoutsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Ingresos Hoy', value: revenueAnim.value, prefix: '$', icon: 'money' as const, accent: 'green' as const, trend: revenueTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Total Facturado', value: totalBilledAnim.value, prefix: '$', icon: 'money' as const, accent: 'purple' as const, trend: null as number | null, caption: 'Acumulado' as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Pendientes', value: pendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('pending')) as (() => void) | undefined },
   { label: 'Confirmadas', value: confirmedAnim.value, icon: 'bookings' as const, accent: 'teal' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('confirmed')) as (() => void) | undefined },
+  // REQ-RWP-04 — reservas con pago completo (estado real desde `payments`). Toggle sobre filterPayment.
+  { label: 'Cobradas', value: paidAnim.value, icon: 'money' as const, accent: 'teal' as const, trend: null as number | null, caption: 'Pago completo' as string | undefined, link: togglePaidFilter as (() => void) | undefined },
   // Tarea 3.4 — vista dedicada para reservas pagadas que el hotel todavía no revisó
   // ("confirmación instantánea" apagada). Eje independiente del filtro de Estado de arriba.
-  { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: 'Confirmación manual' as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
+  // #271 MR-06 — el caption muestra cuánto lleva esperando la más vieja (hay un plazo de revisión).
+  { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: oldestPendingLabel.value as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
 ])
 
 const filtered = computed(() => {
   let l = list.value
-  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q)) }
-  if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
+  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || mealPlanLabel(effectiveMealPlan(r), '').toLowerCase().includes(q)) }
+  if (filterMealPlan.value) l = l.filter((r: any) => (effectiveMealPlan(r) ?? '') === filterMealPlan.value)
+  // REQ-HAC-06 (#261) — 'unassigned' no es un status del backend: vigentes sin unidad asignada.
+  if (filterStatus.value === 'unassigned') l = l.filter((r: any) => !r.roomId && (r.status === 'pending' || r.status === 'confirmed'))
+  else if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
+  if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value && r.status !== 'cancelled') // mismo criterio que paidCount: el KPI y su filtro muestran las mismas filas
+  if (filterArrivalsToday.value) l = l.filter((r: any) => r.checkIn === today && (r.status === 'confirmed' || r.status === 'checked_in')) // #274 — mismo criterio que checkinsTodayCount
   return l
 })
 
@@ -365,8 +476,19 @@ function fmtWeekdayAbbr(d: string) { return d ? new Date(d + 'T12:00:00').toLoca
 function stLabel(s: string) { const m: any = { pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada' }; return m[s] || s }
 function stClass(s: string) { const m: any = { pending: 'bg-gold/10 text-gold', confirmed: 'bg-teal/10 text-teal', checked_in: 'bg-cyan/10 text-cyan', checked_out: 'bg-gray-100 text-gray-500', cancelled: 'bg-coral/10 text-coral' }; return m[s] || '' }
 function stDotClass(s: string) { const m: any = { pending: 'bg-gold', confirmed: 'bg-teal', checked_in: 'bg-cyan', checked_out: 'bg-gray-400', cancelled: 'bg-coral' }; return m[s] || 'bg-gray-400' }
-function srcLabel(s: string) { const m: any = { direct: 'Directa', booking: 'Booking', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google', whatsapp: 'WhatsApp', phone: 'Teléfono' }; return m[s] || s }
-function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue-100 text-blue-700', whatsapp: 'bg-emerald-100 text-emerald-700' }; return m[s] || 'bg-gray-100 text-gray-500' }
+// REQ-HAC-06 (#261) — etiqueta del tipo vendido para el badge "Sin asignar · {tipo}" (mismo mapa
+// que pages/rooms/index.vue; un tipo no catalogado se capitaliza).
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return 'Sin tipo'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
+function srcLabel(s: string) { const m: any = { direct: 'Directa', web: 'Web', booking: 'Booking', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google', whatsapp: 'WhatsApp', phone: 'Teléfono' }; return m[s] || s }
+function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', web: 'bg-blue-100 text-blue-700', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue-100 text-blue-700', whatsapp: 'bg-emerald-100 text-emerald-700' }; return m[s] || 'bg-gray-100 text-gray-500' }
 
 // Iconos de canal — logos reales de marca (mismo SVG que la sección #integrations del
 // landing, frontend/src/pages/landing/index.vue) para las OTAs; ícono genérico de línea
@@ -374,6 +496,8 @@ function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', 
 // verificado en el repo (Google — no se inventa un logo de marca no auditado).
 const SRC_ICON_SVG: Record<string, string> = {
   direct: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>',
+  // REQ-RWP-04 — reserva hecha por el huésped en el widget público (globo, heroicons globe-alt).
+  web: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582M12 3v18m-9-9h18"/></svg>',
   booking: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#003A9A"><path d="M24 0H0v24h24ZM8.575 6.563h2.658c2.108 0 3.473 1.15 3.473 2.898 0 1.15-.575 1.82-.91 2.108l-.287.263.335.192c.815.479 1.318 1.389 1.318 2.395 0 1.988-1.51 3.257-3.857 3.257H7.449V7.713c0-.623.503-1.126 1.126-1.15zm1.7 1.868c-.479.024-.694.264-.694.79v1.893h1.676c.958 0 1.294-.743 1.294-1.365 0-.815-.503-1.318-1.318-1.318zm-.096 4.36c-.407.071-.598.31-.598.79v2.251h1.868c.934 0 1.509-.55 1.509-1.533 0-.934-.599-1.509-1.51-1.509zm7.737 2.394c.743 0 1.341.599 1.341 1.342a1.34 1.34 0 0 1-1.341 1.341 1.355 1.355 0 0 1-1.341-1.341c0-.743.598-1.342 1.34-1.342z"/></svg>',
   expedia: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#191E3B"><path d="M19.067 0H4.933A4.94 4.94 0 0 0 0 4.933v14.134A4.932 4.932 0 0 0 4.933 24h14.134A4.932 4.932 0 0 0 24 19.067V4.933C24.01 2.213 21.797 0 19.067 0ZM7.336 19.341c0 .19-.148.337-.337.337h-2.33a.333.333 0 0 1-.337-.337v-2.33c0-.189.148-.336.337-.336H7c.19 0 .337.147.337.337zm12.121-1.486-2.308 2.298c-.169.168-.422.053-.422-.2V9.57l-6.44 6.44a.533.533 0 0 1-.421.17H8.169a.32.32 0 0 1-.338-.338v-1.697c0-.2.053-.316.169-.422l6.44-6.44H4.058c-.253 0-.369-.253-.2-.421l2.297-2.309c.137-.137.285-.232.517-.232H18.15c.854 0 1.539.686 1.539 1.54v11.478c-.01.231-.095.368-.232.516z"/></svg>',
   airbnb: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#FF5A5F"><path d="M12.001 18.275c-1.353-1.697-2.148-3.184-2.413-4.457-.263-1.027-.16-1.848.291-2.465.477-.71 1.188-1.056 2.121-1.056s1.643.345 2.12 1.063c.446.61.558 1.432.286 2.465-.291 1.298-1.085 2.785-2.412 4.458zm9.601 1.14c-.185 1.246-1.034 2.28-2.2 2.783-2.253.98-4.483-.583-6.392-2.704 3.157-3.951 3.74-7.028 2.385-9.018-.795-1.14-1.933-1.695-3.394-1.695-2.944 0-4.563 2.49-3.927 5.382.37 1.565 1.352 3.343 2.917 5.332-.98 1.085-1.91 1.856-2.732 2.333-.636.344-1.245.558-1.828.609-2.679.399-4.778-2.2-3.825-4.88.132-.345.395-.98.845-1.961l.025-.053c1.464-3.178 3.242-6.79 5.285-10.795l.053-.132.58-1.116c.45-.822.635-1.19 1.351-1.643.346-.21.77-.315 1.246-.315.954 0 1.698.558 2.016 1.007.158.239.345.557.582.953l.558 1.089.08.159c2.041 4.004 3.821 7.608 5.279 10.794l.026.025.533 1.22.318.764c.243.613.294 1.222.213 1.858zm1.22-2.39c-.186-.583-.505-1.271-.9-2.094v-.03c-1.889-4.006-3.642-7.608-5.307-10.844l-.111-.163C15.317 1.461 14.468 0 12.001 0c-2.44 0-3.476 1.695-4.535 3.898l-.081.16c-1.669 3.236-3.421 6.843-5.303 10.847v.053l-.559 1.22c-.21.504-.317.768-.345.847C-.172 20.74 2.611 24 5.98 24c.027 0 .132 0 .265-.027h.372c1.75-.213 3.554-1.325 5.384-3.317 1.829 1.989 3.635 3.104 5.382 3.317h.372c.133.027.239.027.265.027 3.37.003 6.152-3.261 4.802-6.975z"/></svg>',
@@ -425,12 +549,26 @@ async function load() {
       return {
         id: r.id, guestName: guest?.name || 'Guest', email: guest?.email || '',
         roomNumber: room?.number || r.roomNumber || '—', roomId: r.roomId, guestId: r.guestId,
+        // REQ-HAC-06 (#261) — tipo vendido (puede no haber unidad todavía); si hay unidad, su tipo.
+        roomType: r.roomType || room?.type || '',
         checkIn: String(r.checkIn || '').slice(0, 10), checkOut: String(r.checkOut || '').slice(0, 10),
         nights: nBetween(r.checkIn, r.checkOut), status: r.status, source: r.source,
         total: r.totalAmount, adults: r.adults, children: r.children, notes: r.notes || '',
         // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: la reserva ya
         // está pagada/ocupando la habitación, pero el hotel todavía no la revisó.
         approvalStatus: r.approvalStatus || null,
+        // #271 MR-06 — lo que necesita Rechazar: monto cobrado (a reembolsar), si es parte de un
+        // grupo (cae entero) y cuándo se creó (caption "Más antigua" del KPI "Por aprobar").
+        paidAmount: r.paidAmount ?? 0, groupId: r.groupId, createdAt: r.createdAt,
+        // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
+        paymentState: r.paymentState ?? r.paymentStatus,
+        // MR-03 (#268) — régimen: `regime` (editable) manda, `mealPlan` (snapshot web) cubre.
+        // El badge solo se muestra cuando hay algo más que alojamiento.
+        mealPlan: r.mealPlan ?? null, regime: r.regime ?? null,
+        mealPlanTotal: r.mealPlanTotal ?? 0,
+        mealPlanLabel: hasMealPlan(effectiveMealPlan(r)) ? mealPlanLabel(effectiveMealPlan(r), '') : '',
+        // #274 — badge de cuna con tooltip (`childSetupSummary`).
+        needsCrib: r.needsCrib ?? false, cribCount: r.cribCount ?? 0, childAmenities: r.childAmenities ?? null,
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }
@@ -484,6 +622,20 @@ function openCancel(r: any) {
   }
 }
 
+// REQ-HAC-06 (#261) — asignar/cambiar habitación desde el menú ⋯. Sólo con permiso de edición y
+// con la reserva viva (pendiente/confirmada/en casa): cambiar la unidad de un check-out o una
+// cancelada no tiene sentido y el backend lo rechaza (409 invalid_status).
+function canAssignRoom(r: any): boolean {
+  return can('reservations', 'edit') && (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked_in')
+}
+function openAssign(r: any) {
+  assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: r.roomId || null }
+}
+async function onAssigned() {
+  assignDlg.value.show = false
+  await load()
+}
+
 async function doCheckin(r: any) {
   try {
     // Check-in real: abre el folio de la reserva + marca checked_in + habitación occupied.
@@ -519,12 +671,37 @@ async function approveReservation(r: any) {
   }
 }
 
+// #271 MR-06 — rechazar una reserva pendiente de aprobación. El modal pide el motivo (≥10, lo lee
+// el huésped) y muestra lo que se reembolsa; el POST cancela + devuelve el 100% por Stripe (el
+// grupo entero si tiene `groupId`). `rejecting` deshabilita ESA fila, igual que `approving`.
+const rejecting = ref('')
+const rejectDlg = ref<{ id: string; guestName: string; refundAmount: number; isGroup: boolean } | null>(null)
+function openReject(r: any) {
+  rejectDlg.value = { id: r.id, guestName: r.guestName, refundAmount: Number(r.paidAmount ?? r.paid ?? 0), isGroup: !!r.groupId }
+}
+async function rejectReservation(reason: string) {
+  const target = rejectDlg.value
+  if (!target) return
+  rejecting.value = target.id
+  try {
+    const res = await ReservationService.reject(target.id, reason)
+    rejectDlg.value = null
+    await load()
+    // Mismo formato `$total` que la columna Total de la tabla (el listado no trae `currency`).
+    toast.success(`Reserva de ${target.guestName} rechazada · reembolsados $${Number(res.refundedAmount ?? 0).toFixed(2)}`)
+  } catch (e: any) {
+    toast.error(e.message || 'Error al rechazar la reserva')
+  } finally {
+    rejecting.value = ''
+  }
+}
+
 // Export CSV de las reservas filtradas (BOM UTF-8 → Excel respeta tildes).
 function exportCSV() {
-  const head = ['Huésped', 'Email', 'Hab', 'CheckIn', 'CheckOut', 'Noches', 'Estado', 'Canal', 'Total']
+  const head = ['Huésped', 'Email', 'Hab', 'CheckIn', 'CheckOut', 'Noches', 'Estado', 'Pago', 'Canal', 'Total']
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const lines = [head.join(','), ...filtered.value.map((r: any) =>
-    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, r.source, r.total].map(esc).join(','),
+    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, paymentStateBadge(r.paymentState).label, r.source, r.total].map(esc).join(','),
   )]
   const csv = '﻿' + lines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -544,8 +721,24 @@ onMounted(async () => {
     const r = (list.value as any[]).find((x) => x.id === editQ)
     if (r) openEdit(r)
     router.replace({ query: {} })
+    return
   }
+  openFromQuery()
 })
+
+// ?open=id viene de la campanita (#246: aviso de reserva web/OTA o pago confirmado). Abre la
+// vista "Ver": el modal carga por id, así que no importa si la fila no está en el listado filtrado.
+// Se lee al montar Y cuando cambia la query: si el usuario ya está en /panel/reservas y toca el
+// aviso, Vue Router reutiliza la instancia y `onMounted` no vuelve a correr.
+function openFromQuery() {
+  const openQ = route.query.open
+  if (!openQ || typeof openQ !== 'string') return
+  const r = (list.value as any[]).find((x) => x.id === openQ)
+  if (r) lastRow.value = r
+  detailId.value = openQ
+  router.replace({ query: {} })
+}
+watch(() => route.query.open, (v) => { if (v) openFromQuery() })
 </script>
 
 <style scoped>

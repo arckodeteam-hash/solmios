@@ -39,6 +39,12 @@
         <p class="text-sm font-bold text-navy">{{ t('confirm.pendingApprovalNotice') }}</p>
       </div>
 
+      <!-- Revisión #292 — pidió cuna (había bebé) y la habitación asignada no la ofrece: la reserva
+           se creó sin cuna y el hotel lo tiene anotado; acá se le dice al huésped, no se esconde. -->
+      <div v-if="cribUnavailable" class="mt-4 rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left" data-testid="confirm-crib-unavailable">
+        <p class="text-sm font-bold text-navy">{{ t('confirm.cribUnavailableNotice') }}</p>
+      </div>
+
       <div v-if="reservation" class="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm space-y-1">
         <div class="flex justify-between">
           <span class="text-text-muted">{{ t('confirm.checkIn') }}</span>
@@ -56,6 +62,20 @@
         <PriceBreakdownLines v-if="reservation.reservation.totalAmount" class="mt-1"
           :breakdown="reservation.reservation.totalBreakdown" :total="reservation.reservation.totalAmount" :format="fmtMoney" />
       </div>
+
+      <!-- #270 (MR-05): recibo de pago en PDF (no es factura fiscal). Mismo HMAC que el
+           polling: si el token no valida el backend responde 404. Se abre inline en otra pestaña.
+           Sólo con un cobro hecho (`hasReceipt`): sin pago no hay recibo que emitir. -->
+      <a
+        v-if="receiptUrl"
+        :href="receiptUrl"
+        target="_blank"
+        rel="noopener"
+        :aria-label="t('confirm.downloadReceipt')"
+        class="inline-block mt-5 rounded-xl border-2 border-cyan px-6 py-3 text-sm font-bold text-cyan hover:bg-cyan hover:text-white"
+      >
+        {{ t('confirm.downloadReceipt') }}
+      </a>
 
       <p class="text-[11px] text-text-muted mt-4">
         {{ t('confirm.keepNumber') }}
@@ -91,6 +111,7 @@
 </template>
 
 <script setup lang="ts">
+import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookingStore, readStoredReservation, clearStoredReservation } from '@/composables/useBooking'
@@ -106,6 +127,15 @@ type PollingState = 'loading' | 'success' | 'pending' | 'error'
 const pollingState = ref<PollingState>('loading')
 const reservation = ref<PublicReservationResponse | null>(null)
 const errorMessage = ref(t('confirm.errorDefault'))
+/** (id, token) resueltos en el último tick — el botón de recibo se arma con ellos. */
+const resolvedIds = ref<{ id: string; token: string } | null>(null)
+/** Sólo con un cobro hecho (`paid`/`partial` con importe): sin pago el backend responde 409 y no hay recibo. */
+const hasReceipt = computed(() =>
+  receiptAvailable(reservation.value?.paymentStatus, reservation.value?.reservation?.amountPaid),
+)
+const receiptUrl = computed(() =>
+  resolvedIds.value && hasReceipt.value ? receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token) : '',
+)
 
 /** Importe con la moneda de la reserva — mismo formato que booking-confirmation.vue. */
 function fmtMoney(amount: unknown): string {
@@ -122,6 +152,8 @@ let attempts = 0
 
 /** Tarea 3.4 (corrección 2026-08-25) — mismo criterio que booking-confirmation.vue. */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
+/** Revisión #292 — mismo criterio que booking-confirmation.vue. */
+const cribUnavailable = computed(() => reservation.value?.reservation?.cribUnavailable === true)
 
 /** Cuerpo del mensaje de éxito con el email embebido. Como el email viene del backend y
  *  ya pasó validación de formato ahí, no sanitizamos más acá (es textotrusted dentro de un
@@ -152,6 +184,7 @@ function resolveIds(): { id: string; token: string } | null {
 
 async function tick() {
   const ids = resolveIds()
+  resolvedIds.value = ids
   if (!ids) {
     pollingState.value = 'error'
     errorMessage.value = t('confirm.errorNotFound')

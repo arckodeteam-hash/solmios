@@ -1,4 +1,4 @@
-// payments/usecases/refund.ts — Devolución de un cobro con tarjeta.
+// payments/usecases/refund.ts — Devolución de un cobro con tarjeta (o por Checkout web).
 //
 // Una devolución NO borra ni edita el cobro original: asienta un `payment` nuevo de tipo `refund`.
 // El rastro de los dos movimientos es lo que permite conciliar contra el extracto del banco, donde
@@ -20,10 +20,25 @@ export async function refundPayment(
   paymentId: string,
   amount?: number,
   user?: { id?: string; role?: string },
+  /** #272: motivo de la devolución (p. ej. `guest_cancellation`); va a la descripción y a `metadata.reason`. */
+  reason?: string,
+  /**
+   * #272: clave de idempotencia para la PASARELA. La devolución sale en Stripe ANTES de asentarse acá
+   * abajo (`createPayment`); si el asiento falla, el que reintenta con la MISMA clave recibe el refund
+   * original en vez de sacar plata otra vez. La pone el llamador que sabe qué identifica "este
+   * reembolso" (la cancelación web: `web-booking-refund.ts`). No se deriva de `paymentId + monto`
+   * a propósito: dos devoluciones parciales legítimas del mismo importe sobre el mismo cobro
+   * colisionarían y la segunda quedaría asentada sin haber salido.
+   */
+  idempotencyKey?: string,
 ): Promise<PaymentDTO> {
   const payment = await deps.crud.getById(paymentId, user?.id, user?.role)
   if (payment.status !== 'completed') throw new ValidationError('Payment not completed')
-  if (payment.method !== 'card') throw new ValidationError('Only card payments can be refunded via Stripe')
+  // #271 MR-06: `link` es el cobro del motor web (shared/usecases/post-booking-payment.ts):
+  // también es un cargo real en Stripe, sólo que su referencia es la Checkout Session.
+  if (payment.method !== 'card' && payment.method !== 'link') {
+    throw new ValidationError('Only card or checkout-link payments can be refunded via Stripe')
+  }
   // El reembolso sale de la cuenta DEL HOTEL que cobró, no de una cuenta global.
   if (!(await deps.stripe.isConfigured(payment.hotelId))) {
     throw new ValidationError('El hotel no tiene pasarela de pago configurada')
@@ -35,7 +50,11 @@ export async function refundPayment(
   // (openspec `fix-refund-pos-card`), estos cobros NO son reembolsables por acá: se devuelven manualmente
   // desde el panel de Stripe. Sin este guard, `stripe.refund` recibe `payment_intent=''` y Stripe tira
   // un error críptico de PI inválido.
-  if (!payment.stripePaymentId) {
+  //
+  // #271 MR-06: los cobros web (`method:'link'`) nacen con `stripeSessionId` (`cs_...`) y sin
+  // `stripePaymentId`; el gateway resuelve el PI desde la sesión (stripe-gateway.ts `refund`).
+  const providerRef = payment.stripePaymentId || payment.stripeSessionId
+  if (!providerRef) {
     throw new ConflictError(
       'Este cobro con tarjeta no tiene un cargo de Stripe asociado (los cobros POS se registran como pago manual). ' +
       'Reembolsalo manualmente desde el panel de Stripe y registrá la devolución. ' +
@@ -45,8 +64,9 @@ export async function refundPayment(
 
   const refund = await deps.stripe.refund({
     hotelId: payment.hotelId,
-    paymentId: payment.stripePaymentId,
+    paymentId: providerRef,
     amount,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
 
   // El reembolso ya está confirmado por Stripe síncronamente (deps.stripe.refund retornó con
@@ -57,11 +77,12 @@ export async function refundPayment(
   const refundPaymentDoc = await deps.createPayment({
     hotelId: payment.hotelId,
     type: 'refund',
-    method: 'card',
+    // Hereda el método del cobro (card→card, link→link): la devolución sale por donde entró.
+    method: payment.method,
     status: 'completed',
     amount: amount ?? payment.amount,
     currency: payment.currency,
-    description: `Refund for payment ${paymentId}`,
+    description: `Refund for payment ${paymentId}` + (reason ? ` (${reason})` : ''),
     reference: refund.id,
     // COR-2: la devolución hereda LOS TRES vínculos del cobro original, no sólo `folioId`.
     // `shared/usecases/reservation-paid` llega a `payments` por `folioId`, por `invoiceId` Y por
@@ -80,7 +101,7 @@ export async function refundPayment(
     // —que no toca la comanda— era invisible para el cierre del día del restaurante y las ventas por
     // tarjeta quedaban infladas. Los listeners de onPaymentCompleted que reaccionan por `source` deben
     // mirar además `type` (restaurante-payments.ts lo hace).
-    metadata: { ...(payment.metadata ?? {}), refundOf: paymentId },
+    metadata: { ...(payment.metadata ?? {}), refundOf: paymentId, ...(reason ? { reason } : {}) },
     // Quién ordenó la devolución. En el historial de la reserva importa más que en el cobro:
     // un reembolso siempre lo decide una persona.
     createdBy: user?.id ?? '',

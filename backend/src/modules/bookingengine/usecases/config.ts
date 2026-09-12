@@ -4,6 +4,11 @@ import type { RepositoryAdapter, Logger, CacheAdapter } from 'arckode-framework'
 import { NotFoundError } from 'arckode-framework'
 import type { BookingConfigDTO, UpdateBookingConfigDTO } from '../types'
 
+/** #266 — Minutos para completar el pago de una reserva web (15–1440). */
+export const DEFAULT_PENDING_TTL_MINUTES = 60
+/** #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168). */
+export const DEFAULT_APPROVAL_DEADLINE_HOURS = 24
+
 export class ConfigUseCase {
   constructor(
     private readonly repo: RepositoryAdapter<BookingConfigDTO>,
@@ -29,9 +34,20 @@ export class ConfigUseCase {
         instantConfirmation: true,
         stripeAccountId: '',
         allowedCountries: [],
+        pendingTtlMinutes: DEFAULT_PENDING_TTL_MINUTES,
+        approvalDeadlineHours: DEFAULT_APPROVAL_DEADLINE_HOURS,
       } as any)
     }
-    return items[0]
+    let config = items[0]
+    // Filas anteriores a #266 no tienen la columna: se normaliza la salida, sin persistir.
+    if (config.pendingTtlMinutes === null || config.pendingTtlMinutes === undefined) {
+      config = { ...config, pendingTtlMinutes: DEFAULT_PENDING_TTL_MINUTES }
+    }
+    // #271 MR-06 — mismo criterio para filas anteriores a `approvalDeadlineHours`.
+    if (config.approvalDeadlineHours === null || config.approvalDeadlineHours === undefined) {
+      config = { ...config, approvalDeadlineHours: DEFAULT_APPROVAL_DEADLINE_HOURS }
+    }
+    return config
   }
 
   async update(hotelId: string, dto: UpdateBookingConfigDTO): Promise<BookingConfigDTO> {

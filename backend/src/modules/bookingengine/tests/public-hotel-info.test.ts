@@ -9,6 +9,9 @@ import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { getPublicHotelInfo, buildHotelWhatsappUrl } from '../usecases/public-hotel-info'
 import { rateLimit } from '../../../shared/middlewares/rate-limit'
+// #292 — la política se compara contra DEFAULT_CHILD_POLICY (no contra un literal) para que el
+// test no dependa de qué campos tenga la política (p.ej. `cribAvailable`, que se dio de baja).
+import { DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
 
 // ─── Helpers (mismo patrón que restaurant/tests/public-menu.test.ts) ───
 function makeRepo<T extends object>(overrides: Partial<RepositoryAdapter<T>> = {}): RepositoryAdapter<T> {
@@ -372,7 +375,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
   it('sin dep `config` ni fila cargada → DEFAULT_CHILD_POLICY (acepta, todo niño consume plaza)', async () => {
     const hotels = backed<any>([hotelSeed()])
     const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    expect(dto.childPolicy).toEqual(DEFAULT_CHILD_POLICY)
   })
 
   it('con política configurada del hotel, se usa tal cual (ejemplo del pedido)', async () => {
@@ -381,7 +384,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
       { hotelId: 'h1', key: 'child_policy', value: JSON.stringify({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }) },
     ])
     const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    expect(dto.childPolicy).toEqual({ ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 })
   })
 
   it('NO cae a la política de "platform" — es una decisión de cada hotel, a diferencia de google_maps', async () => {
@@ -390,7 +393,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
       { hotelId: 'platform', key: 'child_policy', value: JSON.stringify({ acceptChildren: false, maxChildAge: 5, maxFreeAge: 5 }) },
     ])
     const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    expect(dto.childPolicy).toEqual(DEFAULT_CHILD_POLICY)
   })
 
   it('acceptChildren: false → el widget no debe ofrecer agregar niños', async () => {

@@ -104,6 +104,35 @@ describe('Booking.service', () => {
     expect(res.paymentError).toBeUndefined()
   })
 
+  it('createBooking incluye mealPlan solo cuando viene (#265/#268 MR-03)', async () => {
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValue(hotel as any)
+    vi.mocked(http.post).mockResolvedValue({
+      reservation: { id: 'res-mp', accessToken: 'tok-mp' },
+      guest: null,
+      checkoutUrl: null,
+    } as any)
+
+    const base = {
+      slug: 'hotel-demo',
+      roomType: 'suite',
+      checkIn: '2026-08-10',
+      checkOut: '2026-08-12',
+      adults: 2,
+      guest: { name: 'Bob', email: 'b@x.com', phone: '+18095551111' },
+    }
+
+    // Con mealPlan → viaja tal cual al backend (antes se perdía en el mapeo campo-por-campo
+    // y la reserva quedaba `room_only` con mealPlanTotal=0).
+    await BookingService.createBooking({ ...base, mealPlan: 'breakfast' })
+    const withPlan = vi.mocked(http.post).mock.calls[0]![1] as Record<string, unknown>
+    expect(withPlan.mealPlan).toBe('breakfast')
+
+    // Sin mealPlan → la clave no viaja (mismo criterio que upsells/needsCrib).
+    await BookingService.createBooking(base)
+    const withoutPlan = vi.mocked(http.post).mock.calls[1]![1] as Record<string, unknown>
+    expect('mealPlan' in withoutPlan).toBe(false)
+  })
+
   it('createBooking propaga paymentError cuando Stripe falla (reserva sigue creada)', async () => {
     vi.mocked(PublicHotelService.getBySlug).mockResolvedValue(hotel as any)
     vi.mocked(http.post).mockResolvedValue({

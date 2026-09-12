@@ -5,12 +5,19 @@
 // Antes `facturas.pay()` escribía un comprobante `type:'payment'` dentro de `invoices` y no emitía
 // ningún evento: un cobro en efectivo desde /panel/finanzas/facturacion nunca entraba al turno de caja.
 // Ver openspec/changes/billing-money-consolidation/proposal.md (reproducido en local).
+//
+// #253: la factura emitida desde una reserva pagada online (sin folio) VINCULA los pagos que ya
+// están en `payments` (`payments.invoiceId = factura.id`); nunca los crea. Por eso el puerto expone
+// `paymentsOfReservation` (filas aún sin factura) y `linkPaymentsToInvoice` (sólo escribe el vínculo).
 
 import type { ConnectorContext } from 'arckode-framework'
 import type { RecordPaymentInput, RecordedPayment } from '../modules/facturas'
+import type { PaymentDTO } from '../modules/payments'
 
 interface PaymentsModule {
   createPayment: (dto: Record<string, unknown>) => Promise<{ id: string; status: string }>
+  unbilledPaymentsOfReservation: (hotelId: string, reservationId: string) => Promise<PaymentDTO[]>
+  linkPaymentsToInvoice: (hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string) => Promise<number>
 }
 
 export function facturasPaymentsConnector(ctx: ConnectorContext): void {
@@ -34,5 +41,11 @@ export function facturasPaymentsConnector(ctx: ConnectorContext): void {
       })
       return { id: payment.id, status: payment.status }
     },
+    // #253 — las filas tal cual (id, type, status, amount, stripeSessionId, invoiceId, reservationId, currency):
+    // el usecase de facturas decide cuáles cuentan como pagado.
+    paymentsOfReservation: (hotelId: string, reservationId: string): Promise<PaymentDTO[]> =>
+      payments.unbilledPaymentsOfReservation(hotelId, reservationId),
+    linkPaymentsToInvoice: (hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string): Promise<number> =>
+      payments.linkPaymentsToInvoice(hotelId, reservationId, paymentIds, invoiceId),
   })
 }

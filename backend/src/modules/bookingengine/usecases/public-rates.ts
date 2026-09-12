@@ -69,7 +69,9 @@ import type { Tier } from '../../cancellation/types'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { buildOccupancyMatrix } from './occupancy-matrix'
+import { buildPublicMealPlans } from './public-meal-plan-lines'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
 
@@ -118,6 +120,10 @@ export interface PublicRatesDeps {
   /** Repo de `RateOverrides` — tarifa por FECHA, la capa que pisa a la temporada. Opcional: sin
    *  cablear, el motor cotiza solo por temporada (comportamiento previo). */
   rateOverrides?: RepositoryAdapter<any>
+  /** MR-03 #268 — Repo de `MealPlans` (tabla `meal_plans`) para exponer `mealPlans[]` con el
+   *  `totalForStay` de cada régimen activo. Opcional (compat con callers/tests viejos): sin
+   *  cablear, `mealPlans` degrada a `[]` y el widget solo ofrece "Solo alojamiento". */
+  mealPlans?: RepositoryAdapter<any>
 }
 
 export interface PublicRatesQuery {
@@ -127,6 +133,11 @@ export interface PublicRatesQuery {
   rooms?: number
   /** Huéspedes (adults). Default 2 (mismo default que availability.check). */
   guests?: number
+  /** MR-03 #268 — Niños CON plaza (según `child_policy`) que el widget ya resolvió. Default 0.
+   *  NO afecta disponibilidad/ocupación (siguen por `guests`): solo alimenta `persons` del
+   *  régimen (`persons = guests + children`), que es lo que `POST /booking` cobra con
+   *  `effectiveAdults + payingChildren`. */
+  children?: number
   /** Moneda en la que el cliente quiere ver los precios. Default = hotels.currency. */
   currency?: string
 }
@@ -160,26 +171,25 @@ export async function getPublicRates(
     return { status: 400, body: { error: 'checkOut debe ser posterior a checkIn' } }
   }
 
-  // Anti-enumeración: idéntico 404 para "no existe" y "no activo".
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (toggle "Activo/Inactivo"
+  // de `/panel/booking-engine`; default `true`, sin fila = abierto). Anti-enumeración: idéntico
+  // 404 para "no existe", "pausado" y "apagado". `bookingConfig` se lee UNA vez y se reusa abajo
+  // (minNights/maxNights/cancellationPolicy).
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
-
-  // FIX — toggle "Activo/Inactivo" del admin (`/panel/booking-engine`) ahora sí apaga el
-  // motor. Mismo 404 anti-enumeración que `onlineBookingStatus` (no revelar por qué está
-  // apagado). `enabled` default es `true` (config.ts get()) — un hotel que nunca tocó esta
-  // pantalla no se ve afectado.
-  const bookingConfig = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
-  if (bookingConfig && bookingConfig.enabled === false) {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const sourceCurrency = String(hotel.currency || 'USD').toUpperCase()
   const nights = Math.max(1, Math.round(
     (new Date(query.checkOut).getTime() - new Date(query.checkIn).getTime()) / MS_PER_DAY,
   ))
   const adults = typeof query.guests === 'number' && query.guests > 0 ? query.guests : 2
+  // MR-03 #268 — niños con plaza: solo para el régimen. Entero ≥ 0, default 0.
+  const payingChildren = typeof query.children === 'number' && Number.isFinite(query.children) && query.children > 0
+    ? Math.floor(query.children)
+    : 0
+  const mealPlanPersons = adults + payingChildren
 
   // FIX — minNights/maxNights configurados por el admin, antes decorativos. 400 claro (no
   // 404: el hotel SÍ existe y está activo, solo el rango de fechas no cumple la política).
@@ -320,6 +330,14 @@ export async function getPublicRates(
       cancellationSummary: deps.policies
         ? await buildCancellationSummary(deps.policies, hotel.id, hotel.cancellationType)
         : null,
+      // MR-03 #268 — Regímenes activos con `perNight`/`totalForStay` ya resueltos para
+      // `(guests + children) × nights` — cada ítem ecoa `persons`/`nights` para que el widget
+      // sepa para qué ocupación se calculó. SIN convertir a displayCurrency: igual que upsells
+      // (D10 en RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency),
+      // que es exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
+      mealPlans: deps.mealPlans
+        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, mealPlanPersons, nights)
+        : [],
     },
   }
 }

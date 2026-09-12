@@ -140,16 +140,54 @@ export function roomsOfType<R extends { type: string }>(roomType: string, rooms:
 const NOT_CANCELLED = (status: string): boolean => status !== 'cancelled'
 
 /**
+ * Estados en los que una reserva SIN unidad no consume nada. Con habitación, `no_show` y
+ * `checked_out` siguen el criterio del caller (canales los cuenta a propósito); sin habitación
+ * no hay unidad que liberar ni limpiar, así que contarlas sería vender de menos para siempre.
+ */
+const CLOSED_FOR_UNASSIGNED: ReadonlySet<string> = new Set(['cancelled', 'no_show', 'checked_out'])
+
+/** Reserva tal como la ve la disponibilidad: con unidad (`roomId`) o sólo con tipo vendido (HAC-01). */
+export interface AvailabilityReservation {
+  roomId?: string | null
+  roomType?: string | null
+  status: string
+  checkIn: string
+  checkOut: string
+}
+
+/**
+ * HAC-02 (#257/#258): ¿la reserva consume UNA unidad del tipo `roomType`?
+ *  - Con `roomId`: si la unidad es de ese tipo (la física manda, aunque `roomType` diga otra cosa).
+ *  - Sin `roomId` (vende sólo el tipo): si su `roomType` es ese tipo y sigue activa. Sin
+ *    `roomType` tampoco (fila anterior al backfill sin unidad): no hay tipo contra el cual
+ *    descontar, no cuenta — `effectiveRoomType` no aplica porque no hay habitación que mirar.
+ * Sin esto, soltar la unidad de una `confirmed` la sacaba del inventario: Channex y el motor
+ * público veían +1 de ese tipo con la reserva vendida (overbooking).
+ */
+export function reservationOccupiesType(
+  r: AvailabilityReservation,
+  roomType: string,
+  typeRoomIds: ReadonlySet<string>,
+  isBlockingStatus: (status: string) => boolean,
+): boolean {
+  if (!isBlockingStatus(r.status)) return false
+  if (r.roomId) return typeRoomIds.has(r.roomId)
+  if (!r.roomType || CLOSED_FOR_UNASSIGNED.has(String(r.status).toLowerCase())) return false
+  return String(r.roomType).toLowerCase() === String(roomType).toLowerCase()
+}
+
+/**
  * Filtra rooms/reservas/bloqueos del roomType indicado y devuelve los rangos de availability
  * para hoy → +horizonDays. Default 90 (delta por evento); el full sync de certificación pide 500.
  * Devuelve null si el hotel no tiene rooms de ese tipo (nada que empujar).
  *
  * `isBlockingStatus` decide qué reserva ocupa. Default = criterio de canales (≠ 'cancelled').
+ * Una reserva activa sin unidad consume una del tipo vendido (`reservationOccupiesType`).
  */
 export function buildAvailabilityRanges(
   roomType: string,
   rooms: { id: string; type: string }[],
-  reservations: { roomId: string; status: string; checkIn: string; checkOut: string }[],
+  reservations: AvailabilityReservation[],
   blocks: { roomId: string; startDate: string; endDate: string }[],
   isBlockingStatus: (status: string) => boolean = NOT_CANCELLED,
   horizonDays: number = AVAILABILITY_HORIZON_DAYS,
@@ -162,7 +200,7 @@ export function buildAvailabilityRanges(
   const end = new Date(Date.now() + horizonDays * MS_PER_DAY).toISOString().split('T')[0]!
 
   const relRes = reservations.filter((r) =>
-    typeRoomIds.has(r.roomId) && isBlockingStatus(r.status) && r.checkIn && r.checkOut && r.checkIn < end && r.checkOut > today)
+    reservationOccupiesType(r, roomType, typeRoomIds, isBlockingStatus) && r.checkIn && r.checkOut && r.checkIn < end && r.checkOut > today)
   const relBlocks = blocks.filter((b) =>
     typeRoomIds.has(b.roomId) && b.startDate && b.endDate && b.startDate <= end && b.endDate >= today)
 

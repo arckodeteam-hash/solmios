@@ -15,6 +15,10 @@ import { backfillPaymentsReservationId } from './scripts/backfill-payments-reser
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
+import { backfillCribRoomAmenity } from './scripts/backfill-crib-room-amenity'
+import { backfillReservationSourceWeb } from './scripts/backfill-reservation-source-web'
+import { relaxReservationsRoomId } from './scripts/relax-reservations-roomid'
+import { backfillReservationRoomType } from './scripts/backfill-reservation-room-type'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
@@ -239,11 +243,15 @@ async function createTablesBlock1(): Promise<void> {
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_source ON expenses(hotelId, source, sourceId)`)
   } catch { /* duplicados legacy o tabla ausente: se aplica en la próxima corrida tras reconciliar */ }
 
+  // #270: `attachments` (json nullable, columna TEXT) es la misma que declara el modelo ORM
+  // `EmailQueue` (shared/models.ts) — las dos fuentes del schema tienen que coincidir. En una base
+  // creada antes de la columna, la agrega el addColumnIfMissing de abajo (ormMigrate también).
   await exec(`CREATE TABLE IF NOT EXISTS email_queue (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT NOT NULL,
     html TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
     maxAttempts INTEGER NOT NULL DEFAULT 3, lastError TEXT, nextRetryAt TEXT, provider TEXT,
-    relatedType TEXT, relatedId TEXT, createdAt TEXT, updatedAt TEXT)`)
+    relatedType TEXT, relatedId TEXT, attachments TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await addColumnIfMissing('email_queue', 'attachments', 'TEXT')
   await exec(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_retry ON email_queue (status, nextRetryAt)`)
 
   // Estadía mínima por FECHA (fila "Días Mínimos" del planning). Solo overrides (minStay>1);
@@ -1151,6 +1159,12 @@ async function createTablesBlock3(): Promise<void> {
   // de `payment-requests` en cualquier base ya desplegada).
   await addColumnIfMissing("payments", "reservationId", "TEXT")
   await exec(`CREATE INDEX IF NOT EXISTS idx_payments_reservation ON payments(hotelId, reservationId)`)
+
+  // MR-08 (#273) — un huésped = una ficha: los POST públicos y el panel buscan en `guests` por
+  // (hotelId, email) antes de crear. NO es UNIQUE a propósito: las bases existentes tienen fichas
+  // duplicadas de antes del dedupe; `scripts/merge-duplicate-guests.ts --apply` las fusiona
+  // (paso post-deploy opcional, ver CLAUDE.md).
+  await exec(`CREATE INDEX IF NOT EXISTS idx_guests_hotel_email ON guests(hotelId, email)`)
   const backfilledReservations = await backfillPaymentsReservationId(db)
   if (backfilledReservations > 0) {
     console.log(`payments.reservationId: ${backfilledReservations} fila(s) reconstruida(s) desde metadata`)
@@ -1199,12 +1213,39 @@ async function createTablesBlock3(): Promise<void> {
   await addColumnIfMissing("reservations", "abandonEmailSent", "INTEGER DEFAULT 0")
   // F0 0.13 — AccessToken público anti-IDOR (reserva creada por flujo público).
   await addColumnIfMissing("reservations", "accessToken", "TEXT")
+  // #266 — Vencimiento de pago (ISO; NULL = no vence) y clave de idempotencia del widget.
+  await addColumnIfMissing("reservations", "paymentDeadlineAt", "TEXT")
+  await addColumnIfMissing("reservations", "idempotencyKey", "TEXT")
+  // #271 MR-06 — Último recordatorio de aprobación pendiente enviado al hotel (dedup del cron).
+  await addColumnIfMissing("reservations", "approvalReminderAt", "TEXT")
+  // #266 — La misma idempotencyKey no puede crear dos reservas en el mismo hotel. El ORM no crea
+  // UNIQUE compuesto: índice único idempotente, identificadores SIN comillas (portable SQLite + PG,
+  // mismo criterio que idx_configuration_hotel_key). Los NULL (reservas del panel / previas a #266)
+  // no chocan entre sí ni en SQLite ni en Postgres. Si la tabla todavía no existe (RUN_MIGRATE no
+  // corrió), el índice entra en la próxima corrida sin abortar el resto de la migración.
+  try {
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_hotel_idempotency ON reservations(hotelId, idempotencyKey)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'idx_reservations_hotel_idempotency', missingTable: 'reservations', consequence: 'Sin el UNIQUE (hotelId, idempotencyKey), un reintento del widget puede crear la misma reserva dos veces.' })
+  }
+  // #248 REQ-RWP-05 — TTL de pago de reservas web por hotel (horas). Reemplazada por
+  // pendingTtlMinutes en #266; la columna vieja queda huérfana (no se borra ni se lee).
+  await addColumnIfMissing('booking_config', 'pendingPaymentTtlHours', 'INTEGER')
+  // #266 — Minutos para completar el pago (15–1440; NULL → 60 en el usecase).
+  await addColumnIfMissing('booking_config', 'pendingTtlMinutes', 'INTEGER')
+  // #271 MR-06 — Horas que el hotel se da para aprobar/rechazar una reserva pendiente (NULL → 24).
+  await addColumnIfMissing('booking_config', 'approvalDeadlineHours', 'INTEGER')
 
   // CREATE: reservation_addons (F3 match-misterplan — otros servicios y descuentos por reserva).
   await exec(`CREATE TABLE IF NOT EXISTS reservation_addons (
     id TEXT PRIMARY KEY, reservationId TEXT NOT NULL, hotelId TEXT NOT NULL,
     description TEXT, kind TEXT DEFAULT 'service', amount REAL DEFAULT 0, quantity INTEGER DEFAULT 1,
     createdAt TEXT, updatedAt TEXT)`)
+  // #269 — extras del motor como ReservationAddons: precio unitario informativo, origen
+  // ('manual' | 'booking_engine') y % de impuesto aplicado al reservar. Bases anteriores no las tienen.
+  await addColumnIfMissing('reservation_addons', 'unitPrice', 'REAL')
+  await addColumnIfMissing('reservation_addons', 'source', "TEXT DEFAULT 'manual'")
+  await addColumnIfMissing('reservation_addons', 'taxRate', 'REAL')
 
   await exec(`CREATE TABLE IF NOT EXISTS whatsapp_templates (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, name TEXT NOT NULL,
@@ -1469,6 +1510,46 @@ async function main(): Promise<void> {
     console.log(`roles.restaurant:discount: ${discounted} fila(s) actualizada(s)`)
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'roles.restaurant:discount', missingTable: 'roles', consequence: 'Sin este backfill, nadie puede aplicar descuentos ni cortesías en el POS de un hotel existente.' })
+  }
+
+  // #292 (revisión PR #329) — la cuna dejó de ser el toggle global `child_policy.cribAvailable` y pasó
+  // a ser la amenidad `custom:cuna` de cada habitación. A todo hotel que tenía el toggle en true se le
+  // crea esa fila ("Cuna", activa, precio 0 salvo `cribPrice`) en las habitaciones que no tengan ya una
+  // cuna; sin esto el motor deja de preguntar "¿Necesita cuna?" en prod hasta que alguien la cargue a
+  // mano habitación por habitación. Idempotente (0 filas la segunda vez). Las tablas las crea el ORM.
+  try {
+    const cribs = await backfillCribRoomAmenity(db)
+    console.log(`room_amenities custom:cuna (desde child_policy.cribAvailable): ${cribs} fila(s) creada(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'room_amenities custom:cuna', missingTable: 'room_amenities', consequence: 'Sin este backfill, los hoteles que ofrecían cuna (child_policy.cribAvailable) dejan de ofrecerla en el motor público hasta cargarla a mano en cada habitación.' })
+  }
+
+  // #247 (REQ-RWP-04) — `source='web'` a las reservas del motor público anteriores al cambio: desde
+  // #247 el motor escribe `source:'web'` (channel sigue 'direct'), pero las filas viejas quedaron en
+  // 'direct' y el listado las mostraba como "Directa". El discriminador es `accessToken`: sólo el flujo
+  // público lo setea (el panel lo deja NULL). Idempotente: la segunda corrida matchea 0 filas.
+  try {
+    const n = await backfillReservationSourceWeb(db)
+    console.log(`reservations.source web: ${n} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'reservations.source=web', missingTable: 'reservations', consequence: 'Sin este backfill las reservas web viejas siguen mostrándose como "Directa" en el listado.' })
+  }
+
+  // REQ-HAC-01 (#256/#258) — La habitación se asigna al check-in: `roomId` pasa a nullable (las bases
+  // viejas tienen `roomId TEXT NOT NULL` del CREATE original y el ORM no hace ALTER COLUMN), lo
+  // vendido es `roomType` (= rooms.type) y `roomAssignedAt`/`roomAssignedBy` registran la asignación.
+  // Orden: columnas → relax NOT NULL → backfill de roomType desde la habitación ya asignada. Los
+  // tres pasos son idempotentes (segunda corrida: changed:false y 0 filas).
+  try {
+    await addColumnIfMissing('reservations', 'roomType', 'TEXT')
+    await addColumnIfMissing('reservations', 'roomAssignedAt', 'TEXT')
+    await addColumnIfMissing('reservations', 'roomAssignedBy', 'TEXT')
+    const { changed } = await relaxReservationsRoomId(db)
+    console.log(`reservations.roomId NOT NULL: ${changed ? 'quitado' : 'ya estaba relajado'}`)
+    const typed = await backfillReservationRoomType(db)
+    console.log(`reservations.roomType: ${typed} fila(s) rellenada(s) desde rooms.type`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'reservations.roomId nullable + roomType', missingTable: 'reservations', consequence: 'Sin esto una reserva sin habitación asignada (HAC-01) revienta con NOT NULL y las reservas viejas quedan sin tipo vendido (roomType).' })
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.

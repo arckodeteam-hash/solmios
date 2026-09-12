@@ -1,3 +1,5 @@
+import type { UpsellBreakdownLine } from './booking'
+
 // === HOTEL ===
 export interface Hotel {
   id: string
@@ -100,7 +102,12 @@ export interface CreditCardInfo {
 
 // === RESERVATION ===
 export type ReservationStatus = 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled'
-export type ReservationSource = 'direct' | 'phone' | 'whatsapp' | 'booking' | 'expedia' | 'agoda' | 'airbnb' | 'google' | 'other'
+/** REQ-RWP-04 — 'web' = reserva hecha por el huésped en el widget público (`source:'web'` del
+ *  backend); 'direct' = cargada por recepción. En `channel` ambas siguen siendo 'direct'. */
+export type ReservationSource = 'direct' | 'web' | 'phone' | 'whatsapp' | 'booking' | 'expedia' | 'agoda' | 'airbnb' | 'google' | 'other'
+/** Estado real de cobro de una reserva, calculado por el backend desde `payments`
+ *  (`shared/utils/reservation-balance.ts`). Mismo union que `@/utils/payment-state`. */
+export type PaymentState = 'pending' | 'partial' | 'paid'
 
 export interface Reservation {
   id: string
@@ -126,14 +133,28 @@ export interface Reservation {
   channelReservationId?: string
   notes?: string
   ownerNotes?: string
+  /** #269 — desglose guardado por el motor público (ver `ReservationPriceBreakdown`). */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   totalAmount: number
   depositAmount: number
   depositPercentage?: number
   depositStatus?: 'unpaid' | 'partial' | 'paid'
   paymentMethod?: string
   paymentStatus: 'pending' | 'partial' | 'paid' | 'refunded'
+  /** REQ-RWP-04 — estado y monto cobrado reales (desde `payments`, backend). Ausentes en respuestas
+   *  que no los traen; entonces `paymentStatus` cae a la fórmula deposit-vs-total. */
+  paymentState?: PaymentState
+  paidAmount?: number
   promoCode?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. null/ausente en reservas
+   *  viejas y en las cargadas a mano (que solo tienen `regime`). */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (persistido; null en reservas anteriores). */
+  mealPlanPersons?: number | null
   createdAt: Date
   roomNumber?: string
   roomType?: string
@@ -143,11 +164,37 @@ export interface Reservation {
    *  que es una cotización: entre abrir el modal y confirmar puede cruzarse un borde de tier. */
   cancellationFee?: number
   refundAmount?: number
+  /** #272 (MR-07) — estado real del reembolso en la pasarela (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
-   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada. */
-  approvalStatus?: 'pending' | 'approved' | null
+   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
+   *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** REQ-HAC-03/06 (#258/#261) — quién y cuándo asignó la unidad (`roomId`). null/ausente =
+   *  sin asignar. `roomId` sigue siendo '' cuando el backend manda null (ver `mapReservation`). */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
+  /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
+   *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | null
+}
+
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congelaba el motor público al
+ *  reservar (REQ-01 #233): nombre y precio del catálogo `child_amenities` en ese momento. #292 dio
+ *  de baja ese catálogo; el snapshot se conserva sólo para leer reservas históricas. Según el
+ *  driver puede llegar como string JSON: `mapReservation()` lo normaliza a array. */
+export interface ChildAmenitySnapshot {
+  id?: string
+  name: string
+  price?: number
+  quantity: number
+  total?: number
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -165,8 +212,13 @@ export interface ReservationApiRecord {
   checkInTime?: string | null
   checkOutTime?: string | null
   channel: string
+  /** REQ-RWP-04 — 'web' (widget público) o 'direct' (recepción); `channel` es 'direct' en ambas. */
+  source?: string
   totalAmount: number
   status: string
+  /** REQ-RWP-04 — los devuelve `GET /api/reservas` por fila, calculados desde `payments`. */
+  paymentState?: 'pending' | 'partial' | 'paid'
+  paidAmount?: number
   adults?: number
   children?: number
   childrenAges?: number[]
@@ -187,10 +239,35 @@ export interface ReservationApiRecord {
   cancellationFee?: number
   refundAmount?: number
   cancellationReason?: string
+  /** REQ-HAC-03 (#258) — auditoría de la asignación de unidad (users.id + ISO). null = sin asignar. */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   cancelledAt?: string
+  /** #272 (MR-07) — reembolso real al cancelar desde la web (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
+  /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
+  createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  mealPlanPersons?: number | null
+  /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
+  needsCrib?: boolean | null
+  cribCount?: number | null
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
+
+/** #272 (MR-07) — `reservations.refundStatus`: 'none' = nada que devolver (o reserva anterior a la
+ *  feature), 'pending' = en curso, 'done' = Stripe lo aceptó, 'failed' = falló y se puede
+ *  reintentar desde el panel (`POST /reservas/:id/retry-refund`). */
+export type RefundStatus = 'none' | 'pending' | 'done' | 'failed'
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
 // Espejo de `backend/src/modules/reservas/usecases/reschedule.ts`.
@@ -482,9 +559,60 @@ export interface ReservationDetailMessageLog {
 export interface ReservationDetailAddon {
   id: string
   description: string
-  kind?: 'service' | 'discount'
+  /** 'service' | 'discount' (manuales del panel) o 'upsell' | 'child_amenity' | 'room_amenity'
+   *  (extras del motor de reservas, #269). String abierto: el backend puede sumar kinds. */
+  kind?: string
+  /** Importe UNITARIO: la línea vale `amount × quantity`. */
   amount?: number
   quantity?: number
+  /** #269 — 'booking_engine' = extra pagado online, YA incluido en `totalAmount` (no suma al
+   *  pendiente y no se edita desde el CRUD manual). 'manual'/ausente = cargado por recepción. */
+  source?: string | null
+  unitPrice?: number | null
+  /** % de impuesto aplicado al reservar (sólo filas del motor). */
+  taxRate?: number | null
+}
+
+/** #269 — Desglose de precio que guarda el motor de reservas público al crear la reserva
+ *  (`bookingengine/usecases/public-booking.ts` `TotalBreakdown`). `subtotal` INCLUYE los extras
+ *  (alojamiento + upsells + amenidades); `taxes` se calcula sobre `subtotal − promoDiscount`.
+ *  Según el driver puede llegar como string JSON: parsear con try/catch antes de usar. */
+export interface ReservationPriceBreakdown {
+  subtotal?: number
+  promoDiscount?: number
+  upsellsTotal?: number
+  childAmenitiesTotal?: number
+  roomAmenitiesTotal?: number
+  /** Régimen (#268) — puede no existir todavía. */
+  mealPlanTotal?: number
+  taxes?: number
+  taxBreakdown?: { name: string; rate: number; amount: number }[]
+  /** MR-10 (#275) — extras cotizados línea por línea con su multiplicador por `kind`.
+   *  Sólo en reservas creadas después de la feature. */
+  upsells?: UpsellBreakdownLine[]
+  total?: number
+}
+
+/** Una factura de la reserva tal como la muestra el detalle (REQ-FDR-01, #252). Vienen de la más
+ *  reciente a la más vieja; espejo EXACTO del backend `reservas/usecases/reservation-invoices.ts`. */
+export interface ReservationInvoiceView {
+  id: string
+  /** Número visible/imprimible de la factura. */
+  number: string
+  /** 'invoice' | 'credit_note'. */
+  type: string
+  /** 'pending' | 'paid' | 'overdue' | 'cancelled' | 'draft'. */
+  status: string
+  /** TOTAL de la factura (impuestos incluidos). */
+  amount: number
+  taxes: number
+  amountPaid: number
+  /** `amount − amountPaid`, ya derivado por el backend. */
+  balance: number
+  currency: string
+  issuedAt: string
+  /** Comprobante fiscal (RD). `null` cuando la factura no lo lleva. */
+  ncf: string | null
 }
 
 export interface CurrencyConfig {
@@ -526,11 +654,55 @@ export interface ReservationPaymentEntry {
   createdAt: string
 }
 
+export type PaymentAttemptKind = 'checkout_created' | 'paid' | 'failed' | 'expired' | 'refunded' | 'pending'
+
+/** REQ-RWP-02 — espejo de backend shared/usecases/payment-attempt-view.ts */
+export interface PaymentAttemptView {
+  id: string
+  kind: PaymentAttemptKind
+  source: string
+  provider: string
+  mode: 'test' | 'live' | ''
+  providerRef: string
+  /** Unidades mayores (`amountMinor / 100`, redondeado a 2 decimales). */
+  amount: number
+  currency: string
+  failureCode: string
+  failureMessage: string
+  cardBrand: string
+  cardLast4: string
+  receiptUrl: string
+  /** Link al pago en el dashboard del proveedor. `''` si no se puede armar. */
+  dashboardUrl: string
+  occurredAt: string
+}
+
+/**
+ * REQ-HAC-06 (#261) — fila de `GET /api/reservas/:id/assignable-rooms`: habitación libre esas
+ * noches. `typeMismatch` = no es del tipo vendido (sólo aparece con `allTypes`); `suggested` = la
+ * que el backend propone primero (misma tipología, limpia). Espejo de
+ * `backend/src/modules/reservas/usecases/assign-room.ts` `AssignableRoom`.
+ */
+export interface AssignableRoom {
+  id: string
+  number: string
+  floor?: number | string | null
+  status: string
+  cleaningStatus: 'clean' | 'dirty'
+  typeMismatch: boolean
+  suggested: boolean
+}
+
 export interface ReservationDetail {
   id: string
   hotelId: string
   guestId: string | null
   roomId: string
+  /** REQ-HAC-03 (#258) — tipo vendido (`rooms.type`); la unidad (`roomId`) puede venir null hasta
+   *  que recepción la asigne. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen quién y cuándo. */
+  roomType?: string
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   checkIn: string
   checkOut: string
   status: string
@@ -568,10 +740,24 @@ export interface ReservationDetail {
   depositPercentage?: number
   depositStatus?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web (`Reservations.mealPlan*`).
+   *  En una reserva suelta `mealPlanTotal` está DENTRO de `totalAmount`; en una de grupo
+   *  (`groupId`) NO: cada fila persiste el unitario pero su `totalAmount` es solo la habitación y
+   *  el régimen se cobró con el total del grupo. null/ausente en reservas viejas o del panel.
+   *  El régimen que se MUESTRA es `regime ?? mealPlan` (`utils/meal-plans.ts`). */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (adultos + niños con plaza). null = reserva
+   *  anterior a la columna: la UI no muestra personas (no las deriva de las fechas). */
+  mealPlanPersons?: number | null
   notes?: string | null
   otaNotes?: string | null
   ownerNotes?: string | null
   promoCode?: string | null
+  /** #269 — desglose guardado por el motor público. null/ausente en reservas cargadas a mano. */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   autoSendEnabled?: boolean
   communicateClient?: string
   emergencyContact?: { name: string; phone: string; relation: string; email?: string }
@@ -596,18 +782,37 @@ export interface ReservationDetail {
    *  a mano en el panel (que no tienen este composer). */
   needsCrib?: boolean
   cribCount?: number
+  /** #274 — snapshot de amenidades infantiles elegidas al reservar (ver `ChildAmenitySnapshot`). */
+  childAmenities?: ChildAmenitySnapshot[] | null
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
+  /** #271 MR-06 — mismo eje que `Reservation.approvalStatus`: el detalle lo trae del registro
+   *  (`...safeReservation` en `reservas/usecases/detail.ts`). 'pending' habilita Aprobar/Rechazar. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
+  /** #272 (MR-07) — snapshot de la cancelación y estado real del reembolso (`GET /reservas/:id`).
+   *  El modal muestra el badge y ofrece "Reintentar reembolso" cuando quedó 'failed'. */
+  cancelledAt?: string | null
+  cancellationReason?: string | null
+  cancellationFee?: number
+  refundAmount?: number
+  refundStatus?: RefundStatus
+  refundedAt?: string | null
+  refundPaymentId?: string | null
+  /** ISO. #272 — un `refundStatus: 'pending'` escrito hace más de 10 min se puede reintentar
+   *  (`utils/refund-state.ts`, mismo umbral que el backend, que lo mide sobre este campo). */
+  updatedAt?: string
   /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el horario del hotel.
    *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
   checkInTime?: string | null
   checkOutTime?: string | null
   /** Movimientos de dinero de la reserva: cobros y devoluciones, del más reciente al más viejo. */
   paymentHistory?: ReservationPaymentEntry[]
+  /** REQ-RWP-02: intentos de cobro del gateway, del más reciente al más viejo. */
+  paymentAttempts?: PaymentAttemptView[]
   // F3 MisterPlan: condiciones + otros cobros + código de check-in digital
   gdprAccepted?: boolean
   marketingAccepted?: boolean
@@ -623,6 +828,8 @@ export interface ReservationDetail {
   payments?: ReservationDetailPayment[]
   messageLogs?: ReservationDetailMessageLog[]
   addons?: ReservationDetailAddon[]
+  /** Facturas de la reserva, de la más reciente a la más vieja (REQ-FDR-01, #252). */
+  invoices?: ReservationInvoiceView[]
 }
 
 // === FOLIO ===
@@ -712,6 +919,11 @@ export interface CheckinListItem {
    *  total cobrable (alta/baja de extras y `otherCharges`) — ver
    *  `shared/usecases/sync-reservation-pending.ts`. */
   pendingAmount?: number
+  /** #274 — llegan por el mismo spread `...r`: cuna y amenidades infantiles pedidas al reservar
+   *  online. El dashboard muestra el badge de cuna con tooltip (`childSetupSummary`). */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 export interface CheckinListData {
@@ -783,6 +995,14 @@ export interface CheckinGuest {
   /** `Reservations.notes` crudo (pedido especial, llegada estimada, etc. — mismo campo que
    *  `ReservationModal.vue` muestra como "Notas"). Null si la reserva no tiene nada cargado. */
   notes: string | null
+  /** MR-03 (#268) — etiqueta del régimen ("Desayuno incluido", "Media pensión"…) para que
+   *  recepción lo vea en la fila de llegadas. Null si es solo alojamiento o no hay régimen. */
+  mealPlanLabel: string | null
+  /** MR-03 (#268) — importe del régimen reservado en la web (0 si incluido en tarifa o cargado
+   *  a mano). En una reserva de grupo (`groupId`) NO está dentro de `totalAmount`. */
+  mealPlanTotal: number
+  /** `Reservations.groupId`: la reserva es una habitación de una reserva de varias. */
+  groupId: string | null
 }
 
 // === FEEDBACK ===

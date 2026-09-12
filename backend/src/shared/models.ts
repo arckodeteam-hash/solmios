@@ -193,6 +193,8 @@ export function registerSharedModels(orm: ORM): void {
       provider: { type: 'string' },
       relatedType: { type: 'string' },
       relatedId: { type: 'string' },
+      // #270: adjuntos [{filename, contentType, contentBase64}] (el recibo PDF del correo de confirmación). Nullable.
+      attachments: { type: 'json' },
     },
   })
 
@@ -216,6 +218,11 @@ export function registerSharedModels(orm: ORM): void {
       roomId: { type: 'string', required: true, indexed: true },
       amenityKey: { type: 'string', required: true },
       isShared: { type: 'boolean', default: false },
+      // Amenidad personalizada (#290): key `custom:<slug>` + name + price >= 0. Las keys fijas del
+      // catálogo siguen con name '' / price 0 (features gratuitas). isActive = estado/disponibilidad.
+      // orm.migrate agrega las columnas nuevas vía ALTER TABLE, sin script de migración.
+      name: { type: 'string', default: '' },
+      price: { type: 'number', default: 0 },
       isActive: { type: 'boolean', default: true },
     },
   })
@@ -287,6 +294,15 @@ export function registerSharedModels(orm: ORM): void {
       quantity: { type: 'number', default: 1 },
       kind: { type: 'string', default: 'service' },
       status: { type: 'string', default: 'pending' },
+      // #269 — extras pagados online (upsells, amenidades) materializados por el motor público.
+      // `amount` conserva su semántica histórica: es el importe UNITARIO y la línea vale
+      // `amount × quantity` (así lo suman `addonsTotal` y `buildItems`). `unitPrice` es informativo
+      // (mismo valor que `amount` para las filas del motor), `taxRate` es el % aplicado al reservar.
+      // `source:'booking_engine'` marca filas YA incluidas en `reservations.totalAmount`: quedan
+      // fuera del total cobrable (`shared/utils/reservation-balance.ts`).
+      unitPrice: { type: 'number' },
+      source: { type: 'string', default: 'manual' },
+      taxRate: { type: 'number' },
     },
   })
 

@@ -1,7 +1,7 @@
 // payments/service.ts — Facade pública del módulo Payments. Orquestador delgado que delega a usecases/
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
-import { paymentsLinkedTo, settledNetOfReservation, type PaymentReservationRef } from './usecases/reservation-money'
+import { paymentsLinkedTo, settledNetOfReservation, unbilledPaymentsOfReservation, linkPaymentsToInvoice, type PaymentReservationRef } from './usecases/reservation-money'
 import type {
   PaymentDTO, CreatePaymentDTO, ChargeCardDTO,
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
@@ -93,7 +93,7 @@ export class PaymentsService {
   private refundDeps(): refunds.RefundFlowDeps {
     return { crud: this.crud, stripe: this.stripe, createPayment: (d) => this.createPayment(d), audit: (e) => this.audit(e), onRefundProcessed: async (p) => { await this.sockets.onRefundProcessed?.(p) } }
   }
-  refundPayment(paymentId: string, amount?: number, user?: Actor): Promise<PaymentDTO> { return refunds.refundStripe(this.refundDeps(), paymentId, amount, user) }
+  refundPayment(paymentId: string, amount?: number, user?: Actor, reason?: string, idempotencyKey?: string): Promise<PaymentDTO> { return refunds.refundStripe(this.refundDeps(), paymentId, amount, user, reason, idempotencyKey) }
   /** #214 (COR-5): devolución de un cobro efectivo/transferencia — asiento `refund` sin pasarela. */
   refundDirectPayment(paymentId: string, user?: Actor): Promise<PaymentDTO> { return refunds.refundDirect(this.refundDeps(), paymentId, user) }
   /** Devolución por caja de un monto SIN cobro de origen (excedente de una reserva reprogramada). */
@@ -122,6 +122,10 @@ export class PaymentsService {
   paymentsLinkedTo(hotelId: string, ref: PaymentReservationRef): Promise<PaymentDTO[]> { return paymentsLinkedTo(this.paymentRepo, hotelId, ref) }
   // RTC-7.4 — dinero neto asentado a nombre de una reserva (`connectors/payment-requests-money`).
   settledNetOfReservation(hotelId: string, reservationId: string): Promise<number> { return settledNetOfReservation(this.paymentRepo, hotelId, reservationId) }
+  // #253 — puerto para connectors/facturas-payments: pagos de la reserva aún sin factura (los que la factura emitida desde la reserva vincula).
+  unbilledPaymentsOfReservation(hotelId: string, reservationId: string): Promise<PaymentDTO[]> { return unbilledPaymentsOfReservation(this.paymentRepo, hotelId, reservationId) }
+  // #253 — puerto para connectors/facturas-payments: vincula filas EXISTENTES a la factura (nunca crea); devuelve cuántas.
+  linkPaymentsToInvoice(hotelId: string, reservationId: string, paymentIds: string[], invoiceId: string): Promise<number> { return linkPaymentsToInvoice(this.paymentRepo, hotelId, reservationId, paymentIds, invoiceId) }
 
   /** RTC-8.1 — lo inyecta el connector `payments-ceiling`; ver `usecases/charge-card.ts`. */
   setCeilingGuard(port: ChargeCeilingPort): void { this.ceiling = port }

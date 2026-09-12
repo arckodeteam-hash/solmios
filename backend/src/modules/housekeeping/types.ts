@@ -1,4 +1,4 @@
-export type CleaningType = 'full_cleaning' | 'quick_cleaning' | 'deep_cleaning' | 'inspection' | 'maintenance'
+export type CleaningType = 'full_cleaning' | 'quick_cleaning' | 'deep_cleaning' | 'inspection' | 'maintenance' | 'arrival_setup'
 export type CleaningPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type CleaningStatus = 'pending' | 'in_progress' | 'completed' | 'inspected'
 
@@ -9,6 +9,17 @@ export interface CleaningItem {
   name: string
   done: boolean
 }
+
+/**
+ * Ítem de la tarea `arrival_setup` (#274): lo que hay que dejar listo en la habitación antes
+ * de que llegue el huésped. Se deriva de la reserva (cuna, amenidades infantiles, régimen,
+ * pedido especial), no lo carga nadie a mano.
+ */
+export type SetupItem =
+  | { type: 'crib'; qty: number }
+  | { type: 'amenity'; name: string; qty: number }
+  | { type: 'regime'; name: string }
+  | { type: 'request'; text: string }
 
 export interface PhotoEvidence {
   /** A qué requisito/área corresponde la foto (cama, baño, `supervisor_presence`…).
@@ -77,6 +88,10 @@ export interface HousekeepingDTO {
   assignedDate?: string
   completedDate?: string
   cleaningItems?: CleaningItem[]
+  /** Solo en tareas `arrival_setup`: qué preparar para la llegada. Null en las demás. */
+  setupItems?: SetupItem[] | null
+  /** Reserva que originó la tarea (`arrival_setup`). Null en las tareas manuales. */
+  reservationId?: string | null
   startTime?: string
   endTime?: string
   /** Pausa del cronómetro: `pausedAt` = pausada desde (null si corre); `pausedSeconds` = acumulado. */
@@ -106,6 +121,8 @@ export interface CreateHousekeepingDTO {
   assignedDate?: string
   completedDate?: string
   cleaningItems?: CleaningItem[]
+  setupItems?: SetupItem[] | null
+  reservationId?: string | null
 }
 
 export interface UpdateHousekeepingDTO {

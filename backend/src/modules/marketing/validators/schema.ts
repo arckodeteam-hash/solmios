@@ -12,6 +12,19 @@ export const META_CATEGORIES = ['MARKETING', 'UTILITY', 'AUTHENTICATION'] as con
 /** Idiomas del panel (spec UI). Meta acepta muchos más; se agregan cuando hagan falta. */
 export const META_LANGUAGES = ['es', 'en', 'pt'] as const
 
+/**
+ * Eventos cuya plantilla el hotel puede pisar desde auto_messages (`notification-renderer.ts`
+ * busca el override por `event`). Espejo del `<select>` de `pages/auto-messages/index.vue`:
+ * un evento que no esté acá el panel no lo puede guardar (400), aunque el default exista en
+ * `services/notification-defaults.ts`. Los tres de #267 (aviso al staff web/OTA y acuse al
+ * huésped sin pasarela) faltaban y la doc decía que eran editables.
+ */
+export const NOTIFICATION_EVENTS = [
+  'reservation_confirmed', 'reservation_presale', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder',
+  'reservation_approved', 'reservation_rejected',
+  'reservation_new_staff', 'reservation_new_ota_staff', 'reservation_received_unpaid',
+] as const
+
 export const CreateAutoMessageSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
   title: { type: 'string' as const, required: true, min: 2 },
@@ -23,7 +36,7 @@ export const CreateAutoMessageSchema: Record<string, ValidationRule> = {
   emailBody: { type: 'string' as const },
   whatsappBody: { type: 'string' as const },
   // Notification templates configurable + i18n (spec 11.1.6).
-  event: { type: 'string' as const, enum: ['reservation_confirmed','reservation_presale','checkin_welcome','no_show','checkout','invoice','reminder'] },
+  event: { type: 'string' as const, enum: [...NOTIFICATION_EVENTS] },
   language: { type: 'string' as const, enum: ['es','en','pt'] },
   triggerType: { type: 'string' as const, enum: ['immediate','cron'] },
   // INT-1/EST-2: sin esta declaración validateSchema DROPEA isActive del POST → el service
@@ -58,7 +71,7 @@ export const UpdateAutoMessageSchema: Record<string, ValidationRule> = {
   emailBody: { type: 'string' as const },
   whatsappBody: { type: 'string' as const },
   // Notification templates configurable + i18n (spec 11.1.6) — editables en update
-  event: { type: 'string' as const, enum: ['reservation_confirmed','reservation_presale','checkin_welcome','no_show','checkout','invoice','reminder'] },
+  event: { type: 'string' as const, enum: [...NOTIFICATION_EVENTS] },
   language: { type: 'string' as const, enum: ['es','en','pt'] },
   triggerType: { type: 'string' as const, enum: ['immediate','cron'] },
   isActive: { type: 'number' as const },

@@ -2,15 +2,19 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
+import { validateRoomAssignment, CLOSED_STATUSES, type RoomAssignmentDeps } from './assign-room'
+import { auditSafely } from '../../../shared/usecases/audit'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from '../../../shared/utils/rate-resolution'
 import { round2 } from '../../../shared/utils/money'
+import { paymentState } from '../../../shared/utils/reservation-balance'
 import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
+import { findOrCreateGuest } from '../../../shared/usecases/find-or-create-guest'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
 /**
@@ -42,7 +46,17 @@ const MAX_LIMIT = 100
  */
 const DISCOUNT_EPSILON = 0.011
 
-export async function listReservations(repo: any, userRepo: any, cache: any, logger: any, query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> {
+/**
+ * REQ-RWP-04 — fuentes de dinero que el listado necesita para etiquetar cada fila con su estado de
+ * pago. Mismo par `addonsOf`/`paidOf` que ya inyectan el detalle, el reagendado y `markPaid`
+ * (service.ts): NO es una fórmula nueva, es la misma que ya se muestra en el modal.
+ */
+export interface ListMoneyDeps {
+  addonsOf: AddonSource
+  paidOf: PaidSource
+}
+
+export async function listReservations(repo: any, userRepo: any, cache: any, logger: any, query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }, money: ListMoneyDeps): Promise<ReservasPaginated> {
   const filters: Record<string, unknown> = {}
   if (query.status) filters.status = query.status
   if (query.channel) filters.channel = query.channel
@@ -77,7 +91,19 @@ export async function listReservations(repo: any, userRepo: any, cache: any, log
   const result = query.search
     ? await repo.paginate({ ...filters, externalLocator: { $like: `%${query.search}%` } }, { offset, limit, orderBy })
     : await repo.paginate(filters, { offset, limit, orderBy })
-  const response: ReservasPaginated = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
+  // REQ-RWP-04: `paymentState`/`paidAmount` por fila. Lo pagado sale de `paidOf` (= `paidSource()`
+  // del módulo: `payments` completed + anticipo, ver shared/usecases/reservation-paid.ts) y NO de
+  // `reservation.deposit` a secas, que ignora los cobros posteriores (Stripe, mark-paid): es la
+  // MISMA fórmula que el detalle y `markPaid`, así el badge del listado nunca contradice al modal.
+  // El total cobrable incluye los extras (`addonsOf`), por eso se leen también. Se calcula SOLO
+  // para las filas de la página (≤ MAX_LIMIT) y en paralelo — nunca se trae `payments` del hotel
+  // entero — y ANTES de cachear, así la caché ya lleva el estado y la invalidación existente
+  // (`invalidateReservasCaches` tras cada cobro/extra) lo mantiene fresco.
+  const data = await Promise.all(result.data.map(async (r: any) => {
+    const [addons, paidAmount] = await Promise.all([money.addonsOf(r.id, String(r.hotelId ?? '')), money.paidOf(r.id, r)])
+    return { ...r, paidAmount: round2(paidAmount), paymentState: paymentState(r, addons, paidAmount) }
+  }))
+  const response: ReservasPaginated = { data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
   await cache.set(cacheKey, response, CACHE_TTL)
   return response
 }
@@ -115,6 +141,12 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   }
+  // REQ-HAC-01 (#258): lo que se vende es el TIPO. El alta del panel sigue exigiendo `roomId`, pero
+  // la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para que reasignar la
+  // unidad después (assign-room.ts) valide contra el tipo vendido y no contra la unidad elegida.
+  // Sin `roomRepo` (callers viejos) se persiste sólo si el dto lo trae.
+  const roomType = dto.roomType || (room?.type ? String(room.type) : undefined)
+  if (roomType) dto.roomType = roomType
   // Auditoría de integridad (cierre, 2026-09-04) — decisión de producto: el staff NO puede exceder
   // silenciosamente la capacidad de la habitación. Mismo criterio (`fitsRoomCapacity` +
   // `room_type_capacity`) que el motor público y el reagendado — cero reglas nuevas. Reservas
@@ -126,6 +158,16 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   if (guestRepo && dto.guestId) {
     const guest = await guestRepo.findOne({ id: dto.guestId })
     if (!guest || guest.hotelId !== dto.hotelId) throw new ConflictError('El huésped no pertenece a este hotel')
+  }
+  // MR-08 (#273): sin `guestId` pero con `guestEmail`, la ficha se resuelve (email/teléfono
+  // normalizados) o se crea con el helper compartido — un huésped = una ficha. Sin `lockTx`: el
+  // panel no corre en tx y es carga manual de staff, no concurrente consigo mismo.
+  if (guestRepo && !dto.guestId && dto.guestEmail) {
+    const { guest } = await findOrCreateGuest(
+      { guests: guestRepo },
+      { hotelId: dto.hotelId, name: dto.guestName ?? '', email: dto.guestEmail, phone: dto.guestPhone },
+    )
+    dto.guestId = String(guest.id)
   }
   if (dto.checkIn >= dto.checkOut) throw new ConflictError('checkIn debe ser anterior a checkOut')
   // Estadía mínima por fecha (fila "Días Mínimos" del planning). Solo se persisten overrides (minStay>1);
@@ -220,9 +262,11 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   if (dto.promoCode && promoCodes?.consumeUse) {
     await promoCodes.consumeUse(dto.hotelId, dto.promoCode)
   }
+  // MR-08 (#273): los datos del huésped viven en Guests, no en la fila de Reservations.
+  const { guestEmail: _guestEmail, guestName: _guestName, guestPhone: _guestPhone, ...row } = dto
   let item: ReservasDTO
   try {
-    item = await repo.create(dto as any)
+    item = await repo.create(row as any)
   } catch (e) {
     // Compensación: la reserva no existe, el uso no se consume.
     if (dto.promoCode && promoCodes?.releaseUse) {
@@ -254,6 +298,14 @@ export interface UpdateReservationHooks {
    * recortar y es no-op.
    */
   afterCeilingDrop?: (item: ReservasDTO) => Promise<void>
+  /**
+   * REQ-HAC-03 (#258): deps extra para el cambio de habitación por PUT. `updateReservation` sólo
+   * recibe repo/roomRepo/sockets/logger/cache (firma posicional, callers viejos): sin `blockRepo`
+   * el PUT NO chequea RoomBlocks y sin `auditPort` no deja auditoría `reservation.room_assigned`
+   * (el evento `onRoomAssigned` SÍ se emite siempre). Hoy el service no lo cablea; un wiring
+   * futuro lo pasa por acá sin tocar firmas.
+   */
+  roomAssignment?: Partial<Pick<RoomAssignmentDeps, 'blockRepo' | 'auditPort'>>
 }
 
 export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort, hooks?: UpdateReservationHooks, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
@@ -277,6 +329,38 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
       children: Number(dto.children ?? existing.children) || 0,
       childrenAges: dto.childrenAges ?? existing.childrenAges,
     })
+  }
+  // ─── REQ-HAC-03 (#258): cambio de habitación por PUT — UN solo camino ────────────────────
+  // El solape, el bloqueo, el tipo vendido y el sello `roomAssignedAt/By` los decide
+  // `validateRoomAssignment` (assign-room.ts), el mismo que usa POST /assign-room; acá sólo se
+  // mergea el patch en lo que se persiste. Lo que NO hace el PUT: desasignar (DELETE /assign-room)
+  // ni mover una estadía en curso (POST /assign-room mueve folio y estados de habitaciones) — un
+  // 409 con `reason` apunta al endpoint correcto en vez de dejar la reserva a medio mover.
+  const changesRoom = dto.roomId !== undefined && dto.roomId !== existing.roomId
+  const previousRoomId: string | null = existing.roomId ?? null
+  // `allowTypeChange` es una decisión del request (lo declara UpdateReservasSchema para que el
+  // validador no lo descarte), no un dato de la fila: se saca del dto antes de persistir/emitir.
+  const allowTypeChange = Boolean((dto as any).allowTypeChange)
+  delete (dto as any).allowTypeChange
+  let roomAssignment: { patch: Partial<ReservasDTO>; typeChanged: boolean } | null = null
+  if (changesRoom) {
+    if (!dto.roomId) throw new ConflictError('Para soltar la habitación usá DELETE /reservas/:id/assign-room', { reason: 'use_unassign_endpoint' })
+    // Mismo cierre que POST /assign-room: una reserva terminada o anulada no cambia de habitación
+    // (dispararía onRoomAssigned → código de puerta sobre una estadía que ya no existe).
+    if (CLOSED_STATUSES.has(String(existing.status))) {
+      throw new ConflictError(`No se puede asignar habitación a una reserva ${existing.status}`, { reason: 'invalid_status', status: existing.status })
+    }
+    if (existing.status === 'checked_in') {
+      throw new ConflictError('La reserva está en estadía: reasignala con POST /reservas/:id/assign-room', { reason: 'use_assign_endpoint' })
+    }
+    // Fail-closed, mismo criterio que validate-update.ts: sin repo de habitaciones no se valida → se rechaza.
+    if (!roomRepo) throw new ConflictError('No se puede verificar la habitación')
+    roomAssignment = await validateRoomAssignment(
+      { repo, roomRepo, blockRepo: hooks?.roomAssignment?.blockRepo },
+      existing, dto.roomId,
+      { allowTypeChange, checkIn: dto.checkIn, checkOut: dto.checkOut, userId: currentUser.id },
+    )
+    Object.assign(dto, roomAssignment.patch)
   }
   // Auditoría de integridad (cierre, 2026-09-04) — `childrenAgesAsOf` es el check-in "de
   // referencia" con el que se proyecta cada edad al reagendar (Requerimiento 12). Si el panel
@@ -350,6 +434,17 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   // no tiene cobros `pending` (`clamp-to-ceiling.ts:clampUnlocked`), así que correrlo siempre
   // cuesta una lectura y cierra la CLASE de bug en vez de una instancia.
   await hooks?.afterCeilingDrop?.(result)
+  if (roomAssignment) {
+    // Misma auditoría y mismo evento que POST /assign-room (TTLock genera/reemplaza el código en
+    // `onRoomAssigned`). La auditoría sólo si el caller cableó `auditPort` (ver UpdateReservationHooks).
+    const auditPort = hooks?.roomAssignment?.auditPort ?? null
+    const base = { hotelId: existing.hotelId, userId: currentUser.id, entity: 'reservation', entityId: id }
+    await auditSafely(auditPort, logger, { ...base, action: 'reservation.room_assigned', detail: JSON.stringify({ from: previousRoomId, to: dto.roomId }) })
+    if (roomAssignment.typeChanged) {
+      await auditSafely(auditPort, logger, { ...base, action: 'reservation.room_type_changed', detail: JSON.stringify({ from: existing.roomType ?? null, to: roomAssignment.patch.roomType }) })
+    }
+    await safeEmit(logger, 'onRoomAssigned', sockets.onRoomAssigned, { reservationId: id, hotelId: existing.hotelId, roomId: dto.roomId, previousRoomId })
+  }
   await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, result)
   await invalidateReservasCaches(cache, existing.hotelId)
   return result
@@ -378,11 +473,15 @@ export async function updateReservationWithBalance(
    *  `pending` es no-op. */
   ceilingGuard?: (item: ReservasDTO) => Promise<void>,
   configRepo?: RepositoryAdapter<any>,
+  /** REQ-HAC-03 (#258): RoomBlocks + auditoría para el cambio de habitación por PUT (ver
+   *  `UpdateReservationHooks.roomAssignment`). Lo cablea el service desde `roomAssignmentDeps()`. */
+  roomAssignment?: Partial<Pick<RoomAssignmentDeps, 'blockRepo' | 'auditPort'>>,
 ): Promise<ReservasDTO> {
   return updateReservation(repo, logger, cache, sockets, id, dto, currentUser, roomRepo, guestRepo, groupRepo, promoCodes, {
     // Dentro de la ventana: el socket sale con el saldo nuevo y la caché se invalida DESPUÉS.
     afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(repo, addonsOf, id, paidOf, item) }),
     afterCeilingDrop: ceilingGuard,
+    roomAssignment,
   }, configRepo)
 }
 

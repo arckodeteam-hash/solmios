@@ -17,6 +17,11 @@ export interface BookingPaidPayload {
   currency?: string
   checkIn?: string
   paymentRef: string
+  /** Pasarela que cobró; el aviso al hotel dice "por stripe/azul/cardnet" (#246). */
+  provider?: string
+  /** #276 MR-11 — `payments.description` nombra al huésped; la conciliación no tenía nombre. */
+  guestName?: string
+  guestEmail?: string
 }
 
 /** `null` si el resultado no es una reserva recién confirmada (duplicado, fallido, pendiente). */
@@ -32,5 +37,8 @@ export function bookingPaidPayload(hotelId: string, result: SettleResult | null)
     currency: result.currency ?? undefined,
     checkIn: result.checkIn ?? undefined,
     paymentRef: result.providerRef || '',
+    provider: result.provider ?? undefined,
+    guestName: result.guestName ?? undefined,
+    guestEmail: result.guestEmail ?? undefined,
   }
 }

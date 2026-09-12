@@ -19,7 +19,7 @@ import type { ORM, Logger, RepositoryAdapter } from 'arckode-framework'
 import type { ChannexUseCase } from './channex'
 import type { CanalesQueries } from './canales-queries'
 import type { BookingRevisionDTO } from '../types'
-import { mapBookingRevision, applyBookingRevision, type ReservationCancelPort } from './booking-ingestion'
+import { mapBookingRevision, applyBookingRevision, type ReservationCancelPort, type BookingIngestDeps } from './booking-ingestion'
 
 /** Resultado de una corrida del sync global de bookings. */
 export interface BookingSyncResult {
@@ -76,6 +76,12 @@ export class BookingSyncUseCase {
    */
   private cancelPort?: ReservationCancelPort
 
+  /**
+   * #246 — Cableado por el service (`CanalesService`) sobre su socket `onOtaBookingIngested`. Sin
+   * él, la ingesta sigue igual: el aviso al hotel es best-effort.
+   */
+  private ingestedPort?: BookingIngestDeps['onIngested']
+
   constructor(private readonly deps: BookingSyncDeps) {}
 
   setSubscriptionCheck(fn: (hotelId: string) => Promise<{ allowed: boolean }>): void {
@@ -84,6 +90,10 @@ export class BookingSyncUseCase {
 
   setCancelPort(fn: ReservationCancelPort): void {
     this.cancelPort = fn
+  }
+
+  setIngestedPort(fn: NonNullable<BookingIngestDeps['onIngested']>): void {
+    this.ingestedPort = fn
   }
 
   /** Puerto de cancelación con fallo explícito si nadie lo cableó (nunca "cancela a medias"). */
@@ -298,7 +308,9 @@ export class BookingSyncUseCase {
     }
 
     const dto = mapBookingRevision(rev, hotelId)
-    const applied = await applyBookingRevision({ orm, channex, hotelId, apiKey: '', cancelReservation: this.cancelReservation, logger }, dto)
+    const applied = await applyBookingRevision({
+      orm, channex, hotelId, apiKey: '', cancelReservation: this.cancelReservation, logger, onIngested: this.ingestedPort,
+    }, dto)
     if (applied.created) result.ingested++
     else result.skipped++
 

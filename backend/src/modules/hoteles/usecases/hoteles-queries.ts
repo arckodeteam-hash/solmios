@@ -36,6 +36,24 @@ function assertChildPolicyRate(clave: string, valor: any): void {
   }
 }
 
+/**
+ * REQ-03 (#235, "Máximo de niños que no consumen plaza por habitación"): `maxFreeChildrenPerRoom`
+ * ausente/`null` = sin límite (válido, es el estado por default — nunca se fuerza un número). Si
+ * viene, tiene que ser un entero ≥ 0: un cliente crudo podía persistir -1/1.5/'x' y el motor
+ * público aplicaría un tope sin sentido. El clamp al LEER (`resolveChildPolicy`) queda como
+ * defensa en profundidad para datos ya guardados. Se valida siempre, independiente de
+ * `childrenDiscountEnabled` — es otra regla, no depende del cobro por %.
+ */
+function assertChildPolicyFreeChildrenLimit(clave: string, valor: any): void {
+  if (clave !== 'child_policy') return
+  const policy = safeParse(valor) as any
+  const max = policy?.maxFreeChildrenPerRoom
+  if (max === undefined || max === null) return
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 0) {
+    throw new ValidationError('El máximo de niños que no consumen plaza por habitación debe ser un entero mayor o igual a 0')
+  }
+}
+
 /** Campos derivados de una dirección concreta — dejan de tener sentido cuando el país cambia
  *  (un pin/provincia de OTRO país queda mezclado con el nuevo). `latitude`/`longitude` usan `0`
  *  como "sin coordenadas propias" (mismo criterio que ya usa el default del modelo y
@@ -107,6 +125,7 @@ export class HotelesQueries {
     if (!clave || valor === undefined) throw new Error('clave y valor requeridos')
     // #95: se valida ANTES del write — un rechazo después dejaría la fila a medio actualizar.
     assertChildPolicyRate(clave, valor)
+    assertChildPolicyFreeChildrenLimit(clave, valor)
     // Multi-tenant: el hotelId sale del token. Solo super_admin puede targetear otro
     // hotel (o 'platform') vía body.hotelId — un merchant queda forzado a su propio hotel.
     // #80: sin body.hotelId, un super_admin CON hotel escribe la fila de su hotel (mismo

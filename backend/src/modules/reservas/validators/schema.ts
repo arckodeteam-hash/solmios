@@ -1,16 +1,23 @@
 import type { ValidationRule } from 'arckode-framework'
 
 const STATUS_ENUM = ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled', 'no_show']
-const CHANNEL_ENUM = ['direct', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
+const CHANNEL_ENUM = ['direct', 'web', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
 const PRECHECKIN_ENUM = ['pending', 'sent', 'completed', 'expired']
 
 export const CreateReservasSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
+  // REQ-HAC-01 (#258): el alta del panel SIGUE exigiendo roomId (la creación sin habitación es
+  // HAC-05). `roomType` es opcional: si falta, el usecase lo toma de `rooms.type`.
   roomId: { type: 'string' as const, required: true },
+  roomType: { type: 'string' as const, max: 50 },
   checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, required: true, min: 0 },
   guestId: { type: 'string' as const },
+  // MR-08 (#273): alternativa a `guestId` — el usecase resuelve/crea la ficha por email (ver types.ts).
+  guestEmail: { type: 'email' as const },
+  guestName: { type: 'string' as const, max: 200 },
+  guestPhone: { type: 'string' as const, max: 40 },
   channel: { type: 'string' as const, enum: CHANNEL_ENUM },
   status: { type: 'string' as const, enum: STATUS_ENUM },
   currency: { type: 'string' as const, min: 3, max: 3 },
@@ -80,6 +87,12 @@ export const StayQuoteSchema: Record<string, ValidationRule> = {
 
 export const UpdateReservasSchema: Record<string, ValidationRule> = {
   roomId: { type: 'string' as const },
+  roomType: { type: 'string' as const, max: 50 },
+  // REQ-HAC-03 (#258): el PUT con `roomId` de otro tipo delega en `validateRoomAssignment`, que
+  // exige `allowTypeChange` explícito (409 `type_mismatch`). `validateSchema` es lista blanca: sin
+  // declararlo acá el flag se descartaba en silencio y cambiar de tipo por PUT daba SIEMPRE 409.
+  // No se persiste (el ORM sólo escribe campos del modelo); es una decisión, no un dato.
+  allowTypeChange: { type: 'boolean' as const },
   checkIn: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, min: 0 },
@@ -176,6 +189,20 @@ export const CancelReservationSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 500 },
 }
 
+// ── Assign room (REQ-HAC-03, #258): POST /api/reservas/:id/assign-room ──
+// `allowTypeChange` habilita asignar una unidad de tipo distinto al vendido (`roomType`).
+export const AssignRoomSchema: Record<string, ValidationRule> = {
+  roomId: { type: 'string' as const, required: true },
+  allowTypeChange: { type: 'boolean' as const },
+}
+
+// ── Reject (#271 MR-06): rechazo de una reserva pendiente de aprobación ──
+// El motivo es obligatorio y con largo mínimo: el huésped lo lee en el email de rechazo.
+// `min` en el validador nativo cuenta caracteres del string ya trimeado.
+export const RejectReservationSchema: Record<string, ValidationRule> = {
+  reason: { type: 'string' as const, required: true, min: 10, max: 500 },
+}
+
 // ── Reschedule (planning): mover/extender reserva ──
 // El objeto `charge` se valida aparte con RescheduleChargeSchema (validateSchema no anida objetos).
 export const RescheduleSchema: Record<string, ValidationRule> = {
@@ -209,6 +236,31 @@ export const SettleSchema: Record<string, ValidationRule> = {
   amount: { type: 'number' as const, required: true, min: 0 },
   reference: { type: 'string' as const, max: 200 },
 }
+
+// ── Registrar pago manual (REQ-RWP-06, #249): POST /api/reservas/:id/mark-paid ──
+// Plata que el hotel YA recibió fuera de Stripe (efectivo en mostrador, transferencia, POS). El
+// DSL no expresa reglas cruzadas: "referencia obligatoria para transfer/card" y el tope contra el
+// saldo pendiente viven en `usecases/mark-paid.ts`. `amount` con `min: 0.01` — un cobro de $0 no
+// registra nada y sólo ensuciaría `payments` (la única fuente de verdad del dinero).
+export const MarkPaidSchema: Record<string, ValidationRule> = {
+  method: { type: 'string' as const, required: true, enum: ['cash', 'transfer', 'card', 'other'] },
+  amount: { type: 'number' as const, required: true, min: 0.01 },
+  reference: { type: 'string' as const, max: 200 },
+  note: { type: 'string' as const, max: 500 },
+}
+
+// ── Emitir factura desde la reserva (#253, REQ-FDR-02): POST /api/reservas/:id/invoice ──
+// Sólo `notes` opcionales para la factura directa; con folio abierto el folio arma las suyas
+// (ver usecases/issue-invoice.ts). Qué camino se toma NO lo elige el cliente.
+export const IssueInvoiceSchema: Record<string, ValidationRule> = {
+  notes: { type: 'string' as const, max: 500 },
+}
+
+// ── Reintentar reembolso web (#272): POST /api/reservas/:id/retry-refund ──
+// No hay campos: el monto sale de `reservations.refundAmount`, nunca del cliente. El schema vacío
+// existe para que la ruta pase por `validateSchema` como todo POST (regla del módulo); no cambia
+// el comportamiento (un body con claves de más no falla — igual que el resto de los schemas).
+export const RetryRefundSchema: Record<string, ValidationRule> = {}
 
 // ── Pre-Checkin (público) ──
 // Nombres de campo alineados con lo que MANDA el form público (pre-checkin/index.vue: `name`,

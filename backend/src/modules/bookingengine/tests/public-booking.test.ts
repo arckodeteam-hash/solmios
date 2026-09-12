@@ -59,6 +59,19 @@ describe('createPublicBookingDirect — accessToken público (F0 0.13)', () => {
     expect(UUID_RE.test(reservationCreate.row.accessToken)).toBe(true)
     // La reserva devuelta también lo expone.
     expect(UUID_RE.test(res.body.reservation.accessToken)).toBe(true)
+    // REQ-RWP-04 — origen web separado de la carga en recepción: `source='web'`, pero `channel`
+    // sigue 'direct' para que el reporte de directas (booking-engine.ts) la siga contando.
+    expect(reservationCreate.row.source).toBe('web')
+    expect(reservationCreate.row.channel).toBe('direct')
+  })
+
+  // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta (antes sólo el
+  // panel lo escribía y las reservas web quedaban con `roomType` NULL).
+  it('persiste roomType = rooms.type de la unidad resuelta (HAC-01)', async () => {
+    const { orm, created } = makeOrm({ room: { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' } })
+    const res = await createPublicBookingDirect(orm, baseBody)
+    expect(res.status).toBe(201)
+    expect(created.find((c) => c.model === 'Reservations')!.row.roomType).toBe('double')
   })
 
   it('accessToken distinto entre dos reservas (no reutiliza)', async () => {

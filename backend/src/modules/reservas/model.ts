@@ -6,7 +6,16 @@ export const ReservasModel: ModelDefinition = {
   fields: {
     id: { type: 'string', required: true },
     guestId: { type: 'string' },
-    roomId: { type: 'string', required: true },
+    // REQ-HAC-01 (#256/#258) — La habitación se asigna al check-in, no al reservar: `roomId` es
+    // nullable (una reserva sin habitación es válida; `scripts/relax-reservations-roomid.ts` quita el
+    // NOT NULL de las bases viejas). Lo que se vende es el TIPO: `roomType` = `rooms.type` (vacío en
+    // filas anteriores a #258 hasta que corra `scripts/backfill-reservation-room-type.ts`).
+    // `roomAssignedAt`/`roomAssignedBy` (users.id) registran quién y cuándo asignó la unidad
+    // (REQ-HAC-03). Anti-patrón ORM D5: declarados acá, case-sensitive, o se descartan al persistir.
+    roomId: { type: 'string' },
+    roomType: { type: 'string', indexed: true },
+    roomAssignedAt: { type: 'string' },
+    roomAssignedBy: { type: 'string' },
     hotelId: { type: 'string', required: true, indexed: true },
     checkIn: { type: 'string', required: true },
     checkOut: { type: 'string', required: true },
@@ -47,21 +56,59 @@ export const ReservasModel: ModelDefinition = {
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — asociada a ESTA habitación
     // (cada room-line de un grupo multi-habitación es su propia fila acá, ver
     // public-booking-group.ts): solo tiene sentido si esta reserva tiene al menos un bebé
-    // (Tarea 21, `childrenAges` clasificado 'baby') Y el hotel habilitó la cuna
-    // (`childPolicy.cribAvailable`); el backend lo re-valida al crear, nunca confía en lo que
-    // mande el cliente. `cribCount` es 1/0 espejo de `needsCrib` — no existe un checklist de
-    // amenidades adicionales, solo esta pregunta binaria.
+    // (Tarea 21, `childrenAges` clasificado 'baby') Y el tipo de habitación publica la cuna
+    // como amenidad personalizada `custom:cuna` (#292, `RoomAmenities`; antes era el flag global
+    // `childPolicy.cribAvailable`, dado de baja); el backend lo re-valida al crear, nunca confía
+    // en lo que mande el cliente. `cribCount` es 1/0 espejo de `needsCrib`.
     needsCrib: { type: 'boolean', default: false },
     cribCount: { type: 'number', default: 0 },
+    // Revisión #292 — el huésped PIDIÓ cuna (había bebé) y la unidad asignada no la ofrece: la
+    // reserva se crea sin cuna, con esta marca, una línea en `notes` y el aviso en la
+    // confirmación pública ("el hotel se pondrá en contacto"). Distinto de `needsCrib=false`
+    // a secas (no la pidió). `ormMigrate` la agrega con ADD COLUMN; las filas viejas quedan en
+    // null = false, no hace falta backfill.
+    cribUnavailable: { type: 'boolean', default: false },
     // REQ-01 (#233) — Amenidades para niños/bebés elegidas para ESTA habitación (por fila, igual
     // que la cuna: cada unidad de un grupo lleva las suyas). Snapshot con precio congelado
-    // [{id, name, price, quantity, total}] — si el hotel cambia el catálogo después, la reserva
-    // sigue mostrando lo que se cotizó. `childAmenitiesTotal` es la Σ de `total` del snapshot y
-    // ya está incluido en `totalAmount`/`priceBreakdown.subtotal`. Gateado server-side: solo con
-    // al menos un menor en la composición y `childPolicy.acceptChildren` (ver public-booking.ts).
+    // [{id, name, price, quantity, total}]. `childAmenitiesTotal` es la Σ de `total` del snapshot
+    // y ya está incluido en `totalAmount`/`priceBreakdown.subtotal`.
+    // HISTÓRICO (#292): el catálogo global `child_amenities` se dio de baja — las reservas nuevas
+    // ya no escriben acá (las amenidades salen por habitación en `roomAmenities`). Las columnas
+    // se conservan para que las reservas existentes sigan mostrando lo que se cotizó; sus
+    // lectores (arrival-setup, booking-engine-addons) siguen vigentes por eso.
     childAmenities: { type: 'json' },
     childAmenitiesTotal: { type: 'number', default: 0 },
+    // REQ-01 (#290) — Amenidades PERSONALIZADAS de la habitación asignada (filas `RoomAmenities`
+    // con key `custom:<slug>`, name, price) elegidas para ESTA fila. Mismo criterio que
+    // `childAmenities`: snapshot con precio congelado [{key, name, price, quantity, total}] —
+    // validado server-side contra las filas de la unidad asignada (nunca el precio del body) — y
+    // `roomAmenitiesTotal` = Σ `total`, ya incluido en `totalAmount`/`priceBreakdown.subtotal`.
+    // En un grupo cada unidad física lleva las suyas (ver public-booking-group.ts).
+    roomAmenities: { type: 'json' },
+    roomAmenitiesTotal: { type: 'number', default: 0 },
+    // MR-03 (#268) — Régimen (desayuno / media pensión / todo incluido) elegido desde la web.
+    // Snapshot congelado con el mismo criterio que `childAmenities`: `mealPlanUnitPrice` es el
+    // precio por persona y noche RELEÍDO del catálogo `meal_plans` al reservar (nunca del body),
+    // `mealPlanTotal` = unitPrice × (adultos + niños con plaza) × noches, ya incluido en
+    // `totalAmount`/`priceBreakdown.subtotal`. Sin default: `null` en reservas anteriores a esta
+    // feature (el panel muestra "—"). El flujo público escribe también `regime` (más abajo) con
+    // el mismo código para que el modal/listado existentes lo muestren.
+    mealPlan: { type: 'string' },
+    mealPlanPriceMode: { type: 'string' },
+    mealPlanUnitPrice: { type: 'number', default: 0 },
+    mealPlanTotal: { type: 'number', default: 0 },
+    // Personas que pagaron el régimen (adultos + niños con plaza, sin bebés) al reservar. Se
+    // persiste porque derivarlas de `mealPlanTotal ÷ (unitPrice × noches)` con las fechas
+    // ACTUALES inventa un número al reagendar. Sin default ni backfill: `null` en reservas
+    // anteriores a la columna → el panel no muestra personas.
+    mealPlanPersons: { type: 'number' },
     notes: { type: 'text' },
+    // #270 — Hora estimada de llegada y pedido especial del huésped, estructurados. Hasta ahora
+    // solo iban dentro de `notes` como texto libre ("Llegada estimada: ..." / "Pedido especial:
+    // ..."); el correo de confirmación y el recibo los necesitan como campos propios. `notes` se
+    // sigue escribiendo igual (el recepcionista lo lee de ahí). Nullable: solo el widget los llena.
+    estimatedArrival: { type: 'string' },
+    specialRequests: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },
     externalLocator: { type: 'string' },
@@ -110,6 +157,12 @@ export const ReservasModel: ModelDefinition = {
     // Las reservas creadas desde el panel NO lo setean → queda null → 404 en el endpoint público
     // (anti-IDOR: no revela existencia). Anti-patrón ORM D5: declarado acá, case-sensitive.
     accessToken: { type: 'string' },
+    // #266 — Límite (ISO) para pagar una reserva web pending: createdAt + booking_config.pendingTtlMinutes.
+    // null = no vence (reservas del panel o previas a #266). Case-sensitive (anti-patrón ORM D5).
+    paymentDeadlineAt: { type: 'string' },
+    // #266 — Clave de idempotencia que manda el widget en POST /api/public/booking. Única por hotel
+    // (idx_reservations_hotel_idempotency en migrate-db.ts); null en reservas del panel.
+    idempotencyKey: { type: 'string' },
     // F3 3.14 — Abandon recovery: marca que ya se envió el email de recuperación a esta
     // reserva. Lo setea el cron `abandon-recovery-cron` (cada 30 min) cuando encuentra una
     // reserva `pending` con `createdAt` entre 1h y 4h atrás. Idempotente por diseño: el flag
@@ -126,6 +179,14 @@ export const ReservasModel: ModelDefinition = {
     cancellationFee: { type: 'number', default: 0 },
     refundAmount: { type: 'number', default: 0 },
     policyApplied: { type: 'json' },
+    // #272 — Estado del reembolso REAL en la pasarela tras una cancelación web (lo escribe
+    // shared/usecases/web-booking-refund.ts). none = no correspondía (refundAmount 0) · pending =
+    // en curso · done = Stripe devolvió (refundedAt ISO + refundPaymentId = fila `payments` type
+    // 'refund') · failed = no salió, el hotel puede reintentar desde la reserva. En un grupo las N
+    // filas llevan el mismo estado. Case-sensitive (anti-patrón ORM). RUN_MIGRATE ADD COLUMN.
+    refundStatus: { type: 'string', default: 'none' },
+    refundedAt: { type: 'string' },
+    refundPaymentId: { type: 'string' },
     // Pre-checkin público (prototipo 8 pasos): firma digital + timestamp de aceptación del
     // contrato. signatureUrl es la URL del storage (carpeta 'signatures') donde queda la imagen
     // del canvas firmado; contractAcceptedAt es el ISO timestamp de cuándo el huésped aceptó.
@@ -139,7 +200,12 @@ export const ReservasModel: ModelDefinition = {
     // revisión humana antes de darla por buena, no un segundo estado de disponibilidad. Solo
     // lo setean los usecases públicos de bookingengine; una reserva cargada a mano desde el
     // panel no pasa por acá. Anti-patrón ORM: declarado acá o se descarta al persistir.
+    // #271 MR-06: 'rejected' = el hotel la rechazó (`POST /api/reservas/:id/reject`); en ese
+    // caso `status` también pasa a 'cancelled' y el cobro web se devolvió por Stripe.
     approvalStatus: { type: 'string' },
+    // #271 MR-06 — ISO del último recordatorio "reserva pendiente de aprobación" enviado al
+    // hotel; el cron lo usa para no repetir el aviso (dedup). NULL = nunca se recordó.
+    approvalReminderAt: { type: 'string' },
   },
   timestamps: true,
 }

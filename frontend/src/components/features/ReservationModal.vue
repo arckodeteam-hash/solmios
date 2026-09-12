@@ -4,9 +4,8 @@
 // Acciones: Confirmar / Anular / Factura (imprimible) + bonos (alojamiento / cliente).
 // Spec: openspec/changes/match-misterplan/specs/reservation-modal/spec.md (REQ-1 a REQ-12).
 
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { pushModal, popModal } from '@/composables/useModalStack'
-import { useRouter } from 'vue-router'
 import { ReservationService } from '@/services/Reservation.service'
 import { WhatsappService } from '@/services/Whatsapp.service'
 import type { WhatsappTemplate } from '@/services/Whatsapp.service'
@@ -16,18 +15,30 @@ import { FoliosService } from '@/services/Folios.service'
 import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { AddonsService } from '@/services/Addons.service'
 import { ConfigService } from '@/services/Platform.service'
+import { ApiError } from '@/services/http'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
+import { TeamService, type TeamMember } from '@/services/Team.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
+import { paymentStateBadge } from '@/utils/payment-state'
+import { effectiveMealPlan, mealPlanLabel } from '@/utils/meal-plans'
+import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
+import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
+import { useConfirm } from '@/composables/useConfirm'
+import { useInvoiceActions } from '@/composables/useInvoiceActions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
-import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation } from '@/types'
+import type { ReservationDetail, ReservationDetailAddon, ReservationPriceBreakdown, ReservationInvoiceView, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
+import type { UpsellBreakdownLine } from '@/types/booking'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -36,15 +47,17 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const router = useRouter()
 const toast = useToast()
 const { can } = usePermissions()
 const MS_PER_DAY = 86_400_000
 
 const detail = ref<ReservationDetail | null>(null)
+/** #272 — instante de la última lectura del detalle; contra él se mide si un `pending` ya es viejo. */
+const refundCheckedAt = ref(Date.now())
 const loading = ref(true)
 const saving = ref(false)
 const showCancel = ref(false)
+const showMarkPaid = ref(false)
 const autoSend = ref(true)
 const conditions = ref({ gdpr: false, marketing: false, terms: false })
 const otherCharges = ref(0)
@@ -89,8 +102,9 @@ async function loadGroupRooms(hotelId: string, groupId: string) {
 // Emisor de la factura (nombre, dirección, RNC, impuesto). Se carga del hotel de la reserva.
 const hotelInfo = ref<HotelData | null>(null)
 // 'charges' = comprobante de cargos de la reserva. NO es una factura: no lleva numeración fiscal
-// ni NCF y no entra al libro de ventas. La factura real se emite desde el módulo Facturación
-// (`/panel/finanzas/facturacion`, POST /api/facturas), que es quien controla el numerador.
+// ni NCF y no entra al libro de ventas. La factura real se emite con `POST /api/reservas/:id/invoice`
+// (REQ-FDR-02) desde el botón "Facturar" de este modal (ver `facturar()`); el backend es quien
+// controla el numerador y la vincula con los pagos ya registrados.
 type PrintMode = 'detail' | 'voucherLodging' | 'voucherClient' | 'charges' | 'quote'
 const printMode = ref<PrintMode>('detail')
 /** Cuántos envíos muestra la tarjeta "Historial de Envíos" (el detalle los devuelve ordenados
@@ -144,6 +158,64 @@ const doorLock = () => operateDoor('lock')
 async function onRoomLockChanged() {
   await load()
   if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+}
+
+// ── Habitación asignada (REQ-HAC-06, #261) ──
+// La reserva vendió un TIPO (`d.roomType`); la unidad (`d.room`) la elige recepción con
+// RoomAssignModal. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen cuándo y quién: el nombre
+// se resuelve contra el equipo del hotel (GET /usuarios), cargado una sola vez y sólo si hace falta.
+const showRoomAssign = ref(false)
+const teamMembers = ref<TeamMember[] | null>(null)
+let teamLoading: Promise<void> | null = null
+
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return '—'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
+
+/** Asignar / Cambiar: sólo con permiso de edición y con la reserva viva (el backend rechaza
+ *  cambiar la unidad de un check-out, una cancelada o un no-show). */
+const canAssignRoom = computed(() => {
+  const st = d.value?.status
+  return !!d.value && can('reservations', 'edit') && st !== 'cancelled' && st !== 'no_show' && st !== 'checked_out'
+})
+
+function ensureTeamLoaded(): Promise<void> {
+  if (teamMembers.value) return Promise.resolve()
+  if (!teamLoading) {
+    teamLoading = TeamService.list()
+      .then((r) => { teamMembers.value = r?.data ?? [] })
+      .catch(() => { teamMembers.value = [] })
+      .finally(() => { teamLoading = null })
+  }
+  return teamLoading
+}
+
+const assignedByName = computed(() => {
+  const id = d.value?.roomAssignedBy
+  if (!id) return '—'
+  const m = teamMembers.value?.find((u) => u.id === id)
+  if (m) return m.name || m.email || '—'
+  return `${String(id).slice(0, 8)}…`
+})
+
+// Carga lazy: sólo cuando el detalle trae `roomAssignedBy` (reservas asignadas antes de HAC-03
+// no lo tienen y no hace falta pedir el equipo).
+// (`detail`, no `d`: este watch es inmediato y `d` se declara más abajo.)
+watch(() => detail.value?.roomAssignedBy, (id) => { if (id) void ensureTeamLoaded() }, { immediate: true })
+
+/** Asignación persistida por RoomAssignModal (ya mostró el toast): se recarga el detalle
+ *  (habitación, fecha/quién, cerradura de la nueva unidad) y se avisa al listado. */
+async function onRoomAssigned() {
+  showRoomAssign.value = false
+  await load({ silent: true })
+  if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+  emit('changed')
 }
 
 async function loadRoomLockDevice(roomId?: string | null) {
@@ -311,6 +383,7 @@ async function load(opts?: { silent?: boolean }) {
   try {
     const d = await ReservationService.getById(props.reservationId)
     detail.value = d
+    refundCheckedAt.value = Date.now() // #272 — el umbral del reintento se mide contra el detalle recién leído
     autoSend.value = d?.autoSendEnabled ?? true
     conditions.value = { gdpr: !!d?.gdprAccepted, marketing: !!d?.marketingAccepted, terms: !!d?.termsAccepted }
     // COR-7 — En un refresco SILENCIOSO el operador puede estar tipeando en "Otros cobros":
@@ -405,7 +478,107 @@ const pricePerNight = computed(() => {
   return n > 0 ? Math.round(((d.value?.totalAmount ?? 0) / n) * 100) / 100 : d.value?.room?.basePrice ?? 0
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
+// MR-03 (#268) — régimen. `regime` es el campo editable del panel y MANDA; `mealPlan` es el
+// snapshot (código + precio unitario + total + personas) que persiste el motor web al reservar y
+// solo cubre cuando `regime` no vino (`effectiveMealPlan`, regla única de las tres vistas).
+// El detalle "(N pers × noches · importe)" describe el SNAPSHOT: se muestra solo si el régimen
+// visible sigue siendo el reservado en la web (si recepción lo cambió, el importe congelado ya
+// no explica lo que se ve). Las personas vienen persistidas (`mealPlanPersons`): derivarlas de
+// total ÷ (unitario × noches) con las fechas actuales inventa un número al reagendar — sin el
+// campo (reserva anterior a la columna) no se muestran.
+const mealPlanCode = computed(() => effectiveMealPlan(d.value))
+const mealPlanTotal = computed(() => d.value?.mealPlanTotal ?? 0)
+const mealPlanDetail = computed(() => {
+  if (!d.value?.mealPlan || d.value.mealPlan !== mealPlanCode.value) return ''
+  // Con espacio inicial: el compilador de Vue condensa el blanco entre `</span>` y `{{ }}`.
+  if (d.value.mealPlanPriceMode === 'included') return ' (incluido)'
+  const total = mealPlanTotal.value
+  if (total <= 0) return ''
+  const persons = d.value.mealPlanPersons ?? null
+  const n = nights.value
+  const personsPart = persons && persons > 0 && n > 0 ? `${persons} pers × ${n} noche${n === 1 ? '' : 's'} · ` : ''
+  return ` (${personsPart}${money(total)})`
+})
+// Una reserva de varias habitaciones (`groupId`) persiste el régimen unitario en CADA fila, pero
+// su `totalAmount` es SOLO la habitación: el régimen se cobró con el total del grupo (Stripe
+// sobre la líder). En una reserva suelta sí está dentro de `totalAmount`. La fila no afirma ni
+// una cosa ni la otra: muestra el importe y, en grupo, dónde se cobró.
+const mealPlanChargedInGroup = computed(() => !!d.value?.groupId)
 const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
+
+// ── #269 Extras pagados online ──────────────────────────────────────────
+// El motor público materializa upsells/amenidades como `reservation_addons` con
+// `source:'booking_engine'`: YA están dentro de `totalAmount` (no suman al pendiente) y no se
+// editan desde el CRUD manual de "Otros servicios y descuentos". Los manuales del recepcionista
+// siguen con `source:'manual'` (o sin source en filas viejas).
+const BOOKING_ENGINE_SOURCE = 'booking_engine'
+const isBookingEngineAddon = (a: ReservationDetailAddon) => a.source === BOOKING_ENGINE_SOURCE
+/** Addons que sí edita recepción (servicios/descuentos): alimentan la lista, el CRUD y el documento. */
+const manualAddons = computed(() => addons.value.filter((a) => !isBookingEngineAddon(a)))
+/** Addons del motor (upsell / child_amenity / room_amenity), sólo lectura. */
+const paidExtras = computed(() => addons.value.filter(isBookingEngineAddon))
+const PAID_EXTRA_KIND_LABELS: Record<string, string> = {
+  upsell: 'Upsell',
+  child_amenity: 'Amenidad infantil',
+  room_amenity: 'Amenidad habitación',
+  meal_plan: 'Régimen',
+}
+function paidExtraKindLabel(kind?: string | null): string {
+  return (kind && PAID_EXTRA_KIND_LABELS[kind]) || 'Extra'
+}
+/** Importe de la línea (unitario × cantidad), sin impuesto — lo que muestra la sección. */
+function paidExtraLineAmount(a: ReservationDetailAddon): number {
+  return Math.round((a.amount ?? 0) * (a.quantity ?? 1) * 100) / 100
+}
+/** `priceBreakdown` parseado: según el driver la fila llega como objeto o como string JSON. */
+const priceBreakdown = computed<ReservationPriceBreakdown | null>(() => {
+  const raw = d.value?.priceBreakdown
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try { const parsed = JSON.parse(raw); return parsed && typeof parsed === 'object' ? parsed : null } catch { return null }
+  }
+  return typeof raw === 'object' ? raw : null
+})
+const pbNum = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0)
+const paidExtrasBreakdownTotal = computed(() => {
+  const pb = priceBreakdown.value
+  return pb ? pbNum(pb.upsellsTotal) + pbNum(pb.childAmenitiesTotal) + pbNum(pb.roomAmenitiesTotal) + pbNum(pb.mealPlanTotal) : 0
+})
+/** Sección "Extras pagados": sólo si hay filas del motor o el desglose trae extras > 0. */
+const showPaidExtras = computed(() => paidExtras.value.length > 0 || paidExtrasBreakdownTotal.value > 0)
+/** Etiqueta de una línea de `priceBreakdown.upsells[]` con el factor explícito (MR-10 #275):
+ *  "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2". */
+function upsellLineLabel(u: UpsellBreakdownLine): string {
+  const parts = [u.name || 'Extra']
+  const qty = pbNum(u.quantity)
+  const nights = pbNum(u.nights)
+  if (qty > 1) parts.push(`× ${qty}`)
+  if (u.persons != null) parts.push(`× ${pbNum(u.persons)} pers.`)
+  if (nights > 1) parts.push(`× ${nights} noches`)
+  return parts.join(' ')
+}
+/** Filas del desglose de `priceBreakdown` en el orden del documento (las de importe 0 se omiten, salvo subtotal/total). */
+const priceBreakdownRows = computed(() => {
+  const pb = priceBreakdown.value
+  if (!pb) return []
+  const rows: { label: string; amount: number; negative?: boolean; strong?: boolean }[] = []
+  rows.push({ label: 'Subtotal', amount: pbNum(pb.subtotal) })
+  // MR-10 (#275): con `upsells[]` (reservas nuevas) una fila por extra con su multiplicador
+  // ("Desayuno × 2 pers. × 3 noches"); sin él (reservas viejas) la fila agregada de siempre.
+  if (pb.upsells?.length) {
+    for (const u of pb.upsells) rows.push({ label: upsellLineLabel(u), amount: pbNum(u.total) })
+  } else if (pbNum(pb.upsellsTotal) > 0) rows.push({ label: 'Extras (upsells)', amount: pbNum(pb.upsellsTotal) })
+  if (pbNum(pb.childAmenitiesTotal) > 0) rows.push({ label: 'Amenidades infantiles', amount: pbNum(pb.childAmenitiesTotal) })
+  if (pbNum(pb.roomAmenitiesTotal) > 0) rows.push({ label: 'Amenidades de habitación', amount: pbNum(pb.roomAmenitiesTotal) })
+  if (pbNum(pb.mealPlanTotal) > 0) rows.push({ label: 'Régimen', amount: pbNum(pb.mealPlanTotal) })
+  if (pbNum(pb.promoDiscount) > 0) rows.push({ label: 'Promoción', amount: -pbNum(pb.promoDiscount), negative: true })
+  for (const t of pb.taxBreakdown ?? []) {
+    rows.push({ label: `${t?.name || 'Impuesto'} (${pbNum(t?.rate)}%)`, amount: pbNum(t?.amount) })
+  }
+  if (!(pb.taxBreakdown?.length) && pbNum(pb.taxes) > 0) rows.push({ label: 'Impuestos', amount: pbNum(pb.taxes) })
+  rows.push({ label: 'Total', amount: pbNum(pb.total), strong: true })
+  return rows
+})
 const secondaryTotal = computed(() => {
   const rate = currency.value?.exchangeRate
   return rate && rate > 0 ? Math.round(grandTotal.value * rate * 100) / 100 : null
@@ -476,11 +649,26 @@ const printDocs = computed<PrintDoc[]>(() => [
   },
 ])
 // Conceptos: alojamiento + extras (addons, descuentos en negativo) + otros cargos.
+// #269 — Los extras del motor (`source:'booking_engine'`) YA viven dentro de `totalAmount`. Para
+// que el documento los muestre sin alterar el total: cada extra va como línea propia por su valor
+// con impuesto (unitario × cantidad × (1 + taxRate)) y "Alojamiento" es el RESTO
+// (`totalAmount − Σ extras`), así la suma de conceptos sigue dando exactamente `totalAmount`
+// sin depender del redondeo de `priceBreakdown` (que además es base sin impuesto y con la promo
+// aplicada sobre el conjunto). Si no hay extras del motor, el documento no cambia.
 const chargesItems = computed(() => {
   const items: { desc: string; amount: number }[] = []
   const roomLabel = d.value?.room ? `Alojamiento — Hab. ${d.value.room.number || ''} ${d.value.room.type || ''}`.trim() : 'Alojamiento'
-  items.push({ desc: `${roomLabel} · ${nights.value} noche${nights.value === 1 ? '' : 's'}`, amount: d.value?.totalAmount ?? 0 })
-  for (const a of addons.value) {
+  const engineLines = paidExtras.value.map((a) => {
+    const qty = a.quantity ?? 1
+    const gross = Math.round((a.amount ?? 0) * qty * (1 + (a.taxRate ?? 0) / 100) * 100) / 100
+    return { desc: `${a.description || paidExtraKindLabel(a.kind)}${qty > 1 ? ` (×${qty})` : ''} · pagado online`, amount: gross }
+  })
+  const engineTotal = engineLines.reduce((acc, l) => acc + l.amount, 0)
+  const total = d.value?.totalAmount ?? 0
+  const lodging = engineLines.length ? Math.round((total - engineTotal) * 100) / 100 : total
+  items.push({ desc: `${roomLabel} · ${nights.value} noche${nights.value === 1 ? '' : 's'}`, amount: lodging })
+  items.push(...engineLines)
+  for (const a of manualAddons.value) {
     const sign = a.kind === 'discount' ? -1 : 1
     const qty = a.quantity ?? 1
     items.push({ desc: (a.kind === 'discount' ? 'Descuento — ' : '') + (a.description || 'Extra') + (qty > 1 ? ` (×${qty})` : ''), amount: sign * (a.amount ?? 0) * qty })
@@ -500,8 +688,8 @@ function fmtDateTime(s?: string | null): string {
   const dt = new Date(s)
   return isNaN(dt.getTime()) ? String(s) : dt.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
-function money(n?: number): string {
-  const cur = d.value?.currency || 'USD'
+function money(n?: number, currency?: string): string {
+  const cur = currency || d.value?.currency || 'USD'
   const sym = cur === 'USD' ? 'US$' : cur === 'DOP' ? 'RD$' : cur + ' '
   return `${sym}${(n ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
@@ -520,10 +708,8 @@ function srcDot(s?: string): string {
   const m: Record<string, string> = { direct: 'bg-teal', booking: 'bg-cyan', expedia: 'bg-gold', airbnb: 'bg-coral', google: 'bg-blue-400', whatsapp: 'bg-emerald-400', agoda: 'bg-purple-400', trip: 'bg-pink-400' }
   return m[s || ''] || 'bg-white/70'
 }
-function regimeLabel(r?: string): string {
-  const m: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
-  return m[r || ''] || (r || '—')
-}
+/** MR-03 (#268) — etiqueta única en `utils/meal-plans.ts` (antes un mapa local por vista). */
+function regimeLabel(r?: string | null): string { return mealPlanLabel(r) }
 function payMethodLabel(p?: string | null): string {
   const m: Record<string, string> = { transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago', deposit: 'Depósito' }
   return m[p || ''] || (p || 'No especificado')
@@ -543,6 +729,35 @@ function childClassificationLabel(c: string): string {
 // El backend lo arma en `shared/usecases/reservation-payment-history.ts`, desde la MISMA
 // recolección con la que calcula el total — el desglose cuadra con el número de arriba.
 const paymentHistory = computed(() => d.value?.paymentHistory ?? [])
+// REQ-RWP-02 — intentos en la pasarela (Stripe/Azul…), más reciente primero. Los arma el backend
+// en `shared/usecases/payment-attempt-view.ts` desde el PaymentAttemptStore: acá no se derivan.
+const paymentAttempts = computed<PaymentAttemptView[]>(() => d.value?.paymentAttempts ?? [])
+
+function attemptKindBadge(kind?: string | null): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    checkout_created: { label: 'Checkout abierto', cls: 'bg-blue-100 text-blue-700' },
+    paid: { label: 'Pagado', cls: 'bg-teal/10 text-teal' },
+    failed: { label: 'Rechazado', cls: 'bg-coral/10 text-coral' },
+    expired: { label: 'Expirado', cls: 'bg-gray-100 text-gray-500' },
+    refunded: { label: 'Devuelto', cls: 'bg-purple/10 text-purple' },
+    pending: { label: 'Pendiente', cls: 'bg-amber-100 text-amber-700' },
+  }
+  return m[kind || ''] || { label: kind || '—', cls: 'bg-gray-100 text-gray-500' }
+}
+
+function providerLabel(p?: string | null): string {
+  const m: Record<string, string> = { stripe: 'Stripe', azul: 'Azul', cardnet: 'CardNet', paypal: 'PayPal' }
+  const key = (p || '').toLowerCase()
+  if (m[key]) return m[key]
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : '—'
+}
+
+async function copyProviderRef(ref: string) {
+  try {
+    await navigator.clipboard.writeText(ref)
+    toast.success('Referencia copiada')
+  } catch { toast.error('No se pudo copiar') }
+}
 
 function paymentStatusLabel(status?: string | null): { label: string; cls: string } {
   const m: Record<string, { label: string; cls: string }> = {
@@ -555,26 +770,16 @@ function paymentStatusLabel(status?: string | null): { label: string; cls: strin
   return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
 }
 
-// Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — badge de estado de la reserva
-// (pendiente/parcial/pagada), sourced de `d.paymentState` (backend, `shared/utils/reservation-
-// balance.ts`). NO se deriva acá de `deposit`/`totalAmount`: esa fórmula vieja (la que usaba este
-// mismo archivo antes, y la que sigue usando `Reservation.service.ts` para el listado/calendario)
-// podía decir "Pendiente" en rojo sobre una reserva ya cobrada por folio/factura en efectivo —
-// ese cobro mueve `payments`, nunca `deposit` — contradiciendo al renglón "Pendiente de cobro" de
-// la MISMA tarjeta, que sí sale de `payments`. Con el estado del backend, ambos SIEMPRE cierran.
-function paymentStateBadge(state?: string | null): { label: string; cls: string } {
-  const m: Record<string, { label: string; cls: string }> = {
-    pending: { label: 'Pendiente', cls: 'bg-coral/10 text-coral' },
-    partial: { label: 'Parcial', cls: 'bg-gold/10 text-gold' },
-    paid: { label: 'Pagada', cls: 'bg-teal/10 text-teal' },
-  }
-  return m[state || ''] || { label: '—', cls: 'bg-gray-100 text-gray-500' }
-}
-// Requerimiento 14 — si algún intento de esta reserva quedó `failed`, se avisa cerca del total:
-// el dinero cobrado (arriba) ya lo excluye correctamente, pero un intento fallido silencioso deja
-// al staff sin saber que el huésped puede necesitar reintentar el cobro. Reusa `paymentHistory`
-// (ya cargado): no es una consulta nueva ni un estado inventado.
-const hasFailedPayment = computed(() => paymentHistory.value.some((p) => p.status === 'failed'))
+// Requerimiento 14 — badge pendiente/parcial/pagada: sale de `d.paymentState` (backend) vía `@/utils/payment-state`.
+// REQ-RWP-02 — reemplaza al aviso anterior (`hasFailedPayment`), que sólo veía `payments` y nunca
+// los intentos que no terminaron en cobro (rechazado/expirado en la pasarela). Se avisa sólo si el
+// ÚLTIMO intento falló y la reserva no quedó pagada por otra vía: un fallo seguido de un cobro
+// exitoso no es aviso.
+const lastAttemptFailure = computed(() => {
+  const last = paymentAttempts.value[0]
+  if (!last || (last.kind !== 'failed' && last.kind !== 'expired') || d.value?.paymentState === 'paid') return null
+  return last
+})
 function waLink(phone?: string | null, body?: string | null): string | null {
   if (!phone) return null
   const digits = phone.replace(/\D/g, '')
@@ -586,6 +791,41 @@ function waLink(phone?: string | null, body?: string | null): string | null {
 // POST /reservas/:id/cancel, que aplica la política del hotel (penalidad/reembolso), guarda el
 // motivo y libera el depósito retenido. Con `update({status:'cancelled'})` nada de eso pasaba —
 // y el backend ahora lo rechaza con 409, así que este camino tampoco existe ya del lado servidor.
+// #272 (MR-07) — el reembolso web se dispara al cancelar; si Stripe falló queda `failed` y el
+// hotel lo reintenta desde acá. 'done'/'none' no ofrecen el botón: no hay nada que reintentar.
+// Un `pending` FRESCO (< 10 min) está en curso y tampoco; uno VIEJO quedó huérfano y el backend
+// acepta reintentarlo (`utils/refund-state.ts`, espejo del umbral del servidor). `refundCheckedAt`
+// se fija al cargar el detalle: el computed no puede depender de `Date.now()` a secas.
+const canRetryRefund = computed(() => isRefundRetryable(d.value, refundCheckedAt.value) && can('reservations', 'edit'))
+const retryRefundTitle = computed(() => d.value?.refundStatus === 'pending'
+  ? 'El reembolso quedó en proceso hace más de 10 minutos sin resolverse: vuelve a intentarlo con el mismo monto'
+  : 'El reembolso en la pasarela falló: vuelve a intentarlo con el mismo monto')
+function refundStateBadge(status?: string | null): { label: string; cls: string } | null {
+  const m: Record<string, { label: string; cls: string }> = {
+    done: { label: 'Reembolsado', cls: 'bg-teal/10 text-teal' },
+    pending: { label: 'Reembolso en proceso', cls: 'bg-amber-100 text-amber-800' },
+    failed: { label: 'Reembolso fallido', cls: 'bg-coral/10 text-coral' },
+  }
+  return m[status || ''] ?? null
+}
+const refundBadge = computed(() => d.value?.status === 'cancelled' ? refundStateBadge(d.value?.refundStatus) : null)
+
+async function retryRefund() {
+  if (!d.value) return
+  saving.value = true
+  try {
+    const res = await ReservationService.retryRefund(d.value.id)
+    if (res.refundStatus === 'done') toast.success('Reembolso procesado')
+    else toast.warning('El reembolso sigue sin completarse', 'La pasarela no lo aceptó: revisá el pago en Stripe')
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo reintentar el reembolso')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function setStatus(status: 'confirmed') {
   if (!d.value) return
   saving.value = true
@@ -618,6 +858,56 @@ const cancellable = computed<CancellableReservation | null>(() => {
 async function onCancelled() {
   showCancel.value = false
   await load()
+  emit('changed')
+}
+
+// ── #271 MR-06 — Aprobar / Rechazar desde el detalle (reserva pagada con "confirmación
+// instantánea" apagada). Mismos endpoints que los botones de la fila en pages/reservations:
+// aprobar solo mueve `approvalStatus`; rechazar cancela + reembolsa 100% por Stripe (el grupo
+// entero si tiene `groupId`) + email al huésped con el motivo. `changed` refresca al padre.
+const awaitingApproval = computed(() => d.value?.approvalStatus === 'pending')
+const approving = ref(false)
+const rejecting = ref(false)
+const showReject = ref(false)
+async function approveReservation() {
+  if (!d.value || approving.value) return
+  approving.value = true
+  try {
+    await ReservationService.approve(d.value.id)
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} aprobada`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al aprobar la reserva')
+  } finally {
+    approving.value = false
+  }
+}
+async function rejectReservation(reason: string) {
+  if (!d.value || rejecting.value) return
+  rejecting.value = true
+  try {
+    const res = await ReservationService.reject(d.value.id, reason)
+    showReject.value = false
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} rechazada · reembolsados ${money(Number(res.refundedAmount ?? 0), d.value.currency || undefined)}`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al rechazar la reserva')
+  } finally {
+    rejecting.value = false
+  }
+}
+
+/**
+ * Cobro manual guardado (REQ-RWP-06). Se recarga el detalle en silencio para que el badge
+ * `payment-state-badge`, "Pendiente de cobro" y el "Historial de cobros" (con `Registró:`)
+ * salgan del backend recalculado; `changed` refresca el listado del padre. No se toca
+ * `deposit` desde acá: el anticipo es un dato de la reserva y el cobro vive en `payments`.
+ */
+async function onMarkPaid() {
+  showMarkPaid.value = false
+  await load({ silent: true })
   emit('changed')
 }
 
@@ -897,15 +1187,80 @@ function printAs(mode: PrintMode) {
 
 function editar() { if (d.value) emit('edit', d.value) }
 
-/**
- * Camino a la emisión REAL de la factura. Este modal NO emite facturas a propósito: la numeración
- * (invoice number + NCF) es política contable y vive en el módulo Facturación — fabricarla acá
- * abriría un hueco en el numerador y dejaría el libro de ventas sin respaldo.
- * Desde el folio de la reserva: cerrar folio → emitir factura (POST /api/folios/:id/invoice).
- */
-function irAFacturacion() {
-  emit('close')
-  router.push('/panel/finanzas/facturacion')
+// ── Facturas (REQ-FDR-02/03, #254) ──
+// Las facturas ya emitidas de la reserva vienen en `d.invoices` (más reciente primero). Imprimir /
+// PDF / Email son las mismas acciones de /panel/billing (`useInvoiceActions`); emitir es
+// `POST /api/reservas/:id/invoice`: el backend controla el numerador (número + NCF) y vincula los
+// pagos ya registrados — este modal no fabrica numeración por su cuenta.
+const {
+  printFrame, printInvoice, downloadPdf,
+  showEmailModal, emailTarget, emailTo, emailError, sendingEmail,
+  openEmailModal, closeEmailModal, confirmEmail,
+} = useInvoiceActions()
+
+const invoicesCard = ref<HTMLElement | null>(null)
+const issuing = ref(false)
+
+function invoiceStatusBadge(status?: string): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    pending: { label: 'Pendiente', cls: 'bg-amber-100 text-amber-800' },
+    paid: { label: 'Pagada', cls: 'bg-teal/10 text-teal' },
+    overdue: { label: 'Vencida', cls: 'bg-coral/10 text-coral' },
+    cancelled: { label: 'Anulada', cls: 'bg-gray-100 text-gray-500' },
+    draft: { label: 'Borrador', cls: 'bg-gray-100 text-gray-500' },
+  }
+  return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
+}
+
+/** Una nota de crédito resta: se muestra en negativo para que el total de la tarjeta se lea sin sumar mentalmente. */
+function invoiceAmount(inv: ReservationInvoiceView): string {
+  if (inv.type === 'credit_note') return `-${money(Math.abs(inv.amount), inv.currency)}`
+  return money(inv.amount, inv.currency)
+}
+
+function scrollToInvoices() {
+  const el = invoicesCard.value
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
+  onDone: async () => {
+    toast.success('Factura emitida')
+    await load({ silent: true })
+    emit('changed')
+    await nextTick()
+    scrollToInvoices()
+  },
+  onError: async (e) => {
+    // 409: la reserva ya tenía factura (otro operador la emitió mientras este modal estaba abierto).
+    // No es un error del usuario: se recarga y se muestra la existente en la tarjeta.
+    if (e instanceof ApiError && e.status === 409) {
+      toast.warning('Ya tiene factura')
+      await load({ silent: true })
+      await nextTick()
+      scrollToInvoices()
+      return
+    }
+    toast.error((e as Error)?.message || 'No se pudo emitir la factura')
+  },
+})
+
+/** Botón "Facturar": si ya hay factura, muestra la existente; si no, confirma y emite. */
+function facturar() {
+  if (!d.value) return
+  if (d.value.invoices?.length) { scrollToInvoices(); return }
+  const total = d.value.chargeableTotal ?? d.value.totalAmount ?? 0
+  const guestName = d.value.guest?.name || 'el huésped'
+  askConfirm({
+    title: 'Emitir factura',
+    message: `Se emitirá la factura por ${money(total, d.value.currency || undefined)} a nombre de ${guestName}. Los pagos ya registrados quedan vinculados.`,
+    confirmLabel: 'Facturar',
+    run: async () => {
+      if (!d.value) return
+      issuing.value = true
+      try { await ReservationService.issueInvoice(d.value.id) } finally { issuing.value = false }
+    },
+  })
 }
 </script>
 
@@ -933,13 +1288,20 @@ function irAFacturacion() {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
+        <!-- #272 (MR-07) — el reembolso web quedó `failed` en Stripe (o `pending` huérfano hace más
+             de 10 min): se reintenta desde acá (POST /reservas/:id/retry-refund). Con 'done' o un
+             'pending' fresco el botón no existe. -->
+        <button v-if="canRetryRefund" data-testid="retry-refund" @click="retryRefund" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-amber-500 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50" :title="retryRefundTitle">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+          {{ saving ? 'Reintentando…' : 'Reintentar reembolso' }}
+        </button>
         <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
           Cargos
         </button>
-        <button v-if="can('billing','view')" @click="irAFacturacion" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Emitir la factura con numeración fiscal desde el módulo Facturación">
+        <button v-if="can('billing','create')" data-testid="invoice-issue-button" @click="facturar" :disabled="issuing" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20 disabled:opacity-50" title="Emitir la factura con numeración fiscal (si ya tiene, muestra la existente)">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
-          Facturar
+          {{ issuing ? 'Facturando…' : 'Facturar' }}
         </button>
         <button v-if="can('reservations','edit')" @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.932zM19.5 21H4.5a1.5 1.5 0 01-1.5-1.5V6a1.5 1.5 0 011.5-1.5h9"/></svg>
@@ -951,6 +1313,29 @@ function irAFacturacion() {
     <!-- ═══ BODY: masonry de una sola vista (sin pasos, sin columnas fijas) — las tarjetas
          fluyen para no dejar huecos cuando una condicional no aplica (área de impresión) ═══ -->
     <div v-if="d" :class="'print-' + printMode">
+      <!-- #271 MR-06 — franja de revisión: la reserva está pagada y ocupa la habitación, pero el
+           hotel todavía no la aprobó ni rechazó (confirmación instantánea apagada). -->
+      <div v-if="awaitingApproval && can('reservations','edit')" data-testid="modal-approval-strip"
+        class="print:hidden flex items-center justify-between gap-3 flex-wrap bg-gold/10 border-b-2 border-gold/40 px-5 py-3">
+        <div class="flex items-center gap-2.5">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
+            <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
+          </span>
+          <span class="text-xs text-text-secondary">Reserva pagada pendiente de tu revisión: si la rechazás se reembolsa todo por Stripe.</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button data-testid="modal-approve" @click="approveReservation" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-gold/15 text-gold rounded-lg text-xs font-bold cursor-pointer hover:bg-gold/25 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+            {{ approving ? 'Aprobando…' : 'Aprobar' }}
+          </button>
+          <button data-testid="modal-reject" @click="showReject = true" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-coral/10 text-coral rounded-lg text-xs font-bold cursor-pointer hover:bg-coral/20 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            {{ rejecting ? 'Rechazando…' : 'Rechazar' }}
+          </button>
+        </div>
+      </div>
       <div class="rm-cards rm-print-area p-5 columns-1 lg:columns-2 lg:gap-5">
 
             <!-- Datos de la Reserva -->
@@ -1032,12 +1417,36 @@ function irAFacturacion() {
                 <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
               </summary>
               <div class="px-4 pb-4 pt-1 space-y-3 text-sm">
-                <div v-if="d.room">
-                  <div class="font-bold text-navy">Habitación {{ d.room.number }} <span class="text-text-muted font-normal">{{ d.room.name || d.room.type }}</span></div>
-                  <div class="text-xs text-text-muted">Asignada: ({{ fmtDate(d.checkIn) }})</div>
+                <!-- REQ-HAC-06 (#261) — tipo vendido + unidad asignada (o "Sin asignar") con
+                     quién/cuándo la asignó. Asignar / Cambiar abren RoomAssignModal. -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 space-y-0.5">
+                    <div class="text-xs"><span class="text-text-muted">Tipo:</span> <span class="font-bold text-navy" data-testid="room-type-label">{{ typeLabel(d.roomType || d.room?.type) }}</span></div>
+                    <div v-if="d.room" class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span> <span class="font-bold text-navy" data-testid="room-number">{{ d.room.number }}</span>
+                      <span v-if="d.room.name" class="text-text-muted text-xs ml-1">{{ d.room.name }}</span>
+                      <span v-if="d.roomAssignedAt" data-testid="room-assigned-meta" class="block text-[11px] text-text-muted">(asignada el {{ fmtDateTime(d.roomAssignedAt) }} por {{ assignedByName }})</span>
+                    </div>
+                    <div v-else class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span>
+                      <span data-testid="room-unassigned" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                        <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"></span>Sin asignar
+                      </span>
+                    </div>
+                  </div>
+                  <template v-if="canAssignRoom">
+                    <button v-if="!d.room" type="button" data-testid="assign-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 bg-navy text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-navy-light disabled:opacity-50">
+                      Asignar habitación
+                    </button>
+                    <button v-else type="button" data-testid="change-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 border border-border text-navy rounded-lg text-xs font-bold cursor-pointer hover:bg-surface disabled:opacity-50">
+                      Cambiar
+                    </button>
+                  </template>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
-                  <div><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(d.regime) }}</span></div>
+                  <div data-testid="reservation-meal-plan"><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(mealPlanCode) }}</span><span v-if="mealPlanDetail" class="text-text-muted">{{ mealPlanDetail }}</span></div>
                   <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span>
                     <!-- Requerimiento 13 — desglose por niño (declarada/efectiva/balde) del backend
                          (`childrenAgesDetail`): reemplaza la nota genérica "alguna cuenta como
@@ -1092,13 +1501,18 @@ function irAFacturacion() {
                      `deposit` a secas: ver el comentario de `paymentStateBadge` en el script). -->
                 <span data-testid="payment-state-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full" :class="paymentStateBadge(d.paymentState).cls">{{ paymentStateBadge(d.paymentState).label }}</span>
               </div>
-              <p v-if="hasFailedPayment" class="mb-2 text-[11px] leading-tight text-coral bg-coral/5 rounded px-2 py-1.5" data-testid="failed-payment-warning">
-                Hay un intento de cobro fallido en el historial — no se contó como pagado, puede necesitar reintentarse.
+              <!-- REQ-RWP-02 — aviso ámbar si el último intento en la pasarela no terminó en cobro. -->
+              <p v-if="lastAttemptFailure" class="mb-2 text-[11px] leading-tight text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="failed-payment-warning">
+                El último intento de cobro no se completó ({{ lastAttemptFailure.failureMessage || attemptKindBadge(lastAttemptFailure.kind).label }}). El huésped puede reintentar desde el correo de recuperación o usted puede generar un link de pago.
               </p>
               <div class="space-y-1.5 text-sm">
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
+                <!-- MR-03 (#268) — importe del régimen reservado en la web (snapshot `mealPlan`, lo que se
+                     cobró — por eso lleva SU código y no el editable). En grupo se cobró con el total del
+                     grupo, no con el importe de esta fila. -->
+                <div v-if="mealPlanTotal > 0" data-testid="reservation-meal-plan-total" class="flex justify-between pl-2 text-xs"><span class="text-text-muted">Régimen · {{ regimeLabel(d.mealPlan) }}<span v-if="mealPlanChargedInGroup" data-testid="reservation-meal-plan-group-note"> · cobrado con el total del grupo (reserva principal)</span></span><span class="font-bold text-text-secondary">{{ money(mealPlanTotal) }}</span></div>
                 <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold text-navy">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">
@@ -1112,6 +1526,15 @@ function irAFacturacion() {
                   <span v-else class="font-bold text-navy">{{ money(otherCharges) }}</span>
                 </div>
                 <div class="flex justify-between border-t border-border/50 pt-1.5"><span class="font-bold text-text-secondary">Pendiente de cobro</span><span class="font-black" :class="pending > 0 ? 'text-coral' : 'text-teal'">{{ money(pending) }}</span></div>
+                <!-- #272 (MR-07) — reserva cancelada desde la web: monto a devolver y estado REAL del
+                     reembolso en la pasarela (no se infiere: lo persiste el backend). -->
+                <div v-if="refundBadge" class="flex justify-between items-center gap-2" data-testid="refund-row">
+                  <span class="text-text-muted">Reembolso</span>
+                  <span class="flex items-center gap-2">
+                    <span v-if="Number(d.refundAmount) > 0" class="font-bold text-navy">{{ money(Number(d.refundAmount)) }}</span>
+                    <span data-testid="refund-state-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="refundBadge.cls">{{ refundBadge.label }}</span>
+                  </span>
+                </div>
                 <div v-if="credit > 0" data-testid="reservation-credit" class="flex justify-between"><span class="font-bold text-teal">A favor del huésped</span><span class="font-black text-teal">{{ money(credit) }}</span></div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
                 <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link
@@ -1123,6 +1546,13 @@ function irAFacturacion() {
                 <p v-if="paymentLinkOutdated" class="text-[11px] leading-tight text-coral">
                   El link vigente es por {{ money(openPaymentAmount) }} y el saldo es {{ money(pending) }}: al generarlo de nuevo se actualiza a {{ money(pending) }}.
                 </p>
+                <!-- REQ-RWP-06 (#249): cobro manual YA recibido fuera de Stripe (efectivo /
+                     transferencia / tarjeta en mostrador). Entra a `payments` con quién lo registró;
+                     antes se "confirmaba" cambiando el status y la plata no quedaba en ningún lado. -->
+                <button v-if="can('billing','create')" data-testid="mark-paid-button" @click="showMarkPaid = true" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-teal text-white rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                  Registrar pago
+                </button>
                 <button v-if="can('billing','create')" @click="requirePayment" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 6.75h19.5A1.5 1.5 0 0123.25 8.25v9a1.5 1.5 0 01-1.5 1.5H2.25a1.5 1.5 0 01-1.5-1.5v-9a1.5 1.5 0 011.5-1.5zM6 15h3"/></svg>
                   Crear link de pago Stripe
@@ -1155,6 +1585,40 @@ function irAFacturacion() {
                 <div v-else class="mt-2 text-xs text-text-muted italic">Todavía no se registró ningún cobro para esta reserva.</div>
               </details>
 
+              <!-- REQ-RWP-02 — Pasarela de pago: cada intento (checkout, pago, rechazo, expiración,
+                   devolución) con tarjeta, referencia del proveedor y links al dashboard/recibo. -->
+              <details class="mt-3 pt-3 border-t border-teal/20" data-testid="payment-attempts" open>
+                <summary class="text-xs font-black text-navy cursor-pointer select-none flex items-center gap-1.5">
+                  Pasarela de pago
+                  <span v-if="paymentAttempts.length" class="text-[10px] font-bold text-text-muted">({{ paymentAttempts.length }})</span>
+                </summary>
+                <div v-if="paymentAttempts.length" class="mt-2 space-y-2">
+                  <div v-for="a in paymentAttempts" :key="a.id" class="rounded-lg border border-border/60 bg-surface px-2.5 py-2" data-testid="payment-attempt-row">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-xs font-black tabular-nums text-navy">{{ money(a.amount) }} <span class="text-[10px] font-bold text-text-muted">{{ a.currency }}</span></span>
+                      <span class="flex items-center gap-1 shrink-0">
+                        <span v-if="a.mode === 'test'" class="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-100 text-gray-500 uppercase">test</span>
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" :class="attemptKindBadge(a.kind).cls">{{ attemptKindBadge(a.kind).label }}</span>
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 mt-0.5">
+                      <span class="text-[11px] text-text-secondary font-bold">{{ providerLabel(a.provider) }}<template v-if="a.cardBrand || a.cardLast4"> · {{ a.cardBrand }} ····{{ a.cardLast4 }}</template></span>
+                      <span class="text-[10px] text-text-muted">{{ fmtDateTime(a.occurredAt) }}</span>
+                    </div>
+                    <div v-if="a.kind === 'failed' && a.failureMessage" class="text-[11px] text-coral font-bold mt-0.5" data-testid="payment-attempt-failure">{{ a.failureMessage }}</div>
+                    <div v-if="a.providerRef" class="flex items-center gap-1.5 mt-0.5 min-w-0">
+                      <code class="font-mono text-[10px] text-text-muted truncate" :title="a.providerRef">{{ a.providerRef }}</code>
+                      <button type="button" @click="copyProviderRef(a.providerRef)" class="text-[10px] font-bold text-teal hover:underline shrink-0" data-testid="payment-attempt-copy">Copiar</button>
+                    </div>
+                    <div v-if="a.dashboardUrl || a.receiptUrl" class="flex items-center gap-3 mt-1">
+                      <a v-if="a.dashboardUrl" :href="a.dashboardUrl" target="_blank" rel="noopener noreferrer" class="text-teal font-bold text-[10px] hover:underline">Ver en Stripe</a>
+                      <a v-if="a.receiptUrl" :href="a.receiptUrl" target="_blank" rel="noopener noreferrer" class="text-teal font-bold text-[10px] hover:underline">Recibo</a>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-xs text-text-muted italic">Esta reserva no pasó por la pasarela.</div>
+              </details>
+
               <!-- Movimientos del folio (inline) -->
               <div v-if="folioCharges" class="mt-3 pt-3 border-t border-teal/20">
                 <div class="text-xs font-black text-navy mb-1">Movimientos de caja</div>
@@ -1162,6 +1626,48 @@ function irAFacturacion() {
                   <div v-for="(c, i) in folioCharges" :key="i" class="flex justify-between"><span class="truncate">{{ c.description || '—' }}</span><span class="font-bold" :class="c.kind === 'payment' ? 'text-teal' : 'text-navy'">{{ money(c.amount) }}</span></div>
                 </div>
                 <div v-else class="text-xs text-text-muted italic">Sin movimientos</div>
+              </div>
+            </div>
+
+            <!-- Facturas (REQ-FDR-03, #254): las facturas ya emitidas de ESTA reserva (`d.invoices`),
+                 con las mismas acciones que /panel/billing. Sin factura: el botón emite de verdad. -->
+            <div ref="invoicesCard" data-testid="invoices-card" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-navy/60 rounded-2xl p-4 shadow-card">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
+                <span class="w-7 h-7 rounded-lg bg-navy/10 flex items-center justify-center text-navy"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg></span>
+                <h4 class="text-sm font-black text-navy">Facturas</h4>
+                <span v-if="d.invoices?.length" class="ml-auto text-[10px] font-bold text-text-muted">({{ d.invoices.length }})</span>
+              </div>
+              <div v-if="d.invoices?.length" class="space-y-2">
+                <div v-for="inv in d.invoices" :key="inv.id" class="rounded-lg border border-border/60 bg-surface px-2.5 py-2" data-testid="invoice-row">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs font-black text-navy truncate" :title="inv.ncf ? `NCF ${inv.ncf}` : undefined">{{ inv.number }}</span>
+                    <span class="flex items-center gap-1 shrink-0">
+                      <span v-if="inv.type === 'credit_note'" class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple/10 text-purple">Nota de crédito</span>
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" :class="invoiceStatusBadge(inv.status).cls">{{ invoiceStatusBadge(inv.status).label }}</span>
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between gap-2 mt-0.5">
+                    <span class="text-[10px] text-text-muted">{{ fmtDate(inv.issuedAt) }}</span>
+                    <span class="text-xs font-black tabular-nums" :class="inv.type === 'credit_note' ? 'text-purple' : 'text-navy'">{{ invoiceAmount(inv) }}</span>
+                  </div>
+                  <!-- NC: el backend la crea con amountPaid=0 → balance=amount, pero no es deuda por cobrar; no se muestra saldo. -->
+                  <div v-if="inv.type !== 'credit_note'" class="flex items-center justify-between gap-2 mt-0.5">
+                    <span class="text-[10px] text-text-muted">Saldo</span>
+                    <span class="text-[11px] font-bold tabular-nums" :class="inv.balance > 0 ? 'text-coral' : 'text-teal'">{{ money(inv.balance, inv.currency) }}</span>
+                  </div>
+                  <div v-if="can('billing','view')" class="flex items-center gap-3 mt-1.5">
+                    <button type="button" data-testid="invoice-print" @click="printInvoice(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">Imprimir</button>
+                    <button type="button" data-testid="invoice-pdf" @click="downloadPdf(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">PDF</button>
+                    <button type="button" data-testid="invoice-email" @click="openEmailModal(inv)" class="text-[10px] font-bold text-teal hover:underline cursor-pointer">Email</button>
+                  </div>
+                </div>
+              </div>
+              <div v-else>
+                <p class="text-xs text-text-muted italic">Esta reserva todavía no tiene factura.</p>
+                <button v-if="can('billing','create')" data-testid="invoice-issue-empty" @click="facturar" :disabled="issuing" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-navy text-white rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+                  {{ issuing ? 'Facturando…' : 'Facturar' }}
+                </button>
               </div>
             </div>
 
@@ -1199,6 +1705,33 @@ function irAFacturacion() {
               </div>
             </div>
 
+            <!-- #269 Extras pagados online (motor de reservas): sólo lectura, ya incluidos en el total -->
+            <div v-if="showPaidExtras" data-testid="paid-extras" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-teal/60 rounded-2xl p-4 shadow-card">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
+                <span class="w-7 h-7 rounded-lg bg-teal/10 flex items-center justify-center text-teal"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg></span>
+                <h4 class="text-sm font-black text-navy">Extras pagados</h4>
+                <span class="ml-auto text-[10px] text-text-muted">Incluidos en el total de la reserva</span>
+              </div>
+              <div class="space-y-1.5 text-sm" :class="priceBreakdownRows.length ? 'mb-3' : ''">
+                <div v-for="a in paidExtras" :key="a.id" class="flex justify-between items-center gap-2" data-testid="paid-extra-line">
+                  <span class="flex items-center gap-1.5 min-w-0">
+                    <span class="truncate">{{ a.description || paidExtraKindLabel(a.kind) }}<span v-if="(a.quantity ?? 1) > 1" class="text-text-muted"> ×{{ a.quantity }}</span></span>
+                    <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple/10 text-purple">{{ paidExtraKindLabel(a.kind) }}</span>
+                    <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal/10 text-teal">Pagado online</span>
+                  </span>
+                  <span class="font-bold text-navy shrink-0">{{ money(paidExtraLineAmount(a)) }}</span>
+                </div>
+                <div v-if="!paidExtras.length" class="text-xs text-text-muted italic">El desglose trae extras pero la reserva aún no tiene las líneas materializadas (pendiente de backfill)</div>
+              </div>
+              <div v-if="priceBreakdownRows.length" class="pt-2 border-t border-border/50 space-y-1 text-xs" data-testid="price-breakdown">
+                <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Desglose del motor</div>
+                <div v-for="(r, i) in priceBreakdownRows" :key="i" class="flex justify-between gap-2" :class="r.strong ? 'pt-1 border-t border-border/50 text-sm font-black text-navy' : ''">
+                  <span :class="r.strong ? '' : 'text-text-secondary'">{{ r.label }}</span>
+                  <span class="font-bold tabular-nums" :class="r.negative ? 'text-coral' : 'text-navy'">{{ money(r.amount) }}</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Otros servicios y descuentos -->
             <div class="rm-card bg-white border border-border/70 border-l-[3px] border-l-purple/60 rounded-2xl p-4 shadow-card">
               <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
@@ -1206,7 +1739,7 @@ function irAFacturacion() {
                 <h4 class="text-sm font-black text-navy">Otros servicios y descuentos</h4>
               </div>
               <div class="space-y-1.5 text-sm mb-3">
-                <div v-for="a in addons" :key="a.id" class="flex justify-between items-center gap-2">
+                <div v-for="a in manualAddons" :key="a.id" class="flex justify-between items-center gap-2">
                   <span class="truncate">
                     <span v-if="a.kind === 'discount'" class="text-coral font-bold">−</span>
                     <span v-else class="text-teal font-bold">+</span>
@@ -1219,7 +1752,7 @@ function irAFacturacion() {
                     </button>
                   </span>
                 </div>
-                <div v-if="!addons.length" class="text-xs text-text-muted italic">Sin servicios adicionales</div>
+                <div v-if="!manualAddons.length" class="text-xs text-text-muted italic">Sin servicios adicionales</div>
               </div>
               <div v-if="can('reservations','edit')" class="flex gap-2">
                 <input v-model="newAddon.description" type="text" placeholder="Descripción" class="flex-1 px-2 py-1.5 rounded-lg border border-border text-xs" @keyup.enter="addAddon" />
@@ -1704,11 +2237,62 @@ function irAFacturacion() {
   <CancelReservationModal :open="showCancel" :reservation="cancellable"
     @close="showCancel = false" @cancelled="onCancelled" />
 
+  <!-- #271 MR-06 — Rechazar (reserva pendiente de aprobación): apilado igual que Anular. Motivo
+       libre (≥10, lo lee el huésped por email) y monto a reembolsar a la vista antes de confirmar. -->
+  <RejectReservationModal v-if="showReject && d" :guest-name="d.guest?.name ?? ''" :refund-amount="Number(d.paidAmount ?? 0)"
+    :currency="d.currency || undefined" :is-group="!!d.groupId" :loading="rejecting"
+    @confirm="rejectReservation" @close="showReject = false" />
+
+  <!-- Registrar pago manual (REQ-RWP-06, #249): apilado igual que Anular. Al guardar se recarga
+       el detalle (badge de pago + "Historial de cobros" con quién lo registró) y se avisa al
+       listado. `pending` sale del backend: el modal lo usa de tope y valor inicial. -->
+  <MarkPaidModal :open="showMarkPaid" :reservation-id="d?.id ?? ''" :pending="pending" :currency="d?.currency || undefined"
+    @close="showMarkPaid = false" @paid="onMarkPaid" />
+
+  <!-- Emitir factura (REQ-FDR-02, #254): confirmación estilada antes del POST /reservas/:id/invoice. -->
+  <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
+    :confirm-label="confirmModal.confirmLabel" :loading="confirmBusy" @confirm="runConfirm" @close="confirmModal = null" />
+
+  <!-- Enviar factura por email (mismo form que /panel/billing; la lógica vive en useInvoiceActions). -->
+  <AppModal v-if="showEmailModal && emailTarget" size="md"
+    :title="`Enviar factura #${emailTarget.number}`" @close="closeEmailModal">
+    <form class="space-y-4" @submit.prevent="confirmEmail">
+      <div>
+        <label for="rm-email-to" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email del destinatario</label>
+        <input
+          id="rm-email-to"
+          v-model.trim="emailTo"
+          type="email"
+          autocomplete="email"
+          placeholder="huesped@ejemplo.com"
+          class="w-full rounded-xl border px-4 py-2.5 text-sm transition-colors focus:outline-none"
+          :class="emailError ? 'border-red-400 focus:border-red-500' : 'border-border focus:border-navy'"
+          @input="emailError = ''"
+        />
+        <p v-if="emailError" class="mt-2 text-xs font-bold text-red-500">{{ emailError }}</p>
+      </div>
+    </form>
+    <template #footer>
+      <button @click="closeEmailModal" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
+      <button @click="confirmEmail" :disabled="sendingEmail || !emailTo"
+        class="rounded-full bg-teal px-5 py-2.5 text-sm font-extrabold text-white hover:bg-teal-light transition-colors cursor-pointer disabled:opacity-50">
+        {{ sendingEmail ? 'Enviando…' : 'Enviar' }}
+      </button>
+    </template>
+  </AppModal>
+
+  <!-- Iframe oculto para Imprimir factura (useInvoiceActions.printFrame). -->
+  <iframe ref="printFrame" class="hidden" style="position:absolute;width:0;height:0;border:0;"></iframe>
+
   <!-- Gestor completo de la cerradura de la habitación de esta reserva (se teletransporta a
        body, no afecta el layout del detalle). Se monta on-demand y refresca el detalle al
        cambiar algo (código generado / cerradura asignada). -->
   <RoomLockModal v-if="showRoomLockManager && d" :room-id="d.roomId ?? null" :room-number="String(d.room?.number ?? '')"
     :reservation-id="d.id" @close="showRoomLockManager = false" @changed="onRoomLockChanged" />
+
+  <!-- REQ-HAC-06 (#261) — asignar / cambiar la unidad concreta de la reserva (apilado como Anular). -->
+  <RoomAssignModal v-if="d" :open="showRoomAssign" :reservation-id="d.id" :room-type="d.roomType || d.room?.type || null"
+    :current-room-id="d.roomId || null" @close="showRoomAssign = false" @assigned="onRoomAssigned" />
 
   <!-- Loading -->
   <Teleport to="body">

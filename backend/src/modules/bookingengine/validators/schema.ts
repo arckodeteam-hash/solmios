@@ -9,7 +9,10 @@ import type { BodyRule } from '../../../shared/validators/validate-body'
 
 // ─── Config (admin) ────────────────────────────────────
 
-export const UpdateBookingConfigSchema: Record<string, ValidationRule> = {
+// `BodyRule` (no `ValidationRule`): `pendingTtlMinutes` usa `integer` del shared, que
+// rechaza `7.5` y `"60"` y acota con min/max. El controller valida este schema con el
+// `validateSchema` del shared.
+export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   enabled: { type: 'boolean' as const },
   theme: { type: 'string' as const },
   position: { type: 'string' as const },
@@ -23,6 +26,10 @@ export const UpdateBookingConfigSchema: Record<string, ValidationRule> = {
   whatsappConfirmation: { type: 'boolean' as const },
   instantConfirmation: { type: 'boolean' as const },
   stripeAccountId: { type: 'string' as const },
+  // #266 — Minutos para completar el pago de una reserva web (15–1440; default 60).
+  pendingTtlMinutes: { type: 'integer' as const, min: 15, max: 1440, message: 'pendingTtlMinutes debe ser un entero entre 15 y 1440' },
+  // #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168; default 24).
+  approvalDeadlineHours: { type: 'integer' as const, min: 1, max: 168, message: 'approvalDeadlineHours debe ser un entero entre 1 y 168' },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────
@@ -65,6 +72,10 @@ export const CreatePublicBookingSchema: Record<string, ValidationRule> = {
   // Tarea 22 (Cuna, 2026-09-09) — escalares simples, el framework los valida sin problema.
   needsCrib: { type: 'boolean' as const },
   cribCount: { type: 'number' as const, min: 0 },
+  // MR-03 (#268) — código del régimen elegido ('room_only' | 'breakfast' | 'half_board' |
+  // 'all_inclusive'); el usecase lo resuelve contra `meal_plans` del hotel (precio del server).
+  // En el flujo de grupo va DENTRO de `rooms[]` (se normaliza en el usecase, no acá).
+  mealPlan: { type: 'string' as const, max: 40 },
 }
 
 // ─── Eventos ────────────────────────────────────────────
@@ -179,27 +190,9 @@ export const UpdateUpsellSchema: Record<string, BodyRule> = {
 export const UpsertMealPlanSchema: Record<string, BodyRule> = {
   active: { type: 'boolean' as const },
   priceMode: { type: 'string' as const },
-  price: { type: 'number' as const },
-}
-
-// ─── Amenidades para niños/bebés (REQ-01, #233) ────────────────────────────
-// Mismo patrón que upsells: tipos primitivos acá, `name` vacío tras trim y `price` finito los
-// re-valida el usecase (child-amenities-crud.ts). Sin `description` ni `kind` a propósito.
-
-/** POST /api/child-amenities — alta de amenidad. */
-export const CreateChildAmenitySchema: Record<string, BodyRule> = {
-  name: { type: 'string' as const, required: true, max: 100 },
-  price: { type: 'number' as const, required: true, min: 0 },
-  active: { type: 'boolean' as const },
-  sortOrder: { type: 'number' as const, min: 0 },
-}
-
-/** PUT /api/child-amenities/:id — edición (partial). */
-export const UpdateChildAmenitySchema: Record<string, BodyRule> = {
-  name: { type: 'string' as const, max: 100 },
+  // `min: 0` acá → 400 en el borde (el usecase lo vuelve a chequear, pero un precio negativo no
+  // tiene por qué llegar hasta él).
   price: { type: 'number' as const, min: 0 },
-  active: { type: 'boolean' as const },
-  sortOrder: { type: 'number' as const, min: 0 },
 }
 
 // ─── Calendario público de tarifas ─────────────────────────────────────────

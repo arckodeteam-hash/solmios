@@ -1,7 +1,7 @@
 import { http } from './http'
 import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
-  ReservationApiRecord as RawReservation,
+  ReservationApiRecord as RawReservation, AssignableRoom, ChildAmenitySnapshot,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
   CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
 } from '@/types'
@@ -14,6 +14,17 @@ export type {
   CancelPreview, CancelReservationInput, CancelPolicySource, StayQuote,
 } from '@/types'
 
+/** Medio por el que entró un cobro manual (REQ-RWP-06). */
+export type MarkPaidMethod = 'cash' | 'transfer' | 'card' | 'other'
+
+/** Body de `POST /reservas/:id/mark-paid`. `reference` es obligatoria para transfer/card. */
+export interface MarkPaidInput {
+  method: MarkPaidMethod
+  amount: number
+  reference?: string
+  note?: string
+}
+
 export const STATUS_MAP: Record<string, ReservationStatus> = {
   pendiente: 'pending', pending: 'pending',
   confirmada: 'confirmed', confirmed: 'confirmed',
@@ -24,6 +35,7 @@ export const STATUS_MAP: Record<string, ReservationStatus> = {
 
 const SOURCE_MAP: Record<string, ReservationSource> = {
   direct: 'direct', directa: 'direct',
+  web: 'web',
   phone: 'phone',
   whatsapp: 'whatsapp',
   booking: 'booking', 'booking.com': 'booking',
@@ -32,6 +44,40 @@ const SOURCE_MAP: Record<string, ReservationSource> = {
   airbnb: 'airbnb',
   google: 'google',
   other: 'other',
+}
+
+/** #274 — `Reservations.childAmenities` es un snapshot json; según el driver llega como array o
+ *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`.
+ *  #292 — el catálogo global de amenidades infantiles se dio de baja (la cuna es la amenidad de
+ *  habitación `custom:cuna`); las reservas nuevas lo persisten en `[]`. Este lector se conserva
+ *  SOLO para reservas históricas que lo tengan cargado. */
+export function parseChildAmenities(value: unknown): ChildAmenitySnapshot[] | null {
+  let list: unknown = value
+  if (typeof value === 'string') {
+    if (!value.trim()) return null
+    try { list = JSON.parse(value) } catch { return null }
+  }
+  if (!Array.isArray(list)) return null
+  return list
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && typeof (a as any).name === 'string' && String((a as any).name).trim() !== '')
+    .map((a) => ({
+      id: typeof a.id === 'string' ? a.id : undefined,
+      name: String(a.name).trim(),
+      price: typeof a.price === 'number' ? a.price : undefined,
+      quantity: Math.max(1, Number(a.quantity) || 1),
+      total: typeof a.total === 'number' ? a.total : undefined,
+    }))
+}
+
+/** #274 — Texto del tooltip del badge de cuna (dashboard y listado de reservas): `Cuna ×N` si la
+ *  reserva pidió cuna y cada amenidad infantil como `nombre ×cantidad`, unidos con ' · '.
+ *  Misma lectura que `housekeeping/usecases/arrival-setup.ts` (`buildSetupItems`). '' = nada que
+ *  preparar (el badge no se muestra). */
+export function childSetupSummary(r: { needsCrib?: boolean | null; cribCount?: number | null; childAmenities?: unknown }): string {
+  const parts: string[] = []
+  if (r.needsCrib) parts.push(`Cuna ×${Math.max(1, Number(r.cribCount) || 1)}`)
+  for (const a of parseChildAmenities(r.childAmenities) ?? []) parts.push(`${a.name} ×${a.quantity}`)
+  return parts.join(' · ')
 }
 
 export function mapReservation(r: RawReservation): Reservation {
@@ -48,10 +94,16 @@ export function mapReservation(r: RawReservation): Reservation {
     childrenAges: r.childrenAges,
     groupId: r.groupId ?? undefined,
     status,
-    source: SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other',
+    // REQ-RWP-04 — `source` del backend distingue la reserva del widget web ('web') de la cargada
+    // por recepción ('direct'); `channel` sigue siendo 'direct' en ambas, por eso no alcanza solo.
+    source: r.source === 'web' ? 'web' : (SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other'),
     totalAmount: r.totalAmount,
     depositAmount: r.deposit ?? 0,
-    paymentStatus: (r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending',
+    // El listado ya trae el estado real de cobro desde `payments` (backend, `paymentState`). La
+    // fórmula deposit-vs-total queda SOLO como fallback para respuestas que no lo traen.
+    paymentStatus: r.paymentState ?? ((r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending'),
+    paymentState: r.paymentState,
+    paidAmount: r.paidAmount,
     roomNumber: r.roomNumber,
     roomType: r.roomType,
     guestName: r.guestName,
@@ -60,17 +112,69 @@ export function mapReservation(r: RawReservation): Reservation {
     // realmente aplicó (el del preview es una cotización anterior).
     cancellationFee: r.cancellationFee,
     refundAmount: r.refundAmount,
+    // #272 (MR-07) — estado real del reembolso en la pasarela (ausente en respuestas viejas).
+    refundStatus: r.refundStatus ?? undefined,
+    refundedAt: r.refundedAt ?? undefined,
+    refundPaymentId: r.refundPaymentId ?? undefined,
     // Tarea 3.4 (corrección 2026-08-25) — bug real de QA: este allow-list no lo declaraba y
     // `pages/reservations/index.vue:load()` lee `r.approvalStatus` del objeto YA mapeado acá,
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
+    // MR-03 (#268) — régimen: `regime` (manual del panel) y el snapshot `mealPlan*` de la reserva
+    // web. Mismo bug histórico que `approvalStatus`: sin declararlos acá, el filtro "Régimen" y el
+    // badge del listado (`pages/reservations/index.vue`) leen `undefined` aunque el backend los mande.
+    regime: r.regime,
+    mealPlan: r.mealPlan ?? null,
+    mealPlanPriceMode: r.mealPlanPriceMode ?? null,
+    mealPlanUnitPrice: r.mealPlanUnitPrice ?? 0,
+    mealPlanTotal: r.mealPlanTotal ?? 0,
+    // REQ-HAC-03/06 — auditoría de la asignación de unidad; `roomId` queda '' cuando viene null.
+    roomAssignedAt: r.roomAssignedAt ?? null,
+    roomAssignedBy: r.roomAssignedBy ?? null,
+    // #271 MR-06 — misma convención que checkIn/checkOut (ISO tal cual, tipado como Date): el
+    // listado lo usa para "Más antigua: hace N h" en el KPI "Por aprobar".
+    createdAt: r.createdAt as unknown as Date,
+    // #274 — cuna y amenidades infantiles: badge con tooltip en dashboard y listado (`childSetupSummary`).
+    needsCrib: r.needsCrib ?? false,
+    cribCount: r.cribCount ?? 0,
+    childAmenities: parseChildAmenities(r.childAmenities),
   } as Reservation
+}
+
+/** #272 — resultado de `POST /api/reservas/:id/retry-refund` (espejo de `reservas/usecases/retry-refund.ts`). */
+export interface RetryRefundResult {
+  reservationId: string
+  refundStatus: string
+  refundPaymentId?: string
+  refundedAt?: string
 }
 
 interface ReservationsResponse {
   data: RawReservation[]
   total: number
+}
+
+/** Resultado de `POST /api/reservas/:id/invoice` (REQ-FDR-02, #253). Espejo del backend
+ *  `reservas/usecases/issue-invoice.ts`: el servidor emite la factura (con o sin folio) y
+ *  vincula los pagos que ya existían; no crea pagos. */
+export interface IssueInvoiceResult {
+  invoiceId: string
+  invoiceNumber?: string
+  source: 'folio' | 'reservation'
+  folioId?: string
+  linkedPayments?: number
+  amountPaid?: number
+}
+
+/**
+ * Los tres endpoints de asignación (#258) devuelven `{ success, data }` DENTRO del envelope del
+ * framework, así que `http` deja `{ success, data }` en vez del payload. Se desenvuelve acá para no
+ * depender de que el backend lo corrija (y seguir andando si lo hace).
+ */
+function unwrapAssign<T>(raw: T | { data?: T }): T | undefined {
+  if (raw && typeof raw === 'object' && 'data' in (raw as object) && 'success' in (raw as object)) return (raw as { data?: T }).data
+  return raw as T
 }
 
 export const ReservationService = {
@@ -203,6 +307,33 @@ export const ReservationService = {
   },
 
   /**
+   * REQ-HAC-06 (#261) — habitaciones LIBRES para las noches de la reserva. Sin `allTypes` el backend
+   * devuelve sólo las del tipo vendido (`roomType`); con `allTypes` también las de otros tipos, que
+   * vienen con `typeMismatch: true` y exigen `allowTypeChange` al asignar.
+   */
+  async assignableRooms(id: string, allTypes = false): Promise<AssignableRoom[]> {
+    const data = await http.get<AssignableRoom[] | { data?: AssignableRoom[] }>(`/reservas/${id}/assignable-rooms${allTypes ? '?allTypes=1' : ''}`)
+    return Array.isArray(data) ? data : unwrapAssign(data) ?? []
+  },
+
+  /**
+   * REQ-HAC-03 (#258) — asigna (o reasigna) la unidad concreta a la reserva. Es el ÚNICO camino que
+   * escribe `roomId` sobre una reserva existente: valida solape, bloqueo, tipo y estado en el backend.
+   * 409 con `ApiError.details.reason` (room_overlap / type_mismatch / room_not_sellable /
+   * invalid_status) — `utils/room-assign.ts` `assignErrorMessage` lo traduce para el toast.
+   */
+  async assignRoom(id: string, roomId: string, allowTypeChange = false): Promise<Reservation> {
+    const data = await http.post<RawReservation | { data?: RawReservation }>(`/reservas/${id}/assign-room`, allowTypeChange ? { roomId, allowTypeChange: true } : { roomId })
+    return mapReservation(unwrapAssign(data) as RawReservation)
+  },
+
+  /** Suelta la unidad asignada (sólo pending/confirmed): la reserva vuelve a "Sin asignar". */
+  async unassignRoom(id: string): Promise<Reservation> {
+    const data = await http.delete<RawReservation | { data?: RawReservation }>(`/reservas/${id}/assign-room`)
+    return mapReservation(unwrapAssign(data) as RawReservation)
+  },
+
+  /**
    * Cancela la reserva aplicando la POLÍTICA de cancelación del hotel: calcula penalidad y
    * reembolso, guarda el motivo y libera/devuelve los depósitos retenidos.
    *
@@ -212,6 +343,15 @@ export const ReservationService = {
   async cancel(id: string, body: CancelReservationInput = {}): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/cancel`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * #272 (MR-07) — reintenta el reembolso en Stripe de una reserva cancelada desde la web cuyo
+   * refund quedó `failed` (o `pending` colgado). Idempotente: si ya está `done` el backend
+   * devuelve el estado sin volver a cobrar. Permiso `reservations:edit`.
+   */
+  async retryRefund(id: string): Promise<RetryRefundResult> {
+    return http.post<RetryRefundResult>(`/reservas/${id}/retry-refund`, {})
   },
 
   /**
@@ -231,6 +371,45 @@ export const ReservationService = {
   async approve(id: string): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/approve`, {})
     return mapReservation(data)
+  },
+
+  /**
+   * #271 MR-06 — rechaza una reserva pendiente de revisión: el backend la cancela
+   * (`approvalStatus: 'rejected'`, `status: 'cancelled'`), reembolsa el 100% de lo cobrado por
+   * Stripe (el grupo entero si tiene `groupId`), libera la habitación y le manda el motivo al
+   * huésped por email. El motivo es obligatorio (≥ 10 caracteres; 400 si no) porque es lo que
+   * el huésped va a leer. 409 si la reserva ya no está `pending`. Además de la reserva, la
+   * respuesta trae `refundedAmount` (lo devuelto por Stripe; 0 si pagó por otro medio) y
+   * `rejectedCount` (cuántas reservas cayeron: 1 sin grupo).
+   */
+  async reject(id: string, reason: string): Promise<Reservation & { refundedAmount?: number; rejectedCount?: number }> {
+    const data = await http.post<RawReservation & { refundedAmount?: number; rejectedCount?: number }>(`/reservas/${id}/reject`, { reason })
+    return { ...mapReservation(data), refundedAmount: data.refundedAmount, rejectedCount: data.rejectedCount }
+  },
+
+  /**
+   * REQ-RWP-06 (#249) — registra un cobro MANUAL recibido fuera de Stripe (efectivo, transferencia,
+   * tarjeta en el mostrador, otro). Antes la recepción "confirmaba" la reserva cambiando el status
+   * a mano y la plata no quedaba en ningún lado: ni en el historial de cobros ni en la caja.
+   * El backend inserta el pago en `payments` (con quién lo registró), recalcula `pendingAmount` /
+   * `paymentState` y, si saldó todo, confirma la reserva. NUNCA toca `deposit`: el anticipo es
+   * un dato de la reserva, no un cobro. Reference es obligatoria para transfer/card y el monto
+   * no puede superar el saldo pendiente (400 con mensaje legible en ambos casos).
+   */
+  async markPaid(id: string, body: MarkPaidInput): Promise<Reservation> {
+    const data = await http.post<RawReservation>(`/reservas/${id}/mark-paid`, body)
+    return mapReservation(data)
+  },
+
+  /**
+   * REQ-FDR-02 (#253) — emite la factura de la reserva desde el modal: `POST /reservas/:id/invoice`.
+   * El backend decide si sale por el folio abierto (`source: 'folio'`) o directo desde la reserva
+   * (`source: 'reservation'`) y vincula los pagos que ya existían; NO crea pagos. Si la reserva ya
+   * tiene factura responde 409 con `invoiceId` (idempotente). El body se devuelve tal cual: `http.post`
+   * ya desenvuelve `{ success, data }` y el controller manda el resultado directo.
+   */
+  async issueInvoice(id: string, notes?: string): Promise<IssueInvoiceResult> {
+    return http.post<IssueInvoiceResult>(`/reservas/${id}/invoice`, notes ? { notes } : {})
   },
 
   /** Elimina una reserva (la UI lo limita a pendientes/canceladas). */

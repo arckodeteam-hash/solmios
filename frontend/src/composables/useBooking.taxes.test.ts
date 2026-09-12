@@ -59,6 +59,6 @@ describe('useBooking — desglose estimado de impuestos (#88)', () => {
     store.upsells = [{ id: 'u1', name: 'Spa', description: null, price: 100, kind: 'per_stay', sortOrder: 1 }] as any
     store.selectedUpsells = [{ id: 'u1', quantity: 1 }]
     expect(store.estimatedTotal).toBe(354)
-    expect(store.upsellLines).toEqual([{ id: 'u1', name: 'Spa', quantity: 1, unitPrice: 100, total: 100 }])
+    expect(store.upsellLines).toEqual([{ id: 'u1', name: 'Spa', kind: 'per_stay', quantity: 1, unitPrice: 100, nights: 1, total: 100 }])
   })
 })

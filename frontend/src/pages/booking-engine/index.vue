@@ -271,6 +271,34 @@
                     class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
                   />
                 </div>
+                <!-- #248 / #266 — TTL de pago de reservas web (en minutos): pasado este plazo sin pago
+                     el cron del backend cancela la reserva y libera la habitación. Rango 15–1440. -->
+                <div>
+                  <label for="booking-engine-minutos-para-pagar" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Minutos para completar el pago</label>
+                  <input id="booking-engine-minutos-para-pagar" name="pendingTtlMinutes"
+                    v-model.number="form.pendingTtlMinutes"
+                    type="number"
+                    min="15"
+                    max="1440"
+                    step="1"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">Pasado este plazo la reserva web sin pago se cancela sola y la habitación vuelve a estar disponible. Entre 15 y 1440.</p>
+                </div>
+                <!-- #271 MR-06 — plazo de revisión con confirmación manual: pasado sin aprobar ni
+                     rechazar, el cron del backend le recuerda al hotel. Rango 1–168 horas. -->
+                <div>
+                  <label for="booking-engine-plazo-revision-horas" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Plazo para revisar reservas (horas)</label>
+                  <input id="booking-engine-plazo-revision-horas" name="approvalDeadlineHours"
+                    v-model.number="form.approvalDeadlineHours"
+                    type="number"
+                    min="1"
+                    max="168"
+                    step="1"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">Con confirmación manual, el hotel recibe un recordatorio cuando una reserva pagada supera este plazo sin aprobar ni rechazar. Entre 1 y 168.</p>
+                </div>
               </div>
               <!-- F3 (#627): editor estructurado de políticas de cancelación (base + overrides).
                    Reemplaza al textarea libre: el merchant arma niveles de penalidad por hora/%.
@@ -373,6 +401,22 @@
                 </div>
               </div>
 
+              <!-- REQ-03 (#235, mudado de Configuración Base) — tope de niños/bebés que NO
+                   consumen plaza por habitación. Vacío = sin límite (null); nunca se precarga un
+                   número por default. -->
+              <div v-if="childPolicy.acceptChildren" class="mt-4 max-w-xs">
+                <label for="booking-engine-max-ninos-sin-plaza" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Máximo de niños que no consumen plaza por habitación</label>
+                <input id="booking-engine-max-ninos-sin-plaza" name="maxFreeChildrenPerRoom"
+                  v-model="childPolicy.maxFreeChildrenPerRoom"
+                  type="number" min="0" step="1" placeholder="Sin límite"
+                  class="w-full h-10 px-4 rounded-xl border text-sm focus:outline-none focus:border-cyan"
+                  :class="childPolicyMaxFreeChildrenError ? 'border-warning' : 'border-border'"
+                />
+                <p class="mt-1 text-[10px]" :class="childPolicyMaxFreeChildrenError ? 'text-warning font-bold' : 'text-text-muted'">
+                  {{ childPolicyMaxFreeChildrenError || 'Se aplica a cada habitación de la reserva, sin importar su tipo. Vacío = sin límite.' }}
+                </p>
+              </div>
+
               <!-- Tarea "Cobro % niños" (2026-09-09) — cada niño CON PLAZA (nunca bebés ni niños
                    libres) paga este % del "valor de un adulto" en vez del precio completo de
                    ocupante. Apagado por default: nada cambia hasta que el hotel lo habilite. -->
@@ -401,27 +445,12 @@
                 </div>
               </div>
 
-              <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el viejo
-                   checklist de "amenidades para bebé" por un único toggle: ¿el hotel ofrece
-                   cuna? Sin esto habilitado, "¿Necesita cuna?" ni se pregunta en el motor
-                   público, aunque la reserva tenga un bebé. -->
-              <label v-if="childPolicy.acceptChildren" class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer w-fit mt-4">
-                <input id="booking-engine-ofrece-cuna" name="cribAvailable" type="checkbox" v-model="childPolicy.cribAvailable" class="w-4 h-4 text-cyan rounded" />
-                <div>
-                  <div class="text-sm font-bold text-navy">Ofrece cuna para bebés</div>
-                  <div class="text-[10px] text-text-muted">Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé</div>
-                </div>
-              </label>
-
-              <!-- REQ-01 (#233) — Amenidades para niños y bebés: catálogo abierto (nombre + precio)
-                   que el motor público ofrece por habitación con niños/bebés. La cuna sigue siendo
-                   el toggle Sí/No de arriba, no una amenidad más. -->
-              <div v-if="childPolicy.acceptChildren" class="mt-4">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Amenidades para niños y bebés</label>
-                <div class="rounded-xl border border-border p-4">
-                  <ChildAmenitiesEditor />
-                </div>
-              </div>
+              <!-- #292 — la cuna y las amenidades para niños/bebés ya no se configuran a nivel
+                   hotel: son amenidades de cada habitación (custom:cuna, con precio). -->
+              <p v-if="childPolicy.acceptChildren" class="mt-4 text-[10px] text-text-muted">
+                La cuna y demás amenidades con precio para niños y bebés se configuran en cada habitación
+                (<router-link to="/panel/config/habitaciones" class="font-bold text-cyan hover:underline">Habitaciones → editar</router-link>).
+              </p>
             </div>
 
 
@@ -521,7 +550,6 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
-import ChildAmenitiesEditor from '@/components/booking/ChildAmenitiesEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()
@@ -545,6 +573,30 @@ const showPolicyText = ref(false)
 // pre-seeder), el snippet muestra un placeholder y el CTA "Ver demo" se deshabilita.
 const hotelSlug = ref<string>('')
 
+/** #266: rango que acepta el backend para `pendingTtlMinutes` (booking_config). */
+const PENDING_TTL_MINUTES_MIN = 15
+const PENDING_TTL_MINUTES_MAX = 1440
+const PENDING_TTL_MINUTES_DEFAULT = 60
+
+/** Entero dentro de [15, 1440]; un valor vacío/NaN cae al default. */
+function clampPendingTtlMinutes(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return PENDING_TTL_MINUTES_DEFAULT
+  return Math.min(PENDING_TTL_MINUTES_MAX, Math.max(PENDING_TTL_MINUTES_MIN, n))
+}
+
+/** #271 MR-06: rango que acepta el backend para `approvalDeadlineHours` (booking_config). */
+const APPROVAL_DEADLINE_HOURS_MIN = 1
+const APPROVAL_DEADLINE_HOURS_MAX = 168
+const APPROVAL_DEADLINE_HOURS_DEFAULT = 24
+
+/** Entero dentro de [1, 168]; un valor vacío/NaN cae al default. */
+function clampApprovalDeadlineHours(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return APPROVAL_DEADLINE_HOURS_DEFAULT
+  return Math.min(APPROVAL_DEADLINE_HOURS_MAX, Math.max(APPROVAL_DEADLINE_HOURS_MIN, n))
+}
+
 function defaultConfig(): BookingConfig {
   return {
     id: '',
@@ -556,6 +608,8 @@ function defaultConfig(): BookingConfig {
     language: 'es',
     minNights: 1,
     maxNights: 30,
+    pendingTtlMinutes: PENDING_TTL_MINUTES_DEFAULT,
+    approvalDeadlineHours: APPROVAL_DEADLINE_HOURS_DEFAULT,
     cancellationPolicy: '',
     showComparison: false,
     googleAdsEnabled: false,
@@ -576,10 +630,14 @@ const form = reactive<BookingConfig>(defaultConfig())
 // Tarea 21 (Identificar bebés, 2026-09-08) — `maxBabyAge` es subconjunto de "sin plaza".
 // Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
 // NUNCA hardcodeado a 50): cada niño con plaza paga ese % del "valor de un adulto".
-// Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable`: ¿el hotel ofrece cuna?
+// #292 — la cuna ya no es config global: es la amenidad `custom:cuna` de cada habitación.
+// REQ-03 (#235, mudado de Configuración Base) — `maxFreeChildrenPerRoom`: tope de niños/bebés
+// que no consumen plaza por habitación (entero ≥ 0). `null` = sin límite; el input vacío se
+// guarda como null, NUNCA se precarga un número por default.
 const childPolicy = reactive({
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  childrenDiscountEnabled: false, childrenRatePercent: 50,
+  maxFreeChildrenPerRoom: null as number | string | null,
 })
 const childPolicyAgeError = computed(() =>
   childPolicy.maxFreeAge > childPolicy.maxChildAge
@@ -598,6 +656,18 @@ const childPolicyRateError = computed(() => {
   const pct = childPolicy.childrenRatePercent
   return !Number.isFinite(pct) || pct < 1 || pct > 100
     ? 'El porcentaje de tarifa para niños debe estar entre 1% y 100%.'
+    : ''
+})
+/** REQ-03 — input vacío/null → null (sin límite); cualquier otra cosa → Number (validado aparte). */
+function normalizeMaxFreeChildren(v: number | string | null): number | null {
+  if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null
+  return Number(v)
+}
+// REQ-03 — vacío/null es válido (sin límite); si hay valor, entero ≥ 0 (mismo criterio que el backend).
+const childPolicyMaxFreeChildrenError = computed(() => {
+  const maxFree = normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom)
+  return maxFree !== null && (!Number.isInteger(maxFree) || maxFree < 0)
+    ? 'Debe ser un entero mayor o igual a 0.'
     : ''
 })
 
@@ -670,11 +740,20 @@ async function saveConfig() {
     toast.error(childPolicyRateError.value)
     return
   }
+  if (childPolicyMaxFreeChildrenError.value) {
+    toast.error(childPolicyMaxFreeChildrenError.value)
+    return
+  }
+  // #266: el backend exige entero entre 15 y 1440 minutos (400 si no). Normalizar antes de
+  // mandar para que un input vacío / decimal / fuera de rango no rompa el guardado.
+  form.pendingTtlMinutes = clampPendingTtlMinutes(form.pendingTtlMinutes)
+  // #271 MR-06: mismo criterio para el plazo de revisión (entero entre 1 y 168 horas).
+  form.approvalDeadlineHours = clampApprovalDeadlineHours(form.approvalDeadlineHours)
   saving.value = true
   try {
     const [updated] = await Promise.all([
       BookingEngineService.updateConfig(form),
-      ConfigService.set('child_policy', { ...childPolicy }),
+      ConfigService.set('child_policy', { ...childPolicy, maxFreeChildrenPerRoom: normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom) }),
     ])
     // El backend puede normalizar/normalizar campos: reflotar el form con la respuesta.
     Object.assign(form, updated)

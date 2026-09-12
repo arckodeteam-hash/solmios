@@ -52,7 +52,7 @@ export function CanalesModule() {
       version: '1.0.0',
       description: 'Channel manager Channex',
       actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides', 'updateChannelMapping', 'checkChannelReadiness', 'activateChannel', 'overrideChannels'],
-      events: ['onCanalesCreated', 'onCanalesUpdated', 'onCanalesDeleted', 'onCanalesSynced'],
+      events: ['onCanalesCreated', 'onCanalesUpdated', 'onCanalesDeleted', 'onCanalesSynced', 'onOtaBookingIngested'],
       tables: ['canales_config'],
       dependencies: [],
       rules: ['No importar de otros módulos'],

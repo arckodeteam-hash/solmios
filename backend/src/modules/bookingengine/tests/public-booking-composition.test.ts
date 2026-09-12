@@ -10,9 +10,10 @@ import { createPublicBookingDirect } from '../usecases/public-booking'
 const HOTEL_ID = 'h1'
 
 /** Mismo patrón de ORM en memoria que `public-booking-group.test.ts`. */
-function makeDb(seed: { rooms?: any[]; reservations?: any[]; assignments?: any[]; rates?: any[] } = {}) {
+function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; reservations?: any[]; assignments?: any[]; rates?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
+    RoomAmenities: seed.roomAmenities ?? [],
     Reservations: seed.reservations ?? [],
     RoomBlocks: [],
     RoomRates: seed.rates ?? [],
@@ -100,12 +101,28 @@ describe('createPublicBookingDirect — childrenAges (composición del huésped)
     expect(tables.Reservations[0].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
   })
 
-  it('caller sin childrenAges (legacy): NO setea childrenAgesAsOf (nada que proyectar)', async () => {
+  it('caller sin childrenAges (legacy, MR-10 Opción A): children plano se sintetiza a maxChildAge y SÍ ancla childrenAgesAsOf', async () => {
+    // MR-10 (#275): antes un caller con `children` plano no pasaba por el motor de niños (sin
+    // edades, sin `childrenAgesAsOf`). Ahora cada niño se sintetiza a `maxChildAge` (niño con
+    // plaza, el caso más caro) y sigue el MISMO camino que un caller con edades — incluida la
+    // edad de referencia, para que un reagendado vuelva a cotizar con la misma base.
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }],
     })
     const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 1 })
     expect(res.status).toBe(201)
+    expect(tables.Reservations[0].childrenAges).toEqual([17]) // DEFAULT_CHILD_POLICY.maxChildAge
+    expect(tables.Reservations[0].children).toBe(1)
+    expect(tables.Reservations[0].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
+  })
+
+  it('caller sin childrenAges y children:0 → sin edades ni childrenAgesAsOf (nada que sintetizar)', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 0 })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].childrenAges).toEqual([])
     expect(tables.Reservations[0].childrenAgesAsOf).toBeFalsy()
   })
 
@@ -118,6 +135,54 @@ describe('createPublicBookingDirect — childrenAges (composición del huésped)
     const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [5] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
     expect(res.status).toBe(400)
     expect(tables.Reservations).toHaveLength(0)
+  })
+})
+
+describe('REQ-03 (#235) — máximo de niños sin plaza por habitación', () => {
+  /** maxFreeAge=3: las edades 1 y 2 son "libres" (no consumen plaza) — es a ellas a las que
+   *  aplica `maxFreeChildrenPerRoom`. */
+  const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  function configRepo(value: unknown) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
+  }
+  function db() {
+    return makeDb({ rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }] })
+  }
+
+  it('max=1 y 2 niños libres → 409 con motivo que nombra el máximo, sin crear la reserva', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1, 2] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('no consumen plaza')
+    expect(res.body.error).toContain('1')
+    expect(tables.Reservations).toHaveLength(0)
+  })
+
+  it('max=1 y 1 niño libre (capacidad ok) → se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+    expect(tables.Reservations[0].childrenAges).toEqual([1])
+  })
+
+  it('política sin el campo (sin límite) y 2 niños libres → se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo(BASE_POLICY)
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1, 2] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+  })
+
+  it('caller legacy (children plano, sin childrenAges): el tope no aplica — se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 2 }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+    expect(tables.Reservations[0].children).toBe(2)
   })
 })
 
@@ -254,18 +319,21 @@ describe('createPublicBookingDirect — Requerimiento 5: ocupación efectiva usa
   })
 })
 
-// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+// ─── Tarea 22 (Cuna, 2026-09-08) — #292: la cuna es la amenidad `custom:cuna` de la habitación ──
+// La cobertura completa del gate por habitación (precio, línea en `roomAmenities`, grupo) vive en
+// `public-booking-crib.test.ts`; acá queda el contrato Sí/No + bebé del flujo de 1 habitación.
 describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No)', () => {
   // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
-  const BABY_POLICY_CRIB_ON = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true }
-  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, cribAvailable: false }
-  function childPolicyRepo(value: unknown = BABY_POLICY_CRIB_ON) {
+  const BABY_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+  function childPolicyRepo(value: unknown = BABY_POLICY) {
     return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
   }
 
-  function dbWithRoom() {
+  /** Una room 'double' que OFRECE cuna (`RoomAmenities` custom:cuna activa) — salvo `withCrib: false`. */
+  function dbWithRoom(withCrib = true) {
     return makeDb({
       rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 6, basePrice: 100, status: 'available' }],
+      roomAmenities: withCrib ? [{ id: 'r1-cuna', roomId: 'r1', amenityKey: 'custom:cuna', name: 'Cuna', price: 0, isActive: true }] : [],
     })
   }
 
@@ -283,18 +351,18 @@ describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 
     expect(tables.Reservations[0].cribCount).toBe(0)
   })
 
-  it('hotel con cuna DESHABILITADA (cribAvailable:false): needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
-    const { orm, tables } = dbWithRoom()
+  it('tipo SIN custom:cuna: needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
+    const { orm, tables } = dbWithRoom(false)
     const res = await createPublicBookingDirect(
       orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },
-      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(BABY_POLICY_CRIB_OFF) },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
     )
     expect(res.status).toBe(201)
     expect(tables.Reservations[0].needsCrib).toBe(false)
     expect(tables.Reservations[0].cribCount).toBe(0)
   })
 
-  it('con un bebé y cuna habilitada por el hotel: needsCrib true se persiste, cribCount siempre 1', async () => {
+  it('con un bebé y un tipo que ofrece custom:cuna: needsCrib true se persiste, cribCount siempre 1', async () => {
     const { orm, tables } = dbWithRoom()
     const res = await createPublicBookingDirect(
       orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },
@@ -459,14 +527,19 @@ describe('createPublicBookingDirect — Tarea "Cobro % niños"', () => {
     expect(tables.Reservations[0].totalAmount).toBe(150)
   })
 
-  it('caller legacy (contador `children` plano, sin edades): la regla NO aplica — no hay forma de saber la edad real', async () => {
+  it('caller legacy (contador `children` plano, sin edades) — MR-10 Opción A: cotiza como niño con plaza a maxChildAge, la regla SÍ aplica', async () => {
+    // Antes de MR-10 (#275) este caller cotizaba la fila de ocupación=2 plana (200): el mismo
+    // pedido daba dos totales según la puerta de entrada. Ahora el niño plano se sintetiza a
+    // `maxChildAge` (con plaza) y paga el % del hotel igual que `childrenAges:[maxChildAge]`.
     const { orm, tables } = dbWithOccupancyRates()
     const res = await createPublicBookingDirect(
       orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, children: 1 },
       undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
     )
     expect(res.status).toBe(201)
-    expect(tables.Reservations[0].totalAmount).toBe(200) // fila de ocupación=2 plana, sin split
+    // adultsTotal=100 (ocupación=1) + 1 niño × 50 % de 100 = 150 — idéntico al caso con edades.
+    expect(tables.Reservations[0].totalAmount).toBe(150)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(50)
   })
 
   it('el resumen (totalBreakdown) usa el MISMO importe que queda persistido en la reserva', async () => {

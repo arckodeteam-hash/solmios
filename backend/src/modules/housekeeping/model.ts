@@ -37,6 +37,12 @@ export const HousekeepingModel: ModelDefinition = {
     // fotos por área. Un solo video por tarea. Mismo aviso: sin declararlo, el ORM
     // lo descarta en silencio.
     video: { type: 'json' },
+    // Preparación de llegada (#274): la tarea `arrival_setup` nace de la reserva y la sigue
+    // (`reservationId` para encontrarla y re-sincronizarla; `setupItems` = cuna/amenidades/
+    // régimen/pedido). Sin declararlos el ORM los descarta en silencio (anti-patrón mem 1805).
+    // Nullable: las tareas de limpieza viejas no los tienen.
+    setupItems: { type: 'json' },
+    reservationId: { type: 'string', indexed: true },
   },
   timestamps: true,
 }

@@ -1,6 +1,7 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import { roomChargeRate } from '../../../shared/usecases/room-charge-rate'
 import { prepaidLinesFrom, depositOnlyPrepaid, depositPrepaidLine, capPrepaidLines, type PrepaidLine } from '../../../shared/usecases/prepaid-folio-lines'
+import { buildAddonFolioCharges, addonChargesTotal, addonChargesBase } from '../../../shared/usecases/addon-folio-charges'
 
 /**
  * Tasa de impuesto del hotel, para el cargo automático de habitación al check-in.
@@ -34,9 +35,22 @@ export async function checkinValidation(repo: any, id: string, user: any, auth?:
   // assertOwnership recibe (dueño, solicitante, rol, rolAdmin) — todos strings. Pasarle objetos
   // hace que la comparación `===` nunca dé true y lanza Forbidden SIEMPRE: el check-in quedaba muerto.
   if (auth) auth.assertOwnership(r.hotelId, hotelId, user.role, 'super_admin')
+  assertRoomAssigned(r)
   if (r.status === 'checked_in') throw new ConflictError('La reserva ya tiene check-in')
   if (!['confirmed', 'pending'].includes(r.status)) throw new ConflictError(`No se puede hacer check-in de una reserva ${r.status}`)
   return { reservation: r, hotelId: r.hotelId }
+}
+
+/**
+ * HAC-01 (#258): la reserva nace con `roomId = null` y la unidad se elige en recepción. Sin
+ * habitación NO hay check-in: el folio nacería sin `roomId`, el cargo de la noche se postearía
+ * con `Rooms` vacío y el check-out reventaría en `connectors/reservas-housekeeping.ts`
+ * (`habitaciones.update(null)`). Mismo formato de 409 que `assign-room.ts`: `details.reason`
+ * le dice al panel que lo que falta es asignar, no que el estado esté mal.
+ */
+export function assertRoomAssigned(r: { roomId?: string | null }): void {
+  if (r.roomId) return
+  throw new ConflictError('La reserva no tiene habitación asignada: asigne una antes del check-in', { reason: 'no_room_assigned' })
 }
 
 export async function checkoutValidation(repo: any, id: string, user: any, auth?: any): Promise<any> {
@@ -57,6 +71,20 @@ class AlreadyCheckedInError extends Error {
   constructor() { super('already_checked_in'); this.name = 'AlreadyCheckedInError' }
 }
 
+/**
+ * Lectura dentro de la transacción si el handle la soporta; si no, por el ORM (los harnesses
+ * viejos y algún driver no exponen `findMany` en `tx`). Una lectura que devuelve null/undefined
+ * cuenta como "sin filas" → []. Un ERROR de la lectura se propaga: aborta la transacción y el
+ * check-in falla con el "Error interno" de abajo. Antes se tragaba y devolvía [] — el check-in
+ * commiteaba con el folio SIN los extras y el tope del prepago sólo en la noche, o sea, el mismo
+ * bug de #269 pero silencioso. Sin extras posteados no hay check-in.
+ */
+async function findManyIn(tx: any, orm: any, model: string, filter: Record<string, unknown>): Promise<any[]> {
+  const reader = typeof tx?.findMany === 'function' ? tx : orm
+  const rows = await reader.findMany(model, filter)
+  return Array.isArray(rows) ? rows : []
+}
+
 export async function executeCheckin(r: any, user: any, deps: {
   orm: any; logger: any; repo: any; queries?: any
 }): Promise<any> {
@@ -65,8 +93,12 @@ export async function executeCheckin(r: any, user: any, deps: {
   // reclama la reserva más abajo. Leerlo dentro de la transacción sería tarde — si el objeto
   // que nos pasaron es compartido, para entonces ya podría haberlo mutado el check-in rival.
   const expectedStatus = r.status
+  // Defensa en profundidad: `checkinValidation` ya lo rechazó, pero este usecase también lo
+  // llaman harnesses/callers que no pasan por ahí. Va ANTES del try: adentro se volvería un 500.
+  assertRoomAssigned(r)
   let guestId = r.guestId
   let folioId = ''
+  let extrasCharge = 0
 
   const room = (await deps.orm.findMany('Rooms', { id: r.roomId }))[0] as any
   // La noche del ingreso se cobra por la MISMA cadena que cotizó la reserva (temporada →
@@ -149,9 +181,21 @@ export async function executeCheckin(r: any, user: any, deps: {
           source: 'checkin', postedAt: nowIso,
         })
       }
+      // #269 — Los extras que el huésped pagó online (`reservation_addons` source booking_engine)
+      // entran al folio como cargos ANTES de acreditar el prepago: ese prepago los incluye, y sin
+      // estas líneas el folio nacía "a favor" del huésped por el importe de los extras.
+      // Idempotente por `reference: 'addon:<id>'` contra los cargos que ya tenga el folio.
+      const addons = await findManyIn(tx, deps.orm, 'ReservationAddons', { reservationId: r.id, hotelId: r.hotelId })
+      const existingCharges = await findManyIn(tx, deps.orm, 'FolioCharges', { folioId })
+      const addonRows = buildAddonFolioCharges({
+        folioId, hotelId: r.hotelId, addons, taxRate, existingCharges, source: 'checkin', postedAt: nowIso,
+      })
+      for (const row of addonRows) await tx.create('FolioCharges', row)
+      extrasCharge = addonChargesBase(addonRows)
       // Acreditar más de lo consumido dejaría el folio en negativo y la factura con `amountPaid`
-      // mayor que su total. El sobrante queda a favor en la reserva, no acá.
-      const acreditables = capPrepaidLines(prepaid, roomRate > 0 ? roomRate + roomTax : 0)
+      // mayor que su total. El sobrante queda a favor en la reserva, no acá. El tope es la noche
+      // MÁS los extras recién posteados (#269): el prepago del motor cubre ambos.
+      const acreditables = capPrepaidLines(prepaid, (roomRate > 0 ? roomRate + roomTax : 0) + addonChargesTotal(addonRows))
       // Pagos ya cobrados → líneas del folio. NO se crean filas nuevas en `payments`: el cobro
       // ya está asentado ahí (fuente de verdad del dinero). `reference` lleva el id del pago,
       // que es la trazabilidad y la clave de idempotencia.
@@ -174,7 +218,7 @@ export async function executeCheckin(r: any, user: any, deps: {
     throw new Error(`Error interno al procesar check-in: ${e.message}`)
   }
   if (deps.queries) {
-    deps.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: r.id, action: 'checkin', userId: user.id, hotelId: r.hotelId, detail: JSON.stringify({ guestId, roomId: r.roomId, folioId, checkIn: r.checkIn, checkOut: r.checkOut, roomCharge: roomRate }), createdAt: nowIso })
+    deps.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: r.id, action: 'checkin', userId: user.id, hotelId: r.hotelId, detail: JSON.stringify({ guestId, roomId: r.roomId, folioId, checkIn: r.checkIn, checkOut: r.checkOut, roomCharge: roomRate, extrasCharge }), createdAt: nowIso })
   }
-  return { ok: true, reservationId: r.id, status: 'checked_in', folioId, guestId, roomCharge: roomRate }
+  return { ok: true, reservationId: r.id, status: 'checked_in', folioId, guestId, roomCharge: roomRate, extrasCharge }
 }

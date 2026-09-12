@@ -36,6 +36,7 @@ import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, overrideRateFor 
 import { round2 } from '../../../shared/utils/money'
 import { isRateClosed } from './stay-restrictions'
 import { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 /** Re-export por compatibilidad: nacieron acá y los tests del calendario los importan de acá.
  *  La implementación canónica vive en `rate-resolution.ts` (compartida con `/rates`). */
@@ -129,14 +130,11 @@ export async function getPublicCalendar(
   const { from, to, guests } = validated.value
 
   // Anti-enumeración: idéntico 404 para "no existe" y "no activo" (mismo criterio que /rates).
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
-  const bookingConfig = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
-  if (bookingConfig && bookingConfig.enabled === false) {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const sourceCurrency = String(hotel.currency || 'USD').toUpperCase()
   const targetCurrency = validated.value.currency || sourceCurrency
@@ -164,6 +162,8 @@ export async function getPublicCalendar(
   // Índices por roomId para no re-filtrar el array completo por cada tipo.
   const resByRoom = groupReservationsByRoom(reservations as any[])
   const blocksByRoom = groupBlocksByRoom(blocks as any[])
+  // HAC-02 (#257/#258): las activas SIN unidad consumen una del tipo vendido (por `roomType`).
+  const unassignedByType = groupUnassignedByType(reservations as any[])
 
   // Disponibilidad día a día por tipo.
   const availabilityByType = new Map<string, Map<string, number>>()
@@ -171,7 +171,10 @@ export async function getPublicCalendar(
     const perDay = computeDailyAvailability(
       days,
       bucket.roomIds.length,
-      bucket.roomIds.flatMap((id) => resByRoom.get(id) ?? []),
+      [
+        ...bucket.roomIds.flatMap((id) => resByRoom.get(id) ?? []),
+        ...(unassignedByType.get(String(type).toLowerCase()) ?? []),
+      ],
       bucket.roomIds.flatMap((id) => blocksByRoom.get(id) ?? []),
     )
     availabilityByType.set(type, new Map(perDay.map((d) => [d.date, d.available])))
@@ -271,19 +274,46 @@ function buildTypeBuckets(rooms: any[], guests: number): Map<string, TypeBucket>
   return out
 }
 
+/** Estadía que ocupa (estado en la whitelist + fechas válidas) o null. */
+function occupyingStay(r: any): { checkIn: string; checkOut: string } | null {
+  const status = String(r.status ?? '').toLowerCase()
+  // Sin estado se asume que ocupa (mismo criterio defensivo que `AvailabilityUseCase`).
+  if (status && !BLOCKING_RESERVATION_STATUS.has(status)) return null
+  const checkIn = String(r.checkIn ?? '').slice(0, 10)
+  const checkOut = String(r.checkOut ?? '').slice(0, 10)
+  if (!checkIn || !checkOut) return null
+  return { checkIn, checkOut }
+}
+
 function groupReservationsByRoom(reservations: any[]): Map<string, { checkIn: string; checkOut: string }[]> {
   const out = new Map<string, { checkIn: string; checkOut: string }[]>()
   for (const r of reservations) {
     if (!r.roomId) continue
-    const status = String(r.status ?? '').toLowerCase()
-    // Sin estado se asume que ocupa (mismo criterio defensivo que `AvailabilityUseCase`).
-    if (status && !BLOCKING_RESERVATION_STATUS.has(status)) continue
-    const checkIn = String(r.checkIn ?? '').slice(0, 10)
-    const checkOut = String(r.checkOut ?? '').slice(0, 10)
-    if (!checkIn || !checkOut) continue
+    const stay = occupyingStay(r)
+    if (!stay) continue
     const list = out.get(r.roomId) ?? []
-    list.push({ checkIn, checkOut })
+    list.push(stay)
     out.set(r.roomId, list)
+  }
+  return out
+}
+
+/**
+ * HAC-02 (#257/#258): reservas activas sin unidad (`roomId` null) agrupadas por `roomType` en
+ * minúsculas. Cada una resta UNA unidad del tipo en sus noches, igual que si ya tuviera
+ * habitación: soltar la unidad de una `confirmed` no la saca del inventario. Sin `roomType`
+ * (fila anterior al backfill sin unidad) no hay contra qué descontar y no cuenta.
+ */
+function groupUnassignedByType(reservations: any[]): Map<string, { checkIn: string; checkOut: string }[]> {
+  const out = new Map<string, { checkIn: string; checkOut: string }[]>()
+  for (const r of reservations) {
+    if (r.roomId || !r.roomType) continue
+    const stay = occupyingStay(r)
+    if (!stay) continue
+    const type = String(r.roomType).toLowerCase()
+    const list = out.get(type) ?? []
+    list.push(stay)
+    out.set(type, list)
   }
   return out
 }

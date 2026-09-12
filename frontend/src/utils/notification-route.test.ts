@@ -31,6 +31,18 @@ describe('resolveNotificationRoute — metadata.link manda si es una ruta intern
   })
 })
 
+describe("resolveNotificationRoute — type 'reservation' (#246): aviso de reserva web/OTA", () => {
+  it('con metadata.link del backend lleva a abrir esa reserva', () => {
+    expect(resolveNotificationRoute({ type: 'reservation', metadata: { reservationId: 'r1', link: '/panel/reservations?open=r1' } }))
+      .toBe('/panel/reservations?open=r1')
+  })
+
+  it('sin link cae al listado de reservas', () => {
+    expect(resolveNotificationRoute({ type: 'reservation', metadata: {} })).toBe('/panel/reservas')
+    expect(resolveNotificationRoute({ type: 'reservation' })).toBe('/panel/reservas')
+  })
+})
+
 describe('resolveNotificationRoute — sin link, conserva el mapeo anterior', () => {
   it('reservationId gana sobre type', () => {
     expect(resolveNotificationRoute({ type: 'payment', metadata: { reservationId: 'r1' } })).toBe('/panel/reservas')

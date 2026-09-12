@@ -27,6 +27,8 @@ import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
 import { createActivationSequenceCron } from './shared/usecases/activation-sequence-cron'
 import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
+import { createArrivalSetupCron, ARRIVAL_SETUP_TICK_MS } from './shared/usecases/arrival-setup-cron'
+import { createRoomInfoCron, ROOM_INFO_TICK_MS } from './shared/usecases/room-info-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -276,6 +278,13 @@ import { defaultStayApiPricesFetcher } from './connectors/stayapi-ota-prices'
 import type { ExternalReviewsFetchers } from './shared/usecases/external-reviews-cron'
 // F3 3.14 (solmi-direct-booking) — Cron de recuperación de reservas abandonadas.
 import { createAbandonRecoveryCron, ABANDON_RECOVERY_TICK_MS } from './shared/usecases/abandon-recovery-cron'
+import { runPendingPaymentExpiry, expirePendingReservation, type PendingPaymentExpiryDeps } from './shared/usecases/pending-payment-expiry'
+import { createPendingPaymentExpiryCron, PENDING_PAYMENT_EXPIRY_TICK_MS, PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS, isPendingPaymentExpiryDisabled } from './shared/usecases/pending-payment-expiry-cron'
+// #271 MR-06 — Recordatorio al hotel de reservas pagadas sin aprobar.
+import { runApprovalReminder, type ApprovalReminderDeps } from './shared/usecases/approval-reminder'
+import { createApprovalReminderCron, APPROVAL_REMINDER_TICK_MS, APPROVAL_REMINDER_FIRST_TICK_MS, isApprovalReminderDisabled } from './shared/usecases/approval-reminder-cron'
+import { notifyApprovalOverdue } from './shared/usecases/notify-reservation-received'
+import { reservationNotifyDepsFactory } from './connectors/reservation-notify-deps'
 import { FcmClient } from './services/fcm-client'
 
 // F3 3.5 — Fetchers de las 3 APIs externas. Compartido por módulo (sync endpoint) + cron.
@@ -425,11 +434,11 @@ import { habitacionesReservasConnector } from './connectors/habitaciones-reserva
 import { reservasCanalesConnector } from './connectors/reservas-canales'
 import { mantenimientoNotificacionesConnector } from './connectors/mantenimiento-notificaciones'
 import { mantenimientoHabitacionesConnector } from './connectors/mantenimiento-habitaciones'
-import { bookingChannexConnector } from './connectors/booking-channex'
 import { reservasBookingengineConnector } from './connectors/reservas-bookingengine'
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
 import { reservasMarketingConnector } from './connectors/reservas-marketing'
+import { reservasPaymentGatewaysConnector } from './connectors/reservas-payment-gateways'
 import { reservasDepositsConnector } from './connectors/reservas-deposits'
 // F3 3.8 (solmi-direct-booking) — Wallet pass al confirmar: bookingengine emite onBookingPaid
 // (mismo socket que ya cablea `bookingengine-payments`) → wallet-pass.generatePass orquesta
@@ -532,11 +541,17 @@ import { cajaChicaGastosConnector } from './connectors/caja-chica-gastos'
 import { payrollGastosConnector } from './connectors/payroll-gastos'
 import { reembolsosGastosConnector } from './connectors/reembolsos-gastos'
 import { reservasRescheduleChargeConnector } from './connectors/reservas-reschedule-charge'
+import { reservasPaymentsConnector } from './connectors/reservas-payments'
+import { reservasNotificacionesConnector } from './connectors/reservas-notificaciones'
+// #253 (REQ-FDR-02) — "Emitir factura" desde la reserva: folio abierto → folios; sin folio → facturas.
+import { reservasFacturasConnector } from './connectors/reservas-facturas'
 import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
 import { attendanceDashboardConnector } from './connectors/attendance-dashboard'
 import { attendancePayrollConnector } from './connectors/attendance-payroll'
 import { bookingenginePaymentsConnector } from './connectors/bookingengine-payments'
+import { bookingengineNotificacionesConnector } from './connectors/bookingengine-notificaciones'
 import { bookingengineDepositsConnector } from './connectors/bookingengine-deposits'
+import { bookingengineRefundsConnector } from './connectors/bookingengine-refunds'
 import { bookingenginePromocodesConnector } from './connectors/bookingengine-promocodes'
 import { bookingengineTtlockConnector } from './connectors/bookingengine-ttlock'
 import { messagesUsuariosConnector } from './connectors/messages-usuarios'
@@ -588,7 +603,6 @@ system.addConnector('habitaciones-reservas', habitacionesReservasConnector)
 system.addConnector('reservas-canales', reservasCanalesConnector)
 system.addConnector('mantenimiento-notificaciones', mantenimientoNotificacionesConnector)
 system.addConnector('mantenimiento-habitaciones', mantenimientoHabitacionesConnector)
-system.addConnector('booking-channex', bookingChannexConnector)
 system.addConnector('reservas-bookingengine', reservasBookingengineConnector)
 system.addConnector('reservas-huespedes', reservasHuespedesConnector(logger))
 // Invitación a opinar post-checkout: reservas emite onReservationCheckedOut → opiniones crea
@@ -598,6 +612,9 @@ system.addConnector('reservas-opiniones', reservasOpinionesConnector)
 // DT-18: on_reservation (reserva confirmada) + post_checkout, en tiempo real — antes de este
 // connector NINGÚN código disparaba estos 2 de los 5 triggerEvent del enum de auto-messages.
 system.addConnector('reservas-marketing', reservasMarketingConnector)
+// REQ-RWP-02: el bloque "Pasarela de pago" del detalle de la reserva lee `payment_attempts` por
+// el puerto de payment-gateways (dueño de la tabla), nunca por import directo. Best-effort.
+system.addConnector('reservas-payment-gateways', reservasPaymentGatewaysConnector)
 // Libera el depósito/garantía en el checkout: reservas emite onReservationCheckedOut → payments
 // libera los holds 'held' de la reserva. Cierra el bug CONFIRMADO "el hold queda colgando" (el
 // checkout no tocaba deposits). Best-effort, no pisa a reservas-opiniones (sockets se componen).
@@ -661,6 +678,14 @@ system.addConnector('payroll-gastos', payrollGastosConnector)
 system.addConnector('reembolsos-gastos', reembolsosGastosConnector)
 // Mover/extender una reserva desde el planning cobra la diferencia: folio, efectivo (→caja) o tarjeta (Stripe).
 system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnector)
+// REQ-RWP-06 (#249) — "Registrar pago" manual desde la ficha: el cobro se asienta en `payments`
+// (única fuente de verdad del dinero) y de ahí caen solos el pendiente y la caja.
+system.addConnector('reservas-payments', reservasPaymentsConnector)
+// #271 (MR-06) — aprobar una reserva web cierra la campanita "Nueva reserva web" del hotel (marca leídas las notificaciones de esa reserva).
+system.addConnector('reservas-notificaciones', reservasNotificacionesConnector)
+// #253 (REQ-FDR-02) — POST /api/reservas/:id/invoice: con folio abierto cierra y factura por `folios`
+// (mismo camino que POST /api/folios/:id/invoice); sin folio, `facturas.invoiceFromReservation`.
+system.addConnector('reservas-facturas', reservasFacturasConnector)
 // FIX 2026-07-31 — el código promocional del wizard de reserva manual (staff) se guardaba
 // como texto sin validar/aplicar descuento. Ver connectors/reservas-promocodes.ts.
 system.addConnector('reservas-promocodes', reservasPromocodesConnector)
@@ -754,6 +779,13 @@ system.addConnector('payment-requests-payments', paymentRequestsPaymentsConnecto
 system.addConnector('payment-requests-ttlock', paymentRequestsTtlockConnector(logger))
 // El widget público cobra con Stripe: ese dinero vivía solo en la tabla `bookings`.
 system.addConnector('bookingengine-payments', bookingenginePaymentsConnector)
+// #246: aviso al hotel (campanita + push) por reserva web y pago confirmado; el correo se inyecta
+// post-init en `notificaciones` (ver email-bootstrap), por la misma TDZ que explica el bloque de abajo.
+// #272 — Reembolso REAL en Stripe de la cancelación web + puerto de reintento para reservas. Va
+// ANTES del aviso al hotel y del correo (email-bootstrap): los sockets de `onBookingCancelled` se
+// encadenan en orden de registro y el aviso/correo tienen que releer el `refundStatus` verdadero.
+system.addConnector('bookingengine-refunds', bookingengineRefundsConnector(logger))
+system.addConnector('bookingengine-notificaciones', bookingengineNotificacionesConnector(logger))
 // El correo de confirmación de PAGO del motor NO va acá: necesita el EmailService, que se
 // construye recién en `bootstrapEmail()` DESPUÉS de `system.start()`. Referenciarlo desde un
 // connector daba ReferenceError por TDZ al arrancar. Se suscribe en `email-bootstrap.ts`,
@@ -1006,6 +1038,34 @@ setInterval(() => {
 }, PREARRIVAL_TICK_MS)
 logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 
+// Información de la habitación asignada al huésped (#297): anticipación configurable por hotel
+// en `room_info_config` (horas antes, email/WhatsApp, plantilla). Reemplaza el 24 h fijo para
+// reservas de cualquier origen; prearrival-pass-cron queda para los pases wallet. Dedup por
+// huella habitación+código en `message_logs.response`, con reintento de fallos.
+const roomInfoCron = createRoomInfoCron({
+  orm, resolveModule: (name) => system.resolveModule(name), emailService, logger, publicUrl: process.env.PUBLIC_URL || '',
+})
+setTimeout(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info cron failed', { error: (e as Error).message }))
+}, ROOM_INFO_TICK_MS)
+logger.info('Room-info cron listo', { tickMs: ROOM_INFO_TICK_MS })
+
+// Tarea `arrival_setup` de housekeeping (#274): el connector reservas-housekeeping la mantiene
+// por socket, pero el motor público y la confirmación por Stripe escriben `Reservations` directo
+// sin pasar por el CRUD. El cron cubre ese hueco: toda llegada confirmed en ventana tiene su
+// tarea. syncArrivalSetup es idempotente, así que re-correrlo no duplica.
+const arrivalSetupCron = createArrivalSetupCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup cron failed', { error: (e as Error).message }))
+}, ARRIVAL_SETUP_TICK_MS)
+logger.info('Arrival-setup cron listo', { tickMs: ARRIVAL_SETUP_TICK_MS })
+
 // Recordatorio de las citas de conexión de canales (REQ-CAN-07). Tick HORARIO con gate de reloj:
 // el aviso sale una vez por día a las 8 del servidor, pero si el proceso reinició a las 8:05 el
 // próximo tick lo alcanza. Correrlo de más es inofensivo — la dedup vive en `reminderSentFor`.
@@ -1115,7 +1175,14 @@ logger.info('External-reviews cron listo', { tickMs: EXTERNAL_REVIEWS_TICK_MS })
 // y marca el flag. Idempotente por diseño (el flag evita re-envíos); reservas confirmadas o
 // sin accessToken (creadas desde panel) se skipan. Mismo molde que currency-rates/external-reviews:
 // factory + corrida inicial 10s (anti-restart) + setInterval con catch que no rompe el arranque.
-const abandonRecoveryService = system.resolveModule<{ runSweep(): Promise<unknown> }>('abandon-recovery')
+const abandonRecoveryService = system.resolveModule<{ runSweep(): Promise<unknown>; setGatewayCheck?(fn: (hotelId: string) => Promise<boolean>): void }>('abandon-recovery')
+// #266 — el correo de abandono no se manda si el hotel no tiene pasarela: el registry vive en
+// payment-gateways (dueño de la tabla) y se resuelve post-init, mismo patrón que `setEmail`.
+const paymentGatewaysForAbandon = system.resolveModule<{ registry?: { isConfigured(hotelId: string): Promise<boolean> } }>('payment-gateways')
+if (abandonRecoveryService && typeof abandonRecoveryService.setGatewayCheck === 'function' && paymentGatewaysForAbandon?.registry) {
+  const registry = paymentGatewaysForAbandon.registry
+  abandonRecoveryService.setGatewayCheck((hotelId) => registry.isConfigured(hotelId))
+}
 if (abandonRecoveryService && typeof abandonRecoveryService.runSweep === 'function') {
   const abandonRecoveryCron = createAbandonRecoveryCron(
     abandonRecoveryService as any, logger,
@@ -1129,6 +1196,126 @@ if (abandonRecoveryService && typeof abandonRecoveryService.runSweep === 'functi
   logger.info('Abandon-recovery cron listo', { tickMs: ABANDON_RECOVERY_TICK_MS })
 } else {
   logger.warn('Abandon-recovery: módulo no disponible — cron desactivado')
+}
+
+// #248 REQ-RWP-05 / #266 MR-01 — Vencimiento de reservas web sin pago. Cada 5 min el cron busca
+// reservas `pending` hechas desde el motor público cuya fecha límite de pago
+// (`reservations.paymentDeadlineAt` = createdAt + booking_config.pendingTtlMinutes; null = no
+// vence) ya pasó, sin depósito ni pago completed ni intento/link vivo, y las cancela vía
+// `reservas.cancelBySystem` en modo `no-charge`: eso emite `onReservationCancelled` por socket
+// y los connectors existentes liberan la disponibilidad; además se empuja la habitación a las
+// OTAs (`pushAvailability`) y el grupo queda `cancelled` si vencieron todas sus hermanas.
+// El MISMO usecase (`expirePendingReservation`) cierra la reserva cuando Stripe manda
+// `checkout.session.expired` (bookingengine.setExpirePending), sin esperar al próximo barrido.
+// Flag global BOOKING_PENDING_TTL_DISABLED=1 = kill-switch para incidentes (se evalúa por tick y
+// por webhook). Primer tick a 20 s (no 10 s): deja arrancar todos los módulos antes de cancelar nada.
+const reservasForExpiry = system.resolveModule<{ cancelBySystem(id: string, input: { hotelId: string; reason?: string; penaltyMode?: 'hotel-policy' | 'channel-managed' | 'no-charge' }): Promise<{ ok: boolean; idempotent?: boolean; message?: string }> }>('reservas')
+const auditlogForExpiry = system.resolveModule<{ create(dto: Record<string, unknown>): Promise<unknown> }>('auditlog')
+if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function') {
+  const expiryDeps: PendingPaymentExpiryDeps = {
+    reservations: new OrmRepository<any>(orm, 'Reservations'),
+    // ⚠ El modelo de pagos se registra en SINGULAR ('Payment'), igual que treasury/reports.
+    payments: new OrmRepository<any>(orm, 'Payment'),
+    paymentRequests: new OrmRepository<any>(orm, 'PaymentRequests'),
+    guests: new OrmRepository<any>(orm, 'Guests'),
+    hotels: new OrmRepository<any>(orm, 'Hotels'),
+    // Tabla `groups` (modelo 'Groups', grupos/model.ts): status='cancelled' al vencer el grupo entero.
+    groups: new OrmRepository<any>(orm, 'Groups'),
+    cancel: (id, hotelId) => reservasForExpiry.cancelBySystem(id, { hotelId, reason: 'payment_timeout', penaltyMode: 'no-charge' }),
+    audit: auditlogForExpiry
+      ? {
+          record: async (e) => {
+            await auditlogForExpiry.create({
+              hotelId: e.hotelId, userId: e.userId, action: e.action,
+              entity: e.entity ?? 'reservation', entityId: e.entityId, detail: e.detail,
+            })
+          },
+        }
+      : null,
+    // Adapter: el usecase habla `enqueue(to, subject, html, opts)`; EmailService.enqueue toma un
+    // objeto y exige `hotelId` (multi-tenancy) — se lee de `opts.hotelId`. Si el usecase no lo
+    // pasa, EmailService tira y el usecase lo absorbe como warn (la reserva ya venció igual).
+    email: {
+      enqueue: async (to, subject, html, opts) => {
+        await emailService.enqueue({ to, subject, html, hotelId: String(opts?.hotelId ?? ''), relatedType: 'reservation', relatedId: opts?.reservationId ? String(opts.reservationId) : undefined })
+        return { sent: true }
+      },
+    },
+    publicBaseUrl: process.env.PUBLIC_BASE_URL ?? process.env.PUBLIC_URL ?? '',
+    logger: logger.child('pending-payment-expiry'),
+    pushAvailability,
+  }
+
+  // #266 — checkout.session.expired → mismo cierre que el cron. El kill-switch también lo frena.
+  const bookingengineForExpiry = system.resolveModule<{ setExpirePending(fn: (id: string, hotelId: string) => Promise<{ expired: boolean; reason?: string }>): void }>('bookingengine')
+  if (bookingengineForExpiry && typeof bookingengineForExpiry.setExpirePending === 'function') {
+    bookingengineForExpiry.setExpirePending(async (id, hotelId) => {
+      if (isPendingPaymentExpiryDisabled()) return { expired: false, reason: 'disabled' }
+      return expirePendingReservation(expiryDeps, id, hotelId)
+    })
+  }
+
+  if (isPendingPaymentExpiryDisabled()) {
+    logger.info('Pending-payment-expiry cron desactivado (BOOKING_PENDING_TTL_DISABLED=1)')
+  } else {
+    const pendingPaymentExpiryCron = createPendingPaymentExpiryCron((now) => runPendingPaymentExpiry(expiryDeps, now), logger)
+    setTimeout(() => {
+      pendingPaymentExpiryCron().catch((e) => logger.warn('pending-payment-expiry initial run failed', { error: (e as Error).message }))
+    }, PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS)
+    setInterval(() => {
+      pendingPaymentExpiryCron().catch((e) => logger.warn('pending-payment-expiry cron failed', { error: (e as Error).message }))
+    }, PENDING_PAYMENT_EXPIRY_TICK_MS)
+    logger.info('Pending-payment-expiry cron listo', { tickMs: PENDING_PAYMENT_EXPIRY_TICK_MS })
+  }
+} else {
+  logger.warn('Pending-payment-expiry: módulo reservas no disponible — cron desactivado')
+}
+
+// #276 (MR-11) — el asiento del pago de un GRUPO marca Groups confirmed/paidAmount y resuelve el
+// titular para payments.description. Independiente del cron de vencimiento (no depende de `reservas`).
+const bookingengineForSettle = system.resolveModule<{ setSettleDeps?(d: { groups?: any; guests?: any }): void }>('bookingengine')
+if (bookingengineForSettle && typeof bookingengineForSettle.setSettleDeps === 'function') {
+  bookingengineForSettle.setSettleDeps({
+    groups: new OrmRepository<any>(orm, 'Groups'),
+    guests: new OrmRepository<any>(orm, 'Guests'),
+  })
+}
+
+// #271 MR-06 — pushAvailabilityToChannex: reject.ts empuja la habitación liberada a las OTAs.
+// El puerto estaba declarado en reservas/usecases/orchestration-deps.ts pero nadie lo seteaba;
+// `pushAvailability` (arriba) tiene exactamente esa firma. setOrchestrationDeps hace merge.
+const reservasForPush = system.resolveModule<{ setOrchestrationDeps(d: any): void }>('reservas')
+if (reservasForPush && typeof reservasForPush.setOrchestrationDeps === 'function') {
+  reservasForPush.setOrchestrationDeps({ pushAvailabilityToChannex: pushAvailability })
+}
+
+// #271 MR-06 — Recordatorio de aprobación pendiente. Cada 15 min el cron busca reservas con
+// `approvalStatus: 'pending'` (el huésped ya pagó y espera respuesta del hotel) que llevan más
+// horas esperando que `booking_config.approvalDeadlineHours` (default 24) y avisa al hotel por las
+// mismas vías que una reserva nueva (campanita, correo al buzón, push — `notifyApprovalOverdue`).
+// UNA sola vez por reserva: `reservations.approvalReminderAt` es el dedup y se escribe sólo si el
+// aviso salió. No auto-aprueba ni auto-rechaza. Los deps del aviso se arman con MÓDULOS
+// (`reservationNotifyDepsFactory`, compartido con bookingengine-notificaciones) en cada tick.
+// Flag global BOOKING_APPROVAL_REMINDER_DISABLED=1 = kill-switch para incidentes (por tick).
+const approvalReminderLogger = logger.child('approval-reminder')
+const approvalNotifyDeps = reservationNotifyDepsFactory((n) => system.resolveModule(n), approvalReminderLogger)
+const approvalReminderDeps: ApprovalReminderDeps = {
+  reservations: new OrmRepository<any>(orm, 'Reservations'),
+  bookingConfig: new OrmRepository<any>(orm, 'BookingConfig'),
+  notify: async (ref, input) => notifyApprovalOverdue(await approvalNotifyDeps(ref.hotelId), ref, input),
+  logger: approvalReminderLogger,
+}
+if (isApprovalReminderDisabled()) {
+  logger.info('Approval-reminder cron desactivado (BOOKING_APPROVAL_REMINDER_DISABLED=1)')
+} else {
+  const approvalReminderCron = createApprovalReminderCron((now) => runApprovalReminder(approvalReminderDeps, now), logger)
+  setTimeout(() => {
+    approvalReminderCron().catch((e) => logger.warn('approval-reminder initial run failed', { error: (e as Error).message }))
+  }, APPROVAL_REMINDER_FIRST_TICK_MS)
+  setInterval(() => {
+    approvalReminderCron().catch((e) => logger.warn('approval-reminder cron failed', { error: (e as Error).message }))
+  }, APPROVAL_REMINDER_TICK_MS)
+  logger.info('Approval-reminder cron listo', { tickMs: APPROVAL_REMINDER_TICK_MS })
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────────

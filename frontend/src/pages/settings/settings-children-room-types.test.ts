@@ -141,7 +141,7 @@ describe('Requerimiento 1 — Política de niños', () => {
     await flushPromises()
     expect(configSet).toHaveBeenCalledWith('child_policy', {
       acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-      childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+      childrenDiscountEnabled: false, childrenRatePercent: 50,
     })
     expect(toastSuccess).toHaveBeenCalled()
   })
@@ -157,8 +157,10 @@ describe('Tarea "Cobro % niños" — porcentaje de tarifa para niños', () => {
     const w = await mountSettings()
     await setTab(w, 'Niños')?.trigger('click')
     const toggles = w.findAll('input[type="checkbox"]')
-    // "Aceptar niños" + "Cobro reducido para niños" + "Ofrece cuna para bebés" (Tarea 22, 2026-09-09).
-    expect(toggles).toHaveLength(3)
+    // "Aceptar niños" + "Cobro reducido para niños". #292 — "Ofrece cuna para bebés" se dio de
+    // baja: la cuna es la amenidad `custom:cuna` de cada habitación.
+    expect(toggles).toHaveLength(2)
+    expect(w.text()).not.toContain('Ofrece cuna para bebés')
     expect((toggles[1]!.element as HTMLInputElement).checked).toBe(false)
     expect(w.text()).not.toContain('Porcentaje de tarifa para niños')
   })
@@ -237,3 +239,25 @@ describe('Tarea "Cobro % niños" — porcentaje de tarifa para niños', () => {
   })
 })
 
+
+// ─── REQ-03 (#235) — máximo de niños que no consumen plaza por habitación ──────────────────────
+// Mudado a Página pública → Motor de reservas (mismo patrón que #291/#79): esta pantalla ya no
+// lo edita. Cobertura del campo en su nueva ubicación: `pages/booking-engine/booking-engine-child-max-free.test.ts`.
+describe('REQ-03 (#235) — el máximo de niños sin plaza ya NO vive en Configuración Base', () => {
+  it('la tab "Niños" no tiene el input ni el texto del campo mudado', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect(w.find('#settings-max-free-children').exists()).toBe(false)
+    expect(w.text()).not.toContain('Máximo de niños que no consumen plaza por habitación')
+  })
+
+  it('al guardar, ConfigService.set(child_policy) NUNCA incluye maxFreeChildrenPerRoom', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    const childCard = w.findAll('h3').find(h => h.text() === 'Política de niños')!.element.closest('div.rounded-\\[20px\\]')!
+    const saveBtn = childCard.querySelector('button') as HTMLButtonElement
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.not.objectContaining({ maxFreeChildrenPerRoom: expect.anything() }))
+  })
+})

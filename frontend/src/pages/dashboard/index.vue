@@ -17,7 +17,7 @@
     />
 
     <!-- 2. KPIs gigantes — ocupación e ingresos pesan más que check-in/out -->
-    <div class="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1.25fr]">
+    <div class="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1fr_1.25fr]">
       <KpiHeroCard
         label="Ocupación Actual" accent="blue" suffix="%" icon="bed"
         :value="dashboard.stats.occupancy"
@@ -39,6 +39,14 @@
           { label: 'Realizados', value: arrivalsDone, tone: 'text-[#16A34A]' },
           { label: 'Pendientes', value: arrivalsPending, tone: 'text-[#D97706]' },
         ]"
+      />
+      <!-- HAC-06 (#261): llegadas de hoy que todavía no tienen habitación (se asignan en el planning) -->
+      <KpiHeroCard
+        label="Llegadas de hoy sin habitación" :accent="arrivalsUnassigned > 0 ? 'rose' : 'amber'" icon="bed"
+        :value="arrivalsUnassigned"
+        unit="Reservas"
+        :show-bar="false"
+        data-testid="kpi-arrivals-unassigned"
       />
       <KpiHeroCard
         label="Check-out Hoy" accent="purple" icon="checkout"
@@ -103,7 +111,20 @@
               </div>
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-bold text-navy">{{ item.guestName || 'Huésped' }}</div>
-                <div class="text-[11px] text-text-muted">Hab. {{ item.roomNumber || '—' }}</div>
+                <div class="flex items-center gap-1.5 text-[11px] text-text-muted">
+                  <span>Hab. {{ item.roomNumber || '—' }}</span>
+                  <!-- #274 — cuna / amenidades infantiles pedidas al reservar; el tooltip lista qué preparar. -->
+                  <span
+                    v-if="childSetupSummary(item)"
+                    :title="childSetupSummary(item)"
+                    :aria-label="childSetupSummary(item)"
+                    data-testid="crib-badge"
+                    class="inline-flex items-center gap-0.5 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-bold text-warning"
+                  >
+                    <Icon name="crib" :size="12" />
+                    {{ item.needsCrib ? 'Cuna' : 'Bebé' }}
+                  </span>
+                </div>
               </div>
               <span
                 v-if="depositBadge(item)"
@@ -291,6 +312,9 @@ import RevenueChart, { type DailyPoint } from '@/components/features/dashboard/R
 import FloorHeatMap from '@/components/features/dashboard/FloorHeatMap.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Icon from '@/components/ui/Icon.vue'
+// #274 — texto del tooltip del badge de cuna (compartido con el listado de reservas).
+import { childSetupSummary } from '@/services/Reservation.service'
 import { DashboardService } from '@/services/Dashboard.service'
 import { WeatherService, type WeatherInfo } from '@/services/Weather.service'
 import { currencySymbol } from '@/composables/useCurrency'
@@ -396,6 +420,8 @@ const todaysArrivals = computed(() =>
   reservationStore.reservations.filter(r => dstr(r.checkIn) === todayStr() && r.status !== 'cancelled'))
 const arrivalsDone = computed(() => todaysArrivals.value.filter(r => r.status === 'checked_in' || r.status === 'checked_out').length)
 const arrivalsPending = computed(() => todaysArrivals.value.length - arrivalsDone.value)
+// HAC-06 (#261): llegadas de hoy (pending|confirmed) sin habitación asignada, calculado en backend.
+const arrivalsUnassigned = computed(() => dashboard.stats.arrivalsUnassigned ?? 0)
 const arrivalsProgress = computed(() =>
   todaysArrivals.value.length ? Math.round((arrivalsDone.value / todaysArrivals.value.length) * 100) : 0)
 

@@ -17,6 +17,10 @@ import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservati
 import { paymentsOfReservation as paymentsOfReservationUsecase, hasInvoiceForReservation as hasInvoiceForReservationUsecase } from './usecases/reservation-money-links'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
 import { approveReservation as approveReservationUsecase } from './usecases/approve'
+import { approvalNotifier } from './usecases/approval-email'
+import { rejectReservation as rejectReservationUsecase, type RejectReservationResult } from './usecases/reject'
+import { markReservationPaid, type MarkPaidDTO } from './usecases/mark-paid'
+import { issueInvoiceForReservation, type IssueInvoiceResult } from './usecases/issue-invoice'
 import { cancelReservationBySystem, type SystemCancelInput, type SystemCancelOutcome } from './usecases/cancel-system'
 import { previewCancellation, type CancelPreview } from './usecases/cancel-preview'
 import { getPreCheckinData as getPreCheckinDataUsecase, submitPreCheckin as submitPreCheckinUsecase, uploadPreCheckinPhoto as uploadPreCheckinPhotoUsecase } from './usecases/pre-checkin'
@@ -36,19 +40,18 @@ import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInp
 import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
 import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } from '../../shared/usecases/open-folio-balance'
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
+import type { RoomAssignmentDeps } from './usecases/assign-room'
+import { retryRefund as retryRefundUsecase, refundStatePatch, type RetryRefundResult } from './usecases/retry-refund'
 
 export class ReservasService {
   /** Envío por Meta. Lo inyecta el connector `reservas-whatsapp`. `null` = sin cablear en este servidor. */
-  whatsappPort: WhatsappSendPort | null = null
-  setWhatsappPort(port: WhatsappSendPort): void { this.whatsappPort = port }
+  whatsappPort: WhatsappSendPort | null = null; setWhatsappPort(port: WhatsappSendPort): void { this.whatsappPort = port }
 
   private sockets: ReservasSockets = {}
-  private auditPort: AuditPort | null = null
-  setAuditDeps(port: AuditPort): void { this.auditPort = port }
-  private emailSender: EmailSender = new NullEmailSender()
-  private messageLogRepo: RepositoryAdapter<any> | null = null
+  private auditPort: AuditPort | null = null; setAuditDeps(port: AuditPort): void { this.auditPort = port }
+  private emailSender: EmailSender = new NullEmailSender(); private messageLogRepo: RepositoryAdapter<any> | null = null
   setEmailDeps(es: EmailSender, r: RepositoryAdapter<any>): void { this.emailSender = es; this.messageLogRepo = r }
-  private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger })
+  private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger, configRepo: this.configRepo ?? null })
   getNotifyDeps() { return this.notifyDeps() } // deps reales (post setEmailDeps) para checkin/checkout
 
   /** Puertos cross-módulo que inyectan los connectors. Tipo en usecases/orchestration-deps.ts. */
@@ -83,13 +86,10 @@ export class ReservasService {
   setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
   /** Invalidación a mano para altas que bypassan el CRUD (ver reservas-bookingengine.ts). */
   async invalidateListCache(hotelId: string): Promise<void> { await invalidateReservasCaches(this.cache, hotelId) }
-  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser) }
+  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser, { addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource() }) } // REQ-RWP-04: paymentState/paidAmount por fila — ver usecases/crud.ts
   /** #209: alojados (y confirmadas vigentes) del hotel por habitación/apellido, o una por `id` — lo consume el POS vía conector. */
   async searchInHouse(query: { q?: string; id?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<InHouseSearchResult> { return searchInHouseUsecase({ repo: this.repo, roomRepo: this.roomRepo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo }, query, currentUser) }
-  async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
-    this.logger.info('Obteniendo reserva', { id, userId: currentUser.id })
-    return getReservationById(this.repo, id, currentUser)
-  }
+  async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { this.logger.info('Obteniendo reserva', { id, userId: currentUser.id }); return getReservationById(this.repo, id, currentUser) }
   async create(dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Creando reserva', { userId: currentUser.id, roomId: dto.roomId })
     const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo }, this.configRepo)
@@ -101,7 +101,7 @@ export class ReservasService {
     // SEC3-2: el clamp de links vivos, si el connector lo cableó (ver orchestrationDeps).
     const c = this.orchestrationDeps.paymentRequestsCeiling
     return updateReservationWithBalance((rid, hid) => this.queries.getReservationAddons(rid, hid), this.paidSource(), this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes,
-      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined, this.configRepo)
+      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined, this.configRepo, { blockRepo: this.blockRepo, auditPort: this.auditPort }) // #258: RoomBlocks + auditoría del cambio de habitación por PUT
   }
   async delete(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<void> {
     this.logger.info('Eliminando reserva', { id, userId: currentUser.id }) // SEC3-3: release antes del delete
@@ -119,12 +119,9 @@ export class ReservasService {
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
   async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
+  /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
 
-  async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> {
-    // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts
-    // (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
-    return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger })
-  }
+  async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> { return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger }) } // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
 
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
   /** Saldo de la cuenta abierta — lo consulta la guarda de deuda del checkout. */
@@ -146,12 +143,10 @@ export class ReservasService {
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
-  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
+  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp, roomAssignment: this.roomAssignmentDeps() }) // #258: en estadía, el cambio de habitación delega en assignRoom (folio + estados)
   async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo, rateOverrideRepo: this.rateOverrideRepo }, params) }
 
-  async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
-    return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user)
-  }
+  async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> { return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user) }
 
   async reschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
     return commitRescheduleUsecase({ ...this.rescheduleDeps(), logger: this.logger, cache: this.cache, sockets: this.sockets, chargePort: this.orchestrationDeps.chargeReschedule, creditPort: this.orchestrationDeps.creditReschedule, audit: (e) => this.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: id, action: 'reschedule', userId: user.id, hotelId: String(e.hotelId), detail: JSON.stringify(e), createdAt: new Date().toISOString() }) }, id, input, user)
@@ -161,9 +156,7 @@ export class ReservasService {
   async getPreCheckinData(hash: string): Promise<any> { return getPreCheckinDataUsecase(hash, this.hotelRepo, this.roomRepo, this.guestRepo, this.queries) }
 
   async submitPreCheckin(hash: string, body: any, signatureFile: FileUpload): Promise<void> { return submitPreCheckinUsecase(hash, body, this.queries, this.guestRepo, signatureFile, this.storage) }
-  async uploadPreCheckinPhoto(hash: string, file: FileUpload): Promise<{ url: string }> {
-    return uploadPreCheckinPhotoUsecase(hash, file, this.queries, this.storage)
-  }
+  async uploadPreCheckinPhoto(hash: string, file: FileUpload): Promise<{ url: string }> { return uploadPreCheckinPhotoUsecase(hash, file, this.queries, this.storage) }
 
   // ── EXTENDED RESERVATION DETAIL ─────────────────────────────────────────
   /** Efectos de un cambio de saldo hecho fuera del CRUD (extras): socket + invalidación del listado. */
@@ -171,7 +164,7 @@ export class ReservasService {
 
   async getExtendedDetail(id: string, currentUser: any): Promise<any> {
     const messageLogs = requireMessageLogSource(this.orchestrationDeps.listMessageLogs)
-    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs, this.userRepo)
+    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs, this.userRepo, this.orchestrationDeps.listPaymentAttempts) // REQ-RWP-02
   }
 
   // ── AUDIT TRAIL ────────────────────────────────────────────────────────
@@ -184,11 +177,19 @@ export class ReservasService {
 
   async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> { return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth) }
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
-  async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, dto, currentUser, this.auth) }
-  async approve(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return approveReservationUsecase({ repo: this.repo, cache: this.cache }, id, currentUser, this.auth) }
+  private cancelCoreDeps = () => ({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }) // núcleo compartido por cancel / cancelBySystem / reject — ver usecases/cancel-core.ts
+  async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase(this.cancelCoreDeps(), id, dto, currentUser, this.auth) }
+  async approve(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return approveReservationUsecase({ repo: this.repo, cache: this.cache, logger: this.logger, notifyGuest: approvalNotifier(this.notifyDeps()), closeHotelNotifications: this.orchestrationDeps.closeApprovalNotifications }, id, currentUser, this.auth) } // #271 MR-06: email `reservation_approved` al huésped + cierra la campanita (connector reservas-notificaciones)
+  async reject(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<RejectReservationResult> { return rejectReservationUsecase({ ...this.cancelCoreDeps(), paymentsOf: (h: string, r: string) => this.paymentsOfReservation(h, r), refund: this.orchestrationDeps.approvalRefund, pushAvailability: this.orchestrationDeps.pushAvailabilityToChannex, groupRepo: this.groupRepo, notifyGuest: approvalNotifier(this.notifyDeps()) }, id, dto, currentUser, this.auth) } // #271 MR-06: rechazo con reembolso Stripe (puerto `approvalRefund`, connector reservas-payments) + email `reservation_rejected` (usecases/approval-email.ts)
+  async markPaid(id: string, dto: MarkPaidDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<any> { return markReservationPaid({ repo: this.repo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), port: this.orchestrationDeps.manualPayment, auditPort: this.auditPort, logger: this.logger, notifyChanged: this.reservationChanged() }, id, dto, currentUser, this.auth) } // REQ-RWP-06 (#249): cobro manual fuera de Stripe — asienta en `payments` vía connector reservas-payments; ver usecases/mark-paid.ts
+  /** #253 — POST /api/reservas/:id/invoice. Ownership post-findById en el usecase (como markPaid); el camino (folio abierto o directo) lo decide usecases/issue-invoice.ts. */
+  async issueInvoice(id: string, input: { notes?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<IssueInvoiceResult> { return issueInvoiceForReservation({ repo: this.repo, auth: this.auth, invoicing: this.orchestrationDeps.invoicing, folioReader: this.orchestrationDeps.folioReader, logger: this.logger }, id, input, currentUser) }
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
+  async retryRefund(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<RetryRefundResult> { return retryRefundUsecase({ repo: this.repo, auth: this.auth, port: this.orchestrationDeps.retryWebRefund, audit: this.auditPort, logger: this.logger }, id, currentUser) } // #272 — POST /api/reservas/:id/retry-refund: reintenta en Stripe vía el puerto del connector bookingengine-refunds; ownership post-findById en usecases/retry-refund.ts
+  async setRefundState(id: string, patch: Record<string, unknown>): Promise<ReservasDTO | null> { const row = await this.repo.update(id, refundStatePatch(patch) as any); await invalidateReservasCaches(this.cache, row?.hotelId); return row } // #272 — escritura acotada de refundStatus/refundedAt/refundPaymentId (sin state machine): la usa bookingengine-refunds, que ya validó reserva y hotel en shared/usecases/web-booking-refund. Invalida el listado como toda mutación: si no, `refundStatus` viejo hasta 300 s
+  claimRefund(id: string): Promise<boolean> { return this.queries.claimRefund(id) } // #272 — compare-and-swap → 'pending' antes de llamar a Stripe: el segundo concurrente ve false (ver usecases/reservas-queries.ts)
   /** Cancelación de SISTEMA (OTA/IA): sin usuario logueado, scoping por `hotelId`. Ver usecases/cancel-system.ts. Lo consumen los connectors canales-reservas / ai-recepcionista-reservas / ai-gerente-reservas. */
-  async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, input) }
+  async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem(this.cancelCoreDeps(), id, input) }
 
   async getBookingEngineDashboard(user: any): Promise<any> { return getBookingEngineDashboardUsecase(this.queries, user) }
   async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> {

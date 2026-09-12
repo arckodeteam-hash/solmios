@@ -1,11 +1,17 @@
 export type ReservationStatus = 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled' | 'no_show'
-export type ReservationChannel = 'direct' | 'booking' | 'airbnb' | 'expedia' | 'agoda' | 'trip' | 'phone' | 'email' | 'walk_in'
+export type ReservationChannel = 'direct' | 'booking' | 'airbnb' | 'expedia' | 'agoda' | 'trip' | 'phone' | 'email' | 'walk_in' | 'web'
 export type PreCheckinStatus = 'pending' | 'sent' | 'completed' | 'expired'
 
 export interface ReservasDTO {
   id: string
   guestId?: string
-  roomId: string
+  // REQ-HAC-01 (#256/#258) — null = todavía sin habitación asignada (se asigna al check-in).
+  // `roomType` es el tipo vendido (`rooms.type`); `roomAssignedAt`/`roomAssignedBy` (users.id)
+  // registran la asignación (REQ-HAC-03). Ver reservas/model.ts.
+  roomId: string | null
+  roomType?: string
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   hotelId: string
   checkIn: string
   checkOut: string
@@ -62,16 +68,34 @@ export interface ReservasDTO {
   cancellationFee?: number
   refundAmount?: number
   policyApplied?: any
+  // #272 — Reembolso real en Stripe de una cancelación web (ver reservas/model.ts).
+  refundStatus?: 'none' | 'pending' | 'done' | 'failed'
+  refundedAt?: string
+  refundPaymentId?: string
   // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
   // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
-  approvalStatus?: 'pending' | 'approved'
+  // 'rejected' (#271 MR-06): el hotel la rechazó — la reserva queda además `status: 'cancelled'`.
+  approvalStatus?: 'pending' | 'approved' | 'rejected'
+  // REQ-RWP-04 (#247) — etiqueta de cobro calculada (payments + extras, ver crud.ts). Sólo la
+  // devuelven el listado y mark-paid; NO es columna de la tabla.
+  paymentState?: 'pending' | 'partial' | 'paid'
+  paidAmount?: number
   createdAt: string
   updatedAt: string
 }
 
 export interface CreateReservasDTO {
   guestId?: string
+  // MR-08 (#273): el panel puede mandar el email del huésped en lugar de `guestId`; el usecase lo
+  // resuelve a una ficha existente (email/teléfono normalizados) o nueva con el helper compartido
+  // `shared/usecases/find-or-create-guest.ts`. NO se persisten en Reservations. Con `guestId`
+  // presente se ignoran.
+  guestEmail?: string
+  guestName?: string
+  guestPhone?: string
   roomId: string
+  // REQ-HAC-01 (#258) — tipo vendido; si falta, el usecase lo rellena desde `rooms.type`.
+  roomType?: string
   hotelId: string
   checkIn: string
   checkOut: string
@@ -121,6 +145,7 @@ export interface CreateReservasDTO {
 export interface UpdateReservasDTO {
   guestId?: string
   roomId?: string
+  roomType?: string
   // NOTE: hotelId intentionally NOT here — cannot move reservation between hotels
   checkIn?: string
   checkOut?: string
@@ -159,6 +184,13 @@ export interface UpdateReservasDTO {
   // PC-8 (2026-08-19): editar/cambiar/quitar el código promocional. crud.updateReservation
   // valida + consume/libera usos según el cambio (schema Update ya lo declara).
   promoCode?: string
+}
+
+// REQ-HAC-03 (#258) — body de POST /api/reservas/:id/assign-room. `allowTypeChange` permite asignar
+// una unidad de un tipo distinto al vendido (`roomType`); sin el flag es 409 type_mismatch.
+export interface AssignRoomDTO {
+  roomId: string
+  allowTypeChange?: boolean
 }
 
 export interface ReservasQuery {
@@ -228,6 +260,11 @@ export interface AddonDTO {
   kind?: string
   quantity?: number
   status?: string
+  // #269 — `unitPrice` informativo, `source` 'manual' | 'booking_engine' (fuera del total
+  // cobrable), `taxRate` % aplicado al reservar.
+  unitPrice?: number
+  source?: string
+  taxRate?: number
   createdAt?: string
   updatedAt?: string
 }
@@ -236,6 +273,9 @@ export interface CreateAddonDTO {
   kind?: string
   amount?: number
   quantity?: number
+  unitPrice?: number
+  source?: string
+  taxRate?: number
 }
 
 export interface CurrentUser {

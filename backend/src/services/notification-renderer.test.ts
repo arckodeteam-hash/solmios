@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
-import { NotificationRenderer, renderTemplate, type AutoMessageTemplateRow } from './notification-renderer'
+import { NotificationRenderer, renderTemplate, isRawHtmlKey, type AutoMessageTemplateRow } from './notification-renderer'
 
 const log = silentLogger()
 
@@ -30,6 +30,17 @@ describe('renderTemplate (parámetro escape)', () => {
 
   it('escape=false: NO escapa (para subjects de texto plano — fix H2)', () => {
     expect(renderTemplate('Hola {n}', { n: 'A & B' }, false)).toBe('Hola A & B')
+  })
+
+  it('#270: las keys *_lines son HTML ya armado por el usecase → se insertan tal cual', () => {
+    expect(renderTemplate('{extras_lines}', { extras_lines: '<ul><li>a</li></ul>' })).toBe('<ul><li>a</li></ul>')
+    expect(isRawHtmlKey('tax_lines')).toBe(true)
+    expect(isRawHtmlKey('guest_name')).toBe(false)
+  })
+
+  it('#270: el resto de las variables sigue escapado aunque haya *_lines en el mismo template', () => {
+    expect(renderTemplate('{guest_name}', { guest_name: '<b>x</b>' })).toBe('&lt;b&gt;x&lt;/b&gt;')
+    expect(renderTemplate('{guest_name}{rooms_lines}', { guest_name: '<b>', rooms_lines: '<i>' })).toBe('&lt;b&gt;<i>')
   })
 })
 

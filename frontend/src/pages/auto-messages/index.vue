@@ -162,7 +162,7 @@
           <div>
             <label class="block text-[11px] font-bold text-navy uppercase mb-2">Plantilla (evento)</label>
             <select v-model="form.event" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
-              <option value="checkin_welcome">Bienvenida (check-in)</option><option value="reservation_confirmed">Confirmación de reserva</option><option value="reservation_presale">Reserva pendiente de pago</option><option value="reminder">Recordatorio</option>
+              <option value="checkin_welcome">Bienvenida (check-in)</option><option value="reservation_confirmed">Confirmación de reserva</option><option value="reservation_presale">Reserva pendiente de pago</option><option value="reminder">Recordatorio</option><option value="reservation_new_staff">Aviso al hotel: reserva web / pago recibido</option><option value="reservation_new_ota_staff">Aviso al hotel: reserva desde una OTA</option><option value="reservation_received_unpaid">Acuse al huésped sin pasarela de pago</option>
             </select>
           </div>
           <div>
@@ -263,7 +263,7 @@ const filtered = computed(() => {
 
 function channelLabel(c: string) { const m: any = { email:'Email', whatsapp:'WhatsApp', both:'Email + WhatsApp' }; return m[c]||c }
 function triggerLabel(t: string) { const m: any = { on_reservation:'Al crear reserva', pre_checkin:'Antes del check-in', checkin_day:'Día del check-in', checkout_day:'Día del check-out', post_checkout:'Después del check-out', birthday:'Cumpleaños', inactive_guests:'Win-back inactivos' }; return m[t]||t }
-function eventLabel(e?: string) { const m: any = { checkin_welcome:'Bienvenida', reservation_confirmed:'Confirmación', reservation_presale:'Pre-venta', reminder:'Recordatorio' }; return e ? (m[e]||e) : '—' }
+function eventLabel(e?: string) { const m: any = { checkin_welcome:'Bienvenida', reservation_confirmed:'Confirmación', reservation_presale:'Pre-venta', reminder:'Recordatorio', reservation_new_staff:'Aviso al hotel (web)', reservation_new_ota_staff:'Aviso al hotel (OTA)', reservation_received_unpaid:'Acuse sin pasarela' }; return e ? (m[e]||e) : '—' }
 function langLabel(l?: string) { const m: any = { es:'ES', en:'EN', pt:'PT' }; return l ? (m[l]||l) : '—' }
 
 function channelClass(c: string) {

@@ -37,6 +37,21 @@ function pickCard(card: any): PaymentOutcome['card'] | undefined {
   return { brand, last4 }
 }
 
+// Epic #265 — Knob SÓLO para pruebas: si `STRIPE_API_HOST` está seteado, el SDK apunta a ese host
+// (un doble HTTP local de la API de Stripe que levanta el e2e) en vez de api.stripe.com. Sin la var
+// no agrega NADA a las opciones del SDK, así que en producción (donde nunca se setea) el cliente
+// queda exactamente como antes. Y sólo aplica con claves de prueba (`sk_test_` / `rk_test_`): con
+// cualquier otra (live, restringida, formato desconocido) se ignora aunque esté seteada — una var
+// olvidada no puede mandar una clave real (va en `Authorization: Bearer`) a un host ajeno.
+type StripeHostConfig = Pick<NonNullable<ConstructorParameters<typeof Stripe>[1]>, 'host' | 'port' | 'protocol'>
+function stripeTestHostOverride(secretKey: string): StripeHostConfig {
+  const host = process.env.STRIPE_API_HOST
+  if (!host || !/^(sk|rk)_test_/.test(secretKey)) return {}
+  const port = process.env.STRIPE_API_PORT
+  const protocol = (process.env.STRIPE_API_PROTOCOL || 'http') as StripeHostConfig['protocol']
+  return { host, ...(port ? { port } : {}), protocol }
+}
+
 export class StripeGateway implements RefundableGateway {
   readonly provider: PaymentProvider = 'stripe'
   readonly capabilities: GatewayCapabilities = {
@@ -59,6 +74,7 @@ export class StripeGateway implements RefundableGateway {
       // El tipo de apiVersion está clavado a la versión del SDK; fijamos la nuestra a propósito.
       apiVersion: STRIPE_API_VERSION as any,
       appInfo: { name: 'SolmiOS', version: '1.0.0' },
+      ...stripeTestHostOverride(creds.secretKey),
     })
   }
 
@@ -229,12 +245,29 @@ export class StripeGateway implements RefundableGateway {
     }
   }
 
-  async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
+  async refund(providerRef: string, amountMinor?: number, idempotencyKey?: string): Promise<RefundResult> {
+    // #272: misma clave → Stripe devuelve el refund original (24 h) en vez de crear un segundo.
+    const options = idempotencyKey ? { idempotencyKey } : undefined
     const r = await this.stripe.refunds.create({
-      payment_intent: providerRef,
+      payment_intent: await this.paymentIntentOf(providerRef),
       ...(amountMinor ? { amount: amountMinor } : {}),
-    })
+    }, options as any)
     return { refundId: r.id, status: r.status || 'unknown' }
+  }
+
+  /**
+   * #271 MR-06: `refunds.create` sólo acepta un PaymentIntent, pero lo que se guarda como
+   * referencia de un cobro por Checkout es el id de la SESIÓN (`cs_...`): settle-webhook.ts
+   * persiste `outcome.providerRef` y post-booking-payment.ts guarda `stripeSessionId`. Acá se
+   * resuelve la sesión → su `payment_intent`; un `pi_` (cobro directo) pasa tal cual.
+   */
+  private async paymentIntentOf(providerRef: string): Promise<string> {
+    if (!providerRef.startsWith('cs_')) return providerRef
+    const s = await this.stripe.checkout.sessions.retrieve(providerRef)
+    const pi = s.payment_intent
+    const id = typeof pi === 'string' ? pi : pi?.id
+    if (!id) throw new Error(`Stripe: la sesión de checkout ${providerRef} no tiene cargo asociado (sin payment_intent)`)
+    return id
   }
 
   async voidCharge(providerRef: string): Promise<void> {

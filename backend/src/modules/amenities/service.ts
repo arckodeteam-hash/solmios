@@ -2,6 +2,9 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
 import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { AmenitiesSockets } from './sockets'
+import { isCustomAmenityKey, planRoomAmenityUpsert, type NormalizedItem } from './usecases/room-amenity-items'
+
+const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
 export class AmenitiesService {
   private sockets: AmenitiesSockets = {}
@@ -58,19 +61,31 @@ export class AmenitiesService {
     return amenities.length
   }
 
+  /**
+   * Fijas activas + TODAS las personalizadas (activas e inactivas): el form de habitación muestra
+   * el estado de cada custom (#290). isActive puede venir como 0/1 o true/false según el adapter.
+   */
   async listRoomAmenities(roomId: string): Promise<any[]> {
-    return await this.roomAmenitiesRepo.findMany({ roomId, isActive: 1 }) as any[]
+    const rows = await this.roomAmenitiesRepo.findMany({ roomId }) as any[]
+    return rows.filter((r) => isCustomAmenityKey(r.amenityKey) || isOn(r.isActive))
   }
 
-  async updateRoomAmenities(roomId: string, amenities: string[]): Promise<number> {
+  /**
+   * `amenities` = keys fijas del catálogo (gratuitas); `items` = personalizadas con name/price/isActive.
+   * Ver planRoomAmenityUpsert para la semántica. Compat: llamar sólo con `amenities` (items undefined)
+   * sigue igual para las fijas y no toca las custom. Devuelve la cantidad de keys activas (fijas + custom).
+   */
+  async updateRoomAmenities(roomId: string, amenities: string[], items?: NormalizedItem[]): Promise<number> {
     const existing = await this.roomAmenitiesRepo.findMany({ roomId }) as any[]
-    for (const ex of existing) { if (!amenities.includes(ex.amenityKey)) await this.roomAmenitiesRepo.update(ex.id, { isActive: 0 }) }
-    for (const key of amenities) {
-      const found = existing.find((e: any) => e.amenityKey === key)
-      if (found) { await this.roomAmenitiesRepo.update(found.id, { isActive: 1 }) } else { await this.roomAmenitiesRepo.create({ id: crypto.randomUUID(), roomId, amenityKey: key, isShared: 0, isActive: 1 }) }
+    const plan = planRoomAmenityUpsert(existing, amenities, items)
+    for (const id of plan.deactivate) await this.roomAmenitiesRepo.update(id, { isActive: 0 })
+    for (const id of plan.reactivate) await this.roomAmenitiesRepo.update(id, { isActive: 1 })
+    for (const u of plan.update) await this.roomAmenitiesRepo.update(u.id, { ...u.patch, isActive: u.patch.isActive ? 1 : 0 })
+    for (const c of plan.create) {
+      await this.roomAmenitiesRepo.create({ id: crypto.randomUUID(), roomId, amenityKey: c.amenityKey, name: c.name, price: c.price, isShared: 0, isActive: c.isActive ? 1 : 0 })
     }
     // Mantiene en sync el CSV vestigial Rooms.amenities (connector amenities-habitaciones).
-    await this.sockets.onRoomAmenitiesUpdated?.(roomId, amenities)
-    return amenities.length
+    await this.sockets.onRoomAmenitiesUpdated?.(roomId, plan.activeKeys)
+    return plan.activeKeys.length
   }
 }

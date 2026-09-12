@@ -23,14 +23,16 @@ export interface ChildPolicy {
   /** Porcentaje (1-100) del "valor de un adulto" que paga cada niño con plaza, SOLO cuando
    *  `childrenDiscountEnabled` está prendido. Nunca hardcodeado — cada hotel elige el suyo. */
   childrenRatePercent: number
-  /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — ¿el hotel ofrece cuna? Sin esto en
-   *  `true`, "¿Necesita cuna?" ni se pregunta, sin importar si hay un bebé en la composición. */
-  cribAvailable: boolean
+  /** REQ-03 (#235) — máximo de niños que NO consumen plaza (bebés incluidos) por habitación.
+   *  `null`/ausente = SIN LÍMITE (nunca un default numérico). Hotel-wide, se aplica a CADA
+   *  habitación de la reserva — ver `freeChildrenLimitError`. */
+  maxFreeChildrenPerRoom?: number | null
 }
 
 export const DEFAULT_CHILD_POLICY: ChildPolicy = {
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  childrenDiscountEnabled: false, childrenRatePercent: 50,
+  maxFreeChildrenPerRoom: null,
 }
 
 export interface ChildComposition {
@@ -79,4 +81,18 @@ export function fitsRoomCapacity(
   if (room.maxAdults != null && composition.effectiveAdults > room.maxAdults) return false
   if (room.maxChildren != null && composition.payingChildren > room.maxChildren) return false
   return true
+}
+
+/** REQ-03 (#235) — espejo de `freeChildrenLimitError` del backend: motivo por el que una
+ *  composición supera el máximo de niños sin plaza del hotel, o `null` si entra (o si el hotel no
+ *  configuró límite). Separado de `fitsRoomCapacity` a propósito: los `freeChildren` siguen sin
+ *  contar para `capacity`/`maxChildren` — es un tope distinto, con su propio mensaje. */
+export function freeChildrenLimitError(
+  policy: Pick<ChildPolicy, 'maxFreeChildrenPerRoom'>,
+  composition: Pick<ChildComposition, 'freeChildren'>,
+): string | null {
+  const max = policy.maxFreeChildrenPerRoom
+  if (max == null) return null
+  if (composition.freeChildren <= max) return null
+  return `Esta habitación admite hasta ${max} niño(s) que no consumen plaza; la reserva tiene ${composition.freeChildren}`
 }

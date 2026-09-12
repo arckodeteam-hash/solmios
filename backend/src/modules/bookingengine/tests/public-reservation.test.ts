@@ -18,7 +18,7 @@ import { getPublicReservation } from '../usecases/public-reservation'
 
 const VALID_TOKEN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
-function makeOrm(opts: { reservations?: any[]; guest?: any } = {}) {
+function makeOrm(opts: { reservations?: any[]; guest?: any; rooms?: any[] } = {}) {
   const reservations = opts.reservations ?? [
     {
       id: 'res-1', hotelId: 'h1', guestId: 'g1', roomId: 'r1',
@@ -33,8 +33,11 @@ function makeOrm(opts: { reservations?: any[]; guest?: any } = {}) {
   const orm: any = {
     findMany: async (model: string, query: any) => {
       const id = query?.id
+      // #272 — `{ hotelId, groupId }` devuelve las hermanas del grupo.
+      if (model === 'Reservations' && query?.groupId) return reservations.filter((r) => r.hotelId === query.hotelId && r.groupId === query.groupId)
       if (model === 'Reservations') return reservations.filter((r) => r.id === id)
       if (model === 'Guests') return guest && guest.id === id ? [guest] : []
+      if (model === 'Rooms') return (opts.rooms ?? []).filter((r) => r.id === id)
       return []
     },
   }
@@ -93,6 +96,71 @@ describe('getPublicReservation — IDOR cerrado (F0 0.14)', () => {
     const res = await getPublicReservation(orm, reservations[0]!.id, VALID_TOKEN)
     expect(res.status).toBe(200)
     expect(res.body.reservation.childrenAges).toEqual([])
+  })
+
+  // #266 — `cancellationReason` es texto libre del panel: al público sale sólo el código
+  // 'payment_timeout' (lo que la pantalla de confirmación necesita para decir "venció").
+  it('cancellationReason: expone payment_timeout y oculta cualquier otro motivo', async () => {
+    const base = { hotelId: 'h1', guestId: 'g1', roomId: 'r1', accessToken: VALID_TOKEN, status: 'cancelled', checkIn: '2026-08-10', checkOut: '2026-08-12', totalAmount: 200 }
+    const { orm } = makeOrm({ reservations: [
+      { ...base, id: 'res-exp', cancellationReason: 'payment_timeout' },
+      { ...base, id: 'res-int', cancellationReason: 'Huésped conflictivo, no volver a aceptar' },
+      { ...base, id: 'res-nul' },
+    ] })
+    expect((await getPublicReservation(orm, 'res-exp', VALID_TOKEN)).body.reservation.cancellationReason).toBe('payment_timeout')
+    expect((await getPublicReservation(orm, 'res-int', VALID_TOKEN)).body.reservation.cancellationReason).toBeNull()
+    expect((await getPublicReservation(orm, 'res-nul', VALID_TOKEN)).body.reservation.cancellationReason).toBeNull()
+  })
+
+  // #272 — estado del reembolso + habitaciones del grupo (token compartido).
+  it('reserva simple: refundStatus none por default, group null y campos de reembolso en 0/null', async () => {
+    const { orm } = makeOrm()
+    const res = await getPublicReservation(orm, 'res-1', VALID_TOKEN)
+    expect(res.status).toBe(200)
+    expect(res.body.reservation.refundStatus).toBe('none')
+    expect(res.body.reservation.refundAmount).toBe(0)
+    expect(res.body.reservation.cancellationFee).toBe(0)
+    expect(res.body.reservation.refundedAt).toBeNull()
+    expect(res.body.reservation.cancelledAt).toBeNull()
+    expect(res.body.group).toBeNull()
+  })
+
+  it('reserva con groupId y 3 hermanas → group.rooms.length 3 con roomType, sin exponer nada más', async () => {
+    const base = { hotelId: 'h1', guestId: 'g1', groupId: 'g1', accessToken: VALID_TOKEN, status: 'confirmed', checkIn: '2026-08-10', checkOut: '2026-08-12', totalAmount: 100, adults: 2, children: 0 }
+    const { orm } = makeOrm({
+      reservations: [
+        { ...base, id: 'lead', roomId: 'r1', ownerNotes: 'interno' },
+        { ...base, id: 'sib-1', roomId: 'r2' },
+        { ...base, id: 'sib-2', roomId: 'r3', children: 1 },
+      ],
+      rooms: [{ id: 'r1', type: 'double' }, { id: 'r2', type: 'suite' }],
+    })
+    const res = await getPublicReservation(orm, 'sib-1', VALID_TOKEN)
+    expect(res.status).toBe(200)
+    expect(res.body.reservation.refundStatus).toBe('none')
+    expect(res.body.group.id).toBe('g1')
+    expect(res.body.group.rooms.length).toBe(3)
+    expect(res.body.group.rooms.map((r: any) => r.roomType)).toEqual(['double', 'suite', ''])
+    expect(res.body.group.rooms[2]).toEqual({ id: 'sib-2', roomType: '', adults: 2, children: 1, status: 'confirmed' })
+    expect(Object.keys(res.body.group.rooms[0]).sort()).toEqual(['adults', 'children', 'id', 'roomType', 'status'])
+  })
+
+  it('reserva cancelada con refundStatus done → lo devuelve junto con refundAmount/refundedAt/cancelledAt', async () => {
+    const { orm } = makeOrm({
+      reservations: [{
+        id: 'res-ref', hotelId: 'h1', guestId: 'g1', roomId: 'r1', accessToken: VALID_TOKEN, status: 'cancelled',
+        checkIn: '2026-08-10', checkOut: '2026-08-12', totalAmount: 200, deposit: 200,
+        cancellationFee: 100, refundAmount: 100, refundStatus: 'done',
+        refundedAt: '2026-09-10T10:00:00.000Z', cancelledAt: '2026-09-10T09:00:00.000Z',
+      }],
+    })
+    const res = await getPublicReservation(orm, 'res-ref', VALID_TOKEN)
+    expect(res.status).toBe(200)
+    expect(res.body.reservation.refundStatus).toBe('done')
+    expect(res.body.reservation.refundAmount).toBe(100)
+    expect(res.body.reservation.cancellationFee).toBe(100)
+    expect(res.body.reservation.refundedAt).toBe('2026-09-10T10:00:00.000Z')
+    expect(res.body.reservation.cancelledAt).toBe('2026-09-10T09:00:00.000Z')
   })
 
   it('accessToken=null (reserva creada desde panel) → 404', async () => {

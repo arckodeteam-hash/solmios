@@ -105,3 +105,85 @@ describe('ingesta OTA — applyBookingRevision (QA-02)', () => {
     })
   }
 })
+
+// #246 — el aviso al hotel sale SOLO cuando la ingesta crea una reserva nueva. Dedupe, modificación
+// y cancelación no avisan; y un aviso que falla nunca deshace la ingesta ni frena el ack.
+describe('ingesta OTA — onIngested (#246)', () => {
+  const NEW_DTO = { externalLocator: 'OTA999', status: 'confirmed', channel: 'Booking.com', notes: 'OTA', channexRoomTypeId: null }
+
+  const ormNuevo = (created: any[] = []): any => ({
+    findMany: async (t: string) => (t === 'Rooms' ? [{ id: 'room-1' }] : []),
+    update: async () => {},
+    create: async (_t: string, d: any) => { created.push(d); return d },
+  })
+
+  it('revisión nueva → onIngested UNA vez con {hotelId, reservationId (el creado), ota}', async () => {
+    const created: any[] = []
+    const calls: any[] = []
+    const onIngested = async (d: any) => { calls.push(d) }
+
+    const result = await applyBookingRevision(
+      { orm: ormNuevo(created), channex: {} as any, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel, onIngested },
+      { ...NEW_DTO },
+    )
+
+    expect(result).toEqual({ created: true })
+    expect(created).toHaveLength(1)
+    expect(calls).toEqual([{ hotelId: 'h1', reservationId: created[0].id, ota: 'Booking.com' }])
+  })
+
+  it('revisión de modificación (reserva existente, no cancelada) → 0 avisos', async () => {
+    const calls: any[] = []
+    const orm: any = {
+      findMany: async (t: string) => (t === 'Reservations' ? [{ id: 'existing' }] : [{ id: 'room-1' }]),
+      update: async () => {}, create: async () => {},
+    }
+    const result = await applyBookingRevision(
+      { orm, channex: {} as any, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel, onIngested: async (d: any) => { calls.push(d) } },
+      { ...NEW_DTO, status: 'modified' },
+    )
+    expect(result).toEqual({ created: false })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('cancelación → 0 avisos', async () => {
+    const calls: any[] = []
+    const orm: any = {
+      findMany: async (t: string) => (t === 'Reservations' ? [{ id: 'existing' }] : [{ id: 'room-1' }]),
+      update: async () => {}, create: async () => {},
+    }
+    const result = await applyBookingRevision(
+      { orm, channex: {} as any, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel, onIngested: async (d: any) => { calls.push(d) } },
+      { ...NEW_DTO, status: 'cancelled' },
+    )
+    expect(result).toEqual({ created: false })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('onIngested que lanza → la ingesta resuelve {created:true} igual y deja rastro en el log', async () => {
+    const created: any[] = []
+    const logged: any[] = []
+    const logger = { error: (msg: string, meta?: Record<string, unknown>) => { logged.push({ msg, meta }) } }
+    const onIngested = async () => { throw new Error('notificaciones caída') }
+
+    const result = await applyBookingRevision(
+      { orm: ormNuevo(created), channex: {} as any, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel, onIngested, logger },
+      { ...NEW_DTO },
+    )
+
+    expect(result).toEqual({ created: true })
+    expect(created).toHaveLength(1)
+    expect(logged).toHaveLength(1)
+    expect(logged[0].meta).toMatchObject({ hotelId: 'h1', reservationId: created[0].id, error: 'notificaciones caída' })
+  })
+
+  it('sin onIngested → la ingesta funciona como siempre', async () => {
+    const created: any[] = []
+    const result = await applyBookingRevision(
+      { orm: ormNuevo(created), channex: {} as any, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel },
+      { ...NEW_DTO },
+    )
+    expect(result).toEqual({ created: true })
+    expect(created).toHaveLength(1)
+  })
+})

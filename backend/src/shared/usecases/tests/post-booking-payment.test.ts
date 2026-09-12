@@ -41,6 +41,18 @@ describe('postBookingPayment', () => {
     expect(r).toMatchObject({ id: 'pay-existente' })
   })
 
+  it('#276: la descripción nombra al huésped y la fecha de entrada', async () => {
+    const { port, created } = portOf()
+    await postBookingPayment(port, booking({ guestName: 'Juan Pérez', checkIn: '2026-10-01' }))
+    expect(created[0].description).toBe('Reserva web · Juan Pérez · 2026-10-01')
+  })
+
+  it('#276: sin nombre de huésped cae a "huésped"', async () => {
+    const { port, created } = portOf()
+    await postBookingPayment(port, booking({ guestName: undefined, checkIn: '2026-10-01' }))
+    expect(created[0].description).toBe('Reserva web · huésped · 2026-10-01')
+  })
+
   it('sin monto o sin sessionId no asienta nada', async () => {
     const a = portOf(); await postBookingPayment(a.port, booking({ totalAmount: 0 }))
     const b = portOf(); await postBookingPayment(b.port, booking({ paymentRef: '' }))

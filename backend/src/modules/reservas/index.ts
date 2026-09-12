@@ -47,8 +47,8 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard'],
-      events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
+      events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned', 'onRoomVacatedMidStay'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
       // La LECTURA va por el puerto `listMessageLogs` del connector reservas-marketing (STR-3).
@@ -129,10 +129,19 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
 
       // ── Cancel (F2 plan #627): aplica política de cancelación al cancelar ──
       router.post('/api/reservas/:id/cancel', guard('reservations', 'edit'), (req) => controller.cancel(req))
+      // #272 — reintenta el reembolso Stripe de una cancelación web que quedó `failed` (puerto del connector bookingengine-refunds).
+      router.post('/api/reservas/:id/retry-refund', guard('reservations', 'edit'), (req) => controller.retryRefund(req))
 
       // ── Approve (Tarea 3.4, corrección 2026-08-25): reserva pública pendiente de
       //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──
       router.post('/api/reservas/:id/approve', guard('reservations', 'edit'), (req) => controller.approve(req))
+      // ── Reject (#271 MR-06): la contracara — reembolso Stripe 100%, cancela y avisa al huésped ──
+      router.post('/api/reservas/:id/reject', guard('reservations', 'edit'), (req) => controller.reject(req))
+
+      // ── Mark paid (REQ-RWP-06, #249): permiso `billing` (con /invoice, los dos únicos de reservas) — registra dinero, mismo permiso que POST /api/payments ──
+      router.post('/api/reservas/:id/mark-paid', guard('billing', 'create'), (req) => controller.markPaid(req))
+      // #253 — emite factura desde la reserva (con folio abierto: cierra+factura; sin folio: factura directa vinculando pagos). Mismo permiso que POST /api/facturas.
+      router.post('/api/reservas/:id/invoice', guard('billing', 'create'), (req) => controller.issueInvoice(req))
 
       // ── Companions ──
       router.get('/api/reservations/:id/companions', guard('reservations', 'view'), (req) => controller.listCompanions(req))
@@ -152,6 +161,15 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // ── Check-in / Check-out ──
       router.post('/api/reservas/:id/checkin', guard('reservations', 'checkin'), (req) => controller.checkin(req))
       router.post('/api/reservas/:id/checkout', guard('reservations', 'checkout'), (req) => controller.checkout(req))
+
+      // ── Asignar habitación (REQ-HAC-03, #258): la reserva vende un TIPO (`roomType`) y la unidad se
+      // elige en recepción, normalmente al check-in. Mismo permiso que el PUT (`reservations:edit`):
+      // es una edición de la reserva. `?allTypes=1` en el GET incluye unidades de otro tipo
+      // (marcadas `typeMismatch`); el POST las exige con `allowTypeChange`. El `:id` del router es
+      // `([^/]+)`, así que `/api/reservas/:id` de arriba no captura estas rutas.
+      router.get('/api/reservas/:id/assignable-rooms', guard('reservations', 'edit'), (req) => controller.assignableRooms(req))
+      router.post('/api/reservas/:id/assign-room', guard('reservations', 'edit'), (req) => controller.assignRoom(req))
+      router.delete('/api/reservas/:id/assign-room', guard('reservations', 'edit'), (req) => controller.unassignRoom(req))
 
       // ── Enviar código de cerradura por email (botón del planning) ──
       router.post('/api/reservas/:id/send-lock-code-email', guard('reservations', 'edit'), (req) => controller.sendLockCodeEmail(req))
@@ -200,7 +218,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // arriba NO captura esta ruta pese a estar registrado antes.
       router.get('/api/reservas/:id/cancel-preview', guard('reservations', 'edit'), (req) => controller.cancelPreview(req))
 
-      log.info('Módulo reservas v2.1 listo (26 endpoints)')
+      log.info('Módulo reservas v2.1 listo (29 endpoints)')
       return service
     },
   })

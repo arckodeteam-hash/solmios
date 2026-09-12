@@ -39,14 +39,17 @@ import { computed, ref } from 'vue'
 import { BookingService } from '@/services/Booking.service'
 import { ApiError } from '@/services/http'
 import type {
+  CartLineMealPlan,
   CreateBookingResponse,
   CancelReservationResponse,
   CancellationSummary,
+  MealPlanCode,
+  MealPlanPriceMode,
   PromoValidationResult,
   PromoValidationReason,
-  PublicChildAmenity,
   PublicMealPlan,
   PublicRatesResponse,
+  PublicRoomAmenity,
   RoomOccupancyRate,
   RoomTypeRate,
   RoomTypeTaxItem,
@@ -54,6 +57,7 @@ import type {
   TotalBreakdown,
   UpsellLine,
   Upsell,
+  UpsellKind,
 } from '@/types/booking'
 // Refactor cross-cutting: monedas del enum global (types/currency.ts — source of truth único).
 import { CURRENCY_CODES, type CurrencyCode } from '@/types/currency'
@@ -175,24 +179,56 @@ export async function cancelReservation(
 /** Una línea = un tipo de habitación + una ocupación ("para N") + cuántas unidades de ESA
  *  combinación. `key` es la identidad estable de la línea. Exportada (a diferencia del resto del
  *  store interno) porque RoomsStep.vue la necesita para tipar `cartLineGuestsLabel(line)`. */
-/** REQ-01 (#233) — snapshot de una amenidad infantil dentro de una `CartLine`. */
-export interface CartLineChildAmenity {
-  id: string
+/** REQ-01 (#290) — snapshot de una amenidad DE LA HABITACIÓN (cuna, cama extra…) dentro de una
+ *  `CartLine`. `key` = `custom:<slug>` del catálogo público por tipo. */
+export interface CartLineRoomAmenity {
+  key: string
   name: string
   price: number
 }
 
-/** REQ-01 (#233) — una amenidad infantil elegida, resuelta por línea del carrito, para mostrarla
- *  en el resumen/pago (espejo de `UpsellLine`, más `roomName`/`lineKey` porque acá la selección es
- *  POR HABITACIÓN). `total` = `unitPrice × quantity` (quantity = unidades de la línea). */
-export interface ChildAmenityLine {
+/** REQ-01 (#290) — una amenidad de habitación elegida, resuelta por línea del carrito, para
+ *  mostrarla en el resumen/pago (espejo de `UpsellLine`, más `roomName`/`lineKey` porque acá la
+ *  selección es POR HABITACIÓN). `total` = `price × quantity` (quantity = unidades de la línea). */
+export interface RoomAmenityLine {
   lineKey: string
   roomName: string
-  id: string
+  key: string
   name: string
-  unitPrice: number
+  price: number
   quantity: number
   total: number
+}
+
+/** MR-03 (#268) — el régimen de una línea del carrito, resuelto para el resumen/pago (espejo de
+ *  `RoomAmenityLine`, pero UNA fila por línea, no por ítem). Solo líneas con régimen ≠
+ *  `room_only`; las `included` van con `total` 0 para que el desglose diga "incluido". `total` =
+ *  `mealPlan.total × quantity`. */
+export interface MealPlanLine {
+  lineKey: string
+  roomName: string
+  code: MealPlanCode
+  priceMode: MealPlanPriceMode
+  persons: number
+  nights: number
+  quantity: number
+  unitPrice: number
+  total: number
+}
+
+/** MR-03 (#268) — los 3 códigos fijos del catálogo, en el orden que muestra la UI (mismo criterio
+ *  que el backend, `public-meal-plans.ts` CODE_ORDER). "Solo alojamiento" no es un código del
+ *  catálogo: es la base implícita. */
+export const MEAL_PLAN_CODES: readonly MealPlanCode[] = ['breakfast', 'half_board', 'all_inclusive']
+
+/** MR-03 (#268) — importe de un régimen para UNA habitación: la MISMA fórmula que el backend
+ *  (`public-meal-plan-lines.ts:resolveMealPlanLine`): `price × persons × nights` si se cobra por
+ *  persona y noche, 0 si viene incluido en la tarifa. `persons` = adultos + niños con plaza (los
+ *  niños libres no pagan régimen). Compartida con `useGuestComposer.ts` para que la tarjeta y el
+ *  carrito nunca muestren dos números distintos. */
+export function computeMealPlanTotal(priceMode: MealPlanPriceMode | null, price: number, persons: number, nights: number): number {
+  if (priceMode !== 'per_person_per_night') return 0
+  return round2((Number(price) || 0) * Math.max(0, persons) * Math.max(0, nights))
 }
 
 export interface CartLine {
@@ -215,17 +251,26 @@ export interface CartLine {
   /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — asociada a ESTA
    *  línea/habitación, igual criterio que `childrenAges` (a diferencia de `selectedUpsells`, que
    *  es global al carrito). `undefined`/`false` en líneas sin bebé o del flujo legacy.
-   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable. */
+   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable.
+   *  #292 — la cuna se cobra como la amenidad de habitación `custom:cuna` (`CRIB_AMENITY_KEY`):
+   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el composer la
+   *  agrega en `setNeedsCrib`); el backend re-valida y la fuerza/quita según corresponda. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233, amenidades para niños y bebés) — elegidas para ESTA línea/habitación, MISMO
-   *  criterio que `needsCrib`: POR LÍNEA (a diferencia de `selectedUpsells`, global al carrito).
-   *  Es un SNAPSHOT del catálogo público (`store.childAmenities`) tomado al agregar: nombre y
-   *  precio quedan fijos en la línea para el resumen/pago aunque el catálogo cambie después. Al
-   *  backend viaja solo el id (`CreateBookingChildAmenity`) — él re-resuelve precio y valida que
-   *  la habitación tenga menores. `undefined` en líneas sin menores, sin amenidades elegidas o del
-   *  flujo legacy. Importe de la línea = Σ price × `quantity`. */
-  childAmenities?: CartLineChildAmenity[]
+  /** REQ-01 (#290, amenidades de la habitación) — elegidas para ESTA línea, POR LÍNEA igual que
+   *  `needsCrib` (a diferencia de `selectedUpsells`, global al carrito), SIN gateo por niños (una
+   *  cama extra se pide para cualquier composición). SNAPSHOT del catálogo por tipo
+   *  (`roomAmenitiesFor(roomType)`) tomado al agregar: nombre y precio quedan fijos para el
+   *  resumen aunque el catálogo cambie después. Al backend viaja solo la `key`
+   *  (`CreateBookingRoomAmenity`) — él cobra el precio real de la habitación que asigna.
+   *  `undefined` en líneas sin amenidades elegidas. Importe de la línea = Σ price × `quantity`. */
+  roomAmenities?: CartLineRoomAmenity[]
+  /** MR-03 (#268, régimen) — elegido para ESTA línea, POR LÍNEA como las amenidades. SNAPSHOT del
+   *  catálogo (`store.mealPlans`) tomado al agregar: código, modo, precio unitario, personas que
+   *  pagan y el importe por unidad ya calculado. Al backend viaja solo el código (`mealPlan`) — él
+   *  recalcula contra su catálogo activo. `undefined` = solo alojamiento (nunca se guarda
+   *  `room_only`). Importe de la línea = `mealPlan.total × quantity`. */
+  mealPlan?: CartLineMealPlan
   /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
   unitPrice: number
   unitTaxBreakdown: RoomTypeTaxItem[]
@@ -299,14 +344,20 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  silencio. */
   function cartLineKeyForComposition(
     roomType: string, adults: number, childrenAges: number[], needsCrib = false,
-    childAmenityIds: string[] = [],
+    roomAmenityKeys: string[] = [], mealPlan: string | null = null,
   ): string {
     const sortedAges = [...childrenAges].sort((a, b) => a - b).join('.')
-    // REQ-01 (#233) — las amenidades infantiles entran en la key por el MISMO motivo que la cuna:
-    // misma composición con distintas amenidades = habitaciones DISTINTAS (ids ordenados para que
-    // el orden en que se tildaron no genere dos líneas para la misma elección).
-    const sortedAmenities = [...new Set(childAmenityIds)].sort().join(',')
-    return `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}|am${sortedAmenities}`
+    // REQ-01 (#290) — las amenidades de la habitación entran en la key por el MISMO motivo que la
+    // cuna: misma composición con distintas amenidades = habitaciones DISTINTAS (keys ordenadas
+    // para que el orden en que se tildaron no genere dos líneas para la misma elección). El
+    // segmento `|ra...` se agrega SOLO cuando hay alguna, para que las keys de líneas sin
+    // amenidades de habitación no cambien.
+    const sortedRoomAmenities = [...new Set(roomAmenityKeys)].sort().join(',')
+    const base = `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}`
+    const withRoomAmenities = sortedRoomAmenities ? `${base}|ra${sortedRoomAmenities}` : base
+    // MR-03 (#268) — el régimen, ídem: misma composición con distinto régimen = habitaciones
+    // DISTINTAS (una con desayuno y otra sin no se funden en "×2"). Segmento solo si hay régimen.
+    return mealPlan && mealPlan !== 'room_only' ? `${withRoomAmenities}|mp${mealPlan}` : withRoomAmenities
   }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
@@ -314,11 +365,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const upsellsLoading = ref(false)
   const selectedUpsells = ref<SelectedUpsell[]>([])
 
-  // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4) ──────────────────────
+  // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4 → MR-03 #268) ─────────
   // Los regímenes se muestran DESDE que aparece la lista de habitaciones (RoomsStep) —
-  // se cargan junto con `search()`. Solo informativo esta fase: "Solo alojamiento" es la
-  // base implícita (no viene del backend); `priceMode:'per_person_per_night'` se muestra
-  // con precio pero NO es seleccionable todavía (ver alcance en el plan aprobado).
+  // se cargan junto con `search()`. "Solo alojamiento" es la base implícita (no viene del
+  // backend). MR-03: cada tarjeta elige UNO por habitación (`useGuestComposer.setMealPlan`), la
+  // línea del carrito guarda el snapshot (`CartLine.mealPlan`) y `per_person_per_night` se cobra
+  // `price × (adultos + niños con plaza) × noches` — misma fórmula que el backend.
   //
   // `upsells` también se precarga junto con `search()` (igual que mealPlans, ver mismo
   // motivo abajo): un composer que necesite mostrar el catálogo de extras ANTES de
@@ -327,13 +379,21 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const mealPlans = ref<PublicMealPlan[]>([])
   const mealPlansLoading = ref(false)
 
-  // ─── Amenidades para niños/bebés (REQ-01 #233, step 1) ──────────────────────
-  // Catálogo público ACTIVO del hotel (`GET /public/hotels/:slug/child-amenities`), precargado en
-  // `search()` junto a mealPlans/upsells por el mismo motivo: el composer de cada tarjeta lo
-  // necesita ANTES de "Agregar esta habitación". Nombres y precios vienen SIEMPRE del backend —
-  // nunca hay lista ni precios en código. La selección NO vive acá sino en cada `CartLine`
-  // (por habitación, ver `CartLine.childAmenities`). Fallo silencioso → `[]` (no se ofrecen).
-  const childAmenities = ref<PublicChildAmenity[]>([])
+  // ─── Amenidades de la habitación (REQ-01 #290, step 1) ───────────────────────
+  // Catálogo público POR TIPO (`GET /public/hotels/:slug/room-amenities` → `byRoomType`): las
+  // amenidades personalizadas (cuna, cama extra…) que el hotel configuró en cada habitación, con
+  // el precio mínimo del tipo. Precargado en `search()` junto a mealPlans/upsells por el mismo
+  // motivo: el composer de cada tarjeta lo necesita ANTES de "Agregar esta habitación". Nombres y
+  // precios vienen SIEMPRE del backend — nunca hay lista ni precios en código. La selección NO
+  // vive acá sino en cada `CartLine` (`CartLine.roomAmenities`), fallo silencioso → `{}`.
+  // #292 — la cuna (`custom:cuna`, `CRIB_AMENITY_KEY`) es una amenidad más de este catálogo.
+  const roomAmenities = ref<Record<string, PublicRoomAmenity[]>>({})
+
+  /** Catálogo de amenidades de habitación de UN tipo (`rt.id`). `[]` si el tipo no ofrece. */
+  function roomAmenitiesFor(roomTypeId: string): PublicRoomAmenity[] {
+    const list = roomAmenities.value[roomTypeId]
+    return Array.isArray(list) ? list : []
+  }
 
   // ─── Guest (step 3) ───────────────────────────────────────────────────────────
   const guest = ref<BookingGuest>({ name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' })
@@ -346,6 +406,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
   // ─── Estado de la máquina ─────────────────────────────────────────────────────
   const status = ref<BookingStatus>('idle')
   const error = ref<string | null>(null)
+  // #267 — localizador (8 chars del reservationId) cuando la reserva se creó SIN pasarela:
+  // PayStep lo muestra como aviso "recibimos tu pedido" en lugar de un error rojo.
+  const receivedUnpaidLocator = ref<string | null>(null)
 
   // ─── Multi-moneda (D10, task 2.15) ────────────────────────────────────────────
   // `currencyPreference` es lo que el usuario eligió en el switcher ('' = auto/detect).
@@ -455,54 +518,145 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return [...seen.values()]
   })
 
-  /** Subtotal room(s)+upsells+amenidades infantiles ANTES de promo e impuestos — misma cuenta
-   *  que `totalBreakdown.subtotal` del backend. Promo se aplica sobre este monto. */
-  const subtotal = computed(() => round2(roomsSubtotal.value + upsellsTotal.value + childAmenitiesTotal.value))
+  /** Subtotal room(s)+upsells+amenidades de habitación+régimen ANTES de promo e impuestos — misma
+   *  cuenta que `totalBreakdown.subtotal` del backend. Promo se aplica sobre este monto. */
+  const subtotal = computed(() => round2(
+    roomsSubtotal.value + upsellsTotal.value + roomAmenitiesTotal.value + mealPlansTotal.value,
+  ))
 
-  /** Suma de upsells seleccionados (precio × qty). En `hotels.currency` (chargeCurrency). */
-  const upsellsTotal = computed(() => {
-    const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    let total = 0
-    for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      total += Number(found.price) * Math.max(1, Math.floor(sel.quantity))
+  /** Bebés del carrito (subconjunto de `cartTotalFreeChildren`, misma cuenta). No consumen
+   *  desayuno ni transfer: se restan de las personas que multiplican un extra por persona. */
+  const cartTotalBabies = computed(() => cart.value.reduce((s, l) => {
+    if (!l.childrenAges || l.childrenAges.length === 0) return s
+    const composition = resolveChildComposition(l.adults ?? 0, l.childrenAges, childPolicy.value)
+    return s + composition.babies * l.quantity
+  }, 0))
+
+  /** MR-10 (#275) — personas que consumen un extra "por persona": adultos + niños con plaza +
+   *  niños libres, SIN bebés. Misma cuenta que `ctx.persons` de `resolveUpsellLines` en el
+   *  backend: si acá diera otro número el stepper dejaría pedir lo que el POST rechaza con 400. */
+  const upsellPersons = computed(() => Math.max(0, cartTotalGuests.value + cartTotalFreeChildren.value - cartTotalBabies.value))
+
+  /** Noches que multiplican un extra por noche: las de `/rates`; 1 si todavía no hay tarifas. */
+  const upsellNights = computed(() => Math.max(1, nights.value))
+
+  /**
+   * MR-10 (#275) — tope de cantidad por `kind`, espejo de `upsellMaxQuantity` del backend
+   * (`bookingengine/usecases/upsell-pricing.ts`): per_room ≤ habitaciones del carrito,
+   * per_person ≤ personas sin bebés, per_stay/per_night/ppn = 1. Nunca baja de 1 para que el
+   * stepper no quede clavado en 0 con el carrito vacío.
+   */
+  function upsellMaxQty(kind: UpsellKind): number {
+    switch (kind) {
+      case 'per_room': return Math.max(1, cartTotalRooms.value)
+      case 'per_person': return Math.max(1, upsellPersons.value)
+      default: return 1
     }
-    return round2(total)
-  })
+  }
 
-  /** Extras elegidos, uno por línea (nombre × cantidad = importe) — #88 pide verlos por separado. */
+  /** Cantidad efectiva de un extra: la pedida acotada al tope del kind (1 en los de cantidad fija). */
+  function effectiveUpsellQty(kind: UpsellKind, requested: number): number {
+    const qty = Math.max(1, Math.floor(Number(requested) || 1))
+    return Math.min(qty, upsellMaxQty(kind))
+  }
+
+  /** Multiplicadores de estadía de un kind: noches y personas (sólo ppn). */
+  function upsellStayFactors(kind: UpsellKind): { nights: number; persons?: number } {
+    if (kind === 'per_night') return { nights: upsellNights.value }
+    if (kind === 'per_person_per_night') return { nights: upsellNights.value, persons: upsellPersons.value }
+    return { nights: 1 }
+  }
+
+  /**
+   * MR-10 (#275) — precio de UNA unidad del extra para ESTA estadía: per_night → price × noches,
+   * ppn → price × personas × noches, resto → price. Es lo que UpsellsStep muestra en la tarjeta
+   * (el huésped ve lo que va a pagar, no el precio de catálogo "por noche").
+   */
+  function upsellStayPrice(upsell: Pick<Upsell, 'price' | 'kind'>): number {
+    const f = upsellStayFactors(upsell.kind)
+    return round2(Number(upsell.price) * f.nights * (f.persons ?? 1))
+  }
+
+  /** Extras elegidos, uno por línea con la matemática por `kind` (MR-10 #275, misma cuenta que
+   *  `resolveUpsellLines` del backend: `unitPrice × quantity × nights × (persons ?? 1)`). La
+   *  cantidad pedida se acota al tope del kind (1 en per_stay/per_night/ppn) — #88 pide verlos
+   *  por separado en el resumen/pago. */
   const upsellLines = computed<UpsellLine[]>(() => {
     const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    const lines: UpsellLine[] = []
+    // Mismo id repetido → una sola línea con Σ cantidades ANTES de acotar al tope (espejo exacto
+    // de `upsell-pricing.ts`): `setSelectedUpsells` ya consolida, pero el computed no depende de
+    // que todos los callers pasen por ahí — y `pay()` manda ESTAS líneas al POST.
+    const requested = new Map<string, number>()
     for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      const quantity = Math.max(1, Math.floor(sel.quantity))
+      if (!sel || typeof sel.id !== 'string') continue
+      requested.set(sel.id, (requested.get(sel.id) ?? 0) + Math.max(0, Math.floor(Number(sel.quantity) || 0)))
+    }
+    const lines: UpsellLine[] = []
+    for (const [id, qty] of requested) {
+      const found = byId.get(id)
+      if (!found || qty <= 0) continue
+      const quantity = effectiveUpsellQty(found.kind, qty)
       const unitPrice = Number(found.price)
-      lines.push({ id: found.id, name: found.name, quantity, unitPrice, total: round2(unitPrice * quantity) })
+      const f = upsellStayFactors(found.kind)
+      const line: UpsellLine = {
+        id: found.id,
+        name: found.name,
+        kind: found.kind,
+        quantity,
+        unitPrice,
+        nights: f.nights,
+        total: round2(unitPrice * quantity * f.nights * (f.persons ?? 1)),
+      }
+      if (f.persons !== undefined) line.persons = f.persons
+      lines.push(line)
     }
     return lines
   })
 
-  /** REQ-01 (#233) — Σ de amenidades infantiles de TODAS las líneas: (Σ price de la línea) ×
+  /** Suma de upsells seleccionados (Σ `upsellLines[].total`). En `hotels.currency` (chargeCurrency). */
+  const upsellsTotal = computed(() => round2(upsellLines.value.reduce((s, l) => s + l.total, 0)))
+
+  /** REQ-01 (#290) — Σ de amenidades de habitación de TODAS las líneas: (Σ price de la línea) ×
    *  quantity. Precios del snapshot de cada línea (en `chargeCurrency`, igual que upsells). */
-  const childAmenitiesTotal = computed(() => round2(
-    cart.value.reduce((s, l) => s + (l.childAmenities ?? []).reduce((a, am) => a + Number(am.price), 0) * l.quantity, 0),
+  const roomAmenitiesTotal = computed(() => round2(
+    cart.value.reduce((s, l) => s + (l.roomAmenities ?? []).reduce((a, am) => a + Number(am.price), 0) * l.quantity, 0),
   ))
 
-  /** REQ-01 (#233) — amenidades infantiles elegidas, una fila por (habitación × amenidad), para
+  /** REQ-01 (#290) — amenidades de habitación elegidas, una fila por (línea × amenidad), para
    *  verlas por separado en el resumen/pago (espejo de `upsellLines`, pero POR LÍNEA). */
-  const childAmenityLines = computed<ChildAmenityLine[]>(() => {
-    const lines: ChildAmenityLine[] = []
+  const roomAmenityLines = computed<RoomAmenityLine[]>(() => {
+    const lines: RoomAmenityLine[] = []
     for (const l of cart.value) {
-      for (const am of l.childAmenities ?? []) {
-        const unitPrice = Number(am.price)
+      for (const am of l.roomAmenities ?? []) {
+        const price = Number(am.price)
         lines.push({
-          lineKey: l.key, roomName: l.roomName, id: am.id, name: am.name,
-          unitPrice, quantity: l.quantity, total: round2(unitPrice * l.quantity),
+          lineKey: l.key, roomName: l.roomName, key: am.key, name: am.name,
+          price, quantity: l.quantity, total: round2(price * l.quantity),
         })
       }
+    }
+    return lines
+  })
+
+  /** MR-03 (#268) — Σ del régimen de TODAS las líneas: `mealPlan.total × quantity`. Snapshot de
+   *  cada línea (en `chargeCurrency`, igual que upsells/amenidades). `included` aporta 0. */
+  const mealPlansTotal = computed(() => round2(
+    cart.value.reduce((s, l) => s + (l.mealPlan ? Number(l.mealPlan.total) || 0 : 0) * l.quantity, 0),
+  ))
+
+  /** MR-03 (#268) — régimen elegido, una fila por línea del carrito que lo tenga (≠ room_only),
+   *  para verlo por separado en el resumen/pago (espejo de `roomAmenityLines`). Las `included`
+   *  entran con `total` 0 — el desglose las muestra como "incluido", no las oculta. */
+  const mealPlanLines = computed<MealPlanLine[]>(() => {
+    const lines: MealPlanLine[] = []
+    for (const l of cart.value) {
+      const mp = l.mealPlan
+      if (!mp || mp.code === 'room_only' || !mp.priceMode) continue
+      lines.push({
+        lineKey: l.key, roomName: l.roomName, code: mp.code, priceMode: mp.priceMode,
+        persons: mp.persons, nights: nights.value, quantity: l.quantity, unitPrice: mp.unitPrice,
+        total: round2((Number(mp.total) || 0) * l.quantity),
+      })
     }
     return lines
   })
@@ -603,6 +757,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     if (typeof opts?.rooms === 'number' && Number.isFinite(opts.rooms)) rooms.value = Math.max(1, opts.rooms)
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
   }
 
   /** Step 0 → 1: dispara GET /rates. Idempotente: si ya hay rates para las mismas fechas
@@ -643,19 +798,20 @@ export const useBookingStore = defineStore('booking-widget', () => {
       }
     }
     const upsellsPromise = needsUpsells ? fetchUpsellsSafe() : Promise.resolve(upsells.value)
-    // REQ-01 (#233) — catálogo de amenidades infantiles, mismo criterio que mealPlans/upsells:
-    // en paralelo, fallo silencioso a `[]` (sin catálogo simplemente no se ofrecen).
-    const needsChildAmenities = childAmenities.value.length === 0
-    const fetchChildAmenitiesSafe = async (): Promise<PublicChildAmenity[]> => {
+    // REQ-01 (#290) — catálogo de amenidades de habitación por tipo, mismo criterio que
+    // mealPlans/upsells: en paralelo, fallo silencioso a `{}` (sin catálogo simplemente no se
+    // ofrecen).
+    const needsRoomAmenities = Object.keys(roomAmenities.value).length === 0
+    const fetchRoomAmenitiesSafe = async (): Promise<Record<string, PublicRoomAmenity[]>> => {
       try {
-        return await BookingService.getChildAmenities(slug.value)
+        return await BookingService.getRoomAmenities(slug.value)
       } catch {
-        return []
+        return {}
       }
     }
-    const childAmenitiesPromise = needsChildAmenities ? fetchChildAmenitiesSafe() : Promise.resolve(childAmenities.value)
+    const roomAmenitiesPromise = needsRoomAmenities ? fetchRoomAmenitiesSafe() : Promise.resolve(roomAmenities.value)
     try {
-      const [res, mp, ups, cam] = await Promise.all([
+      const [res, mp, ups, ram] = await Promise.all([
         BookingService.getRates(slug.value, {
           checkIn: checkIn.value,
           checkOut: checkOut.value,
@@ -666,12 +822,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
         }),
         mealPlansPromise,
         upsellsPromise,
-        childAmenitiesPromise,
+        roomAmenitiesPromise,
       ])
       ratesResponse.value = res
       if (needsMealPlans) mealPlans.value = mp
       if (needsUpsells) upsells.value = ups
-      if (needsChildAmenities) childAmenities.value = Array.isArray(cam) ? cam : []
+      if (needsRoomAmenities) roomAmenities.value = ram && typeof ram === 'object' && !Array.isArray(ram) ? ram : {}
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display
       // elegada + un puñado de monedas comunes para turistas. Dedupe + orden estable.
       availableCurrencies.value = buildCurrencyOptions(res.chargeCurrency, res.currency, currencyPreference.value)
@@ -759,11 +915,16 @@ export const useBookingStore = defineStore('booking-widget', () => {
    * `occupancy` numérico plano es compat defensiva — ninguna de las dos entradas públicas lo llama
    * hoy (confirmado en la auditoría de paridad del Requerimiento 15, 2026-09-04).
    *
-   * REQ-01 (#233): `childAmenityIds` (ids del catálogo `childAmenities`) se resuelven a un
-   * SNAPSHOT `{id, name, price}` en la línea. Ids desconocidos se ignoran, y SOLO se guardan si la
-   * composición tiene al menos un menor (`childrenAges.length > 0`) Y el hotel acepta niños
-   * (`childPolicy.acceptChildren`) — mismo gateo que el backend (`public-booking.ts`), para que
-   * ningún caller pueda mostrar un total con amenidades que después no se cobran.
+   * REQ-01 (#290): `roomAmenityKeys` (keys del catálogo por tipo, `roomAmenitiesFor(room.id)`) se
+   * resuelven a un SNAPSHOT `{key, name, price}` en la línea. Keys desconocidas se ignoran. SIN
+   * gateo por niños: una cama extra se pide para cualquier composición. La cuna (#292,
+   * `custom:cuna`) llega por acá también — el composer la agrega a `roomAmenityKeys` sólo con
+   * bebé y con el tipo ofreciéndola; el backend la re-valida contra la composición real.
+   *
+   * MR-03 (#268): `mealPlan` (código del catálogo `mealPlans`) se resuelve a un SNAPSHOT
+   * `{code, priceMode, unitPrice, persons, total}` en la línea, con `total = price × (adultos +
+   * niños con plaza) × noches` (0 si `included`) — misma fórmula que el backend. Un código que el
+   * hotel no tiene activo (o `'room_only'`) se ignora: la línea queda como solo alojamiento.
    */
   async function addToCart(
     room: RoomTypeRate,
@@ -771,8 +932,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
       adults: number; childrenAges: number[]
       // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No).
       needsCrib?: boolean; cribCount?: number
-      // REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación.
-      childAmenityIds?: string[]
+      // REQ-01 (#290) — amenidades DE la habitación (cuna, cama extra…) de ESTA línea.
+      roomAmenityKeys?: string[]
+      // MR-03 (#268) — régimen de ESTA línea ('room_only' u omitido = solo alojamiento).
+      mealPlan?: string
     },
   ): Promise<void> {
     const isComposition = typeof occupancy === 'object' && occupancy !== null
@@ -813,16 +976,18 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // buscada (`physicalGuests` = adultos + niños), no un default fijo — si no, una búsqueda
     // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
     const effectiveOccupancy = occ ?? physicalGuests.value
-    // REQ-01 (#233) — snapshot del catálogo para esta línea: solo ids conocidos, sin duplicados,
-    // en el orden del catálogo (sortOrder), y únicamente si la habitación lleva menores y el
-    // hotel acepta niños (espejo exacto del gate del backend).
-    const lineChildAmenities: CartLineChildAmenity[] = isComposition && occupancy.childrenAges.length > 0 && childPolicy.value.acceptChildren
-      ? resolveChildAmenities(occupancy.childAmenityIds)
-      : []
+    // REQ-01 (#290) — snapshot del catálogo POR TIPO para esta línea: solo keys conocidas, sin
+    // duplicados, en el orden del catálogo. No depende de la composición.
+    const lineRoomAmenities: CartLineRoomAmenity[] = isComposition ? resolveRoomAmenities(room.id, occupancy.roomAmenityKeys) : []
+    // MR-03 (#268) — snapshot del régimen para esta línea: personas que pagan = ocupación
+    // chargeable (adultos + niños con plaza), noches de la búsqueda actual.
+    const lineMealPlan: CartLineMealPlan | null = isComposition
+      ? resolveMealPlan(occupancy.mealPlan, composition!.effectiveAdults + composition!.payingChildren)
+      : null
     const key = isComposition
       ? cartLineKeyForComposition(
         room.id, occupancy.adults, occupancy.childrenAges, occupancy.needsCrib,
-        lineChildAmenities.map((a) => a.id),
+        lineRoomAmenities.map((a) => a.key), lineMealPlan?.code ?? null,
       )
       : cartLineKey(room.id, effectiveOccupancy)
     const cap = Math.max(1, room.availableCount)
@@ -838,8 +1003,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
         // edades, así que tampoco puede tener bebé. Sí/No únicamente: cribCount siempre 1 cuando
         // needsCrib es true.
         ...(isComposition && occupancy.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-        // REQ-01 (#233) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
-        ...(lineChildAmenities.length > 0 ? { childAmenities: lineChildAmenities } : {}),
+        // REQ-01 (#290) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
+        ...(lineRoomAmenities.length > 0 ? { roomAmenities: lineRoomAmenities } : {}),
+        // MR-03 (#268) — solo con régimen ≠ solo alojamiento (nunca se guarda `room_only`).
+        ...(lineMealPlan ? { mealPlan: lineMealPlan } : {}),
       })
     }
 
@@ -855,20 +1022,47 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
   }
 
-  /** REQ-01 (#233) — resuelve ids elegidos contra el catálogo público cargado. Devuelve el
-   *  snapshot `{id, name, price}` en el orden del catálogo; ids desconocidos (catálogo cambiado
-   *  entre medio, deep-link viejo) se descartan en silencio — el backend igual los rechazaría. */
-  function resolveChildAmenities(ids: string[] | undefined): CartLineChildAmenity[] {
-    if (!Array.isArray(ids) || ids.length === 0) return []
-    const wanted = new Set(ids)
-    return childAmenities.value
-      .filter((a) => wanted.has(a.id))
-      .map((a) => ({ id: a.id, name: a.name, price: Number(a.price) || 0 }))
+  /** REQ-01 (#290) — resuelve keys elegidas contra el catálogo por tipo cargado. Devuelve el
+   *  snapshot `{key, name, price}` en el orden del catálogo; keys desconocidas (catálogo cambiado
+   *  entre medio, tipo que no las ofrece) se descartan en silencio — el backend igual las ignoraría. */
+  function resolveRoomAmenities(roomTypeId: string, keys: string[] | undefined): CartLineRoomAmenity[] {
+    if (!Array.isArray(keys) || keys.length === 0) return []
+    const wanted = new Set(keys)
+    return roomAmenitiesFor(roomTypeId)
+      .filter((a) => wanted.has(a.key))
+      .map((a) => ({ key: a.key, name: a.name, price: Number(a.price) || 0 }))
+  }
+
+  /** MR-03 (#268) — resuelve el código elegido contra el catálogo activo cargado
+   *  (`store.mealPlans`). Devuelve el snapshot `{code, priceMode, unitPrice, persons, total}` o
+   *  `null` para `room_only`/omitido/código que el hotel no tiene activo (el backend igual lo
+   *  rechazaría con `meal_plan_unavailable` — acá se degrada a solo alojamiento, nunca se muestra
+   *  un total con un régimen que después no se cobra). */
+  function resolveMealPlan(code: string | undefined, persons: number): CartLineMealPlan | null {
+    if (!code || code === 'room_only') return null
+    const found = mealPlans.value.find((m) => m.code === code)
+    if (!found) return null
+    const unitPrice = Number(found.price) || 0
+    return {
+      code: found.code, priceMode: found.priceMode, unitPrice, persons,
+      total: computeMealPlanTotal(found.priceMode, unitPrice, persons, nights.value),
+    }
   }
 
   /** Quita una línea entera del carrito (todas sus unidades) — sin afectar las demás. */
   function removeCartLine(key: string): void {
     cart.value = cart.value.filter((l) => l.key !== key)
+  }
+
+  /** REQ-02 (#234) — editar una habitación agregada devuelve UNA unidad al composer: si la línea
+   *  tiene `quantity > 1` se descuenta una unidad (las demás siguen en el carrito tal cual); si
+   *  era la última, la línea se quita entera (igual que `removeCartLine`). Nunca toca otras
+   *  líneas. Key desconocida = no-op. */
+  function removeCartLineUnit(key: string): void {
+    const line = cart.value.find((l) => l.key === key)
+    if (!line) return
+    if (line.quantity > 1) line.quantity -= 1
+    else removeCartLine(key)
   }
 
   /** Vacía el carrito (cambio de fechas, o el huésped quiere empezar de nuevo). */
@@ -878,7 +1072,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
 
   /** Step 2: actualiza la selección de upsells. */
   function setSelectedUpsells(items: SelectedUpsell[]): void {
-    selectedUpsells.value = items.filter((i) => i.quantity > 0)
+    // MR-10 (#275) — un mismo id se CONSOLIDA (Σ cantidades) igual que hace el backend
+    // (`upsell-pricing.ts`) antes de acotar al tope: si el store guardara dos entradas del mismo
+    // extra, `upsellLines` las acotaría por separado (2 + 2 con tope 2 → mostraría 80) y el POST
+    // las mandaría duplicadas → 400 `upsell_quantity_out_of_range` sobre un precio que el
+    // huésped ya vio. Se conserva el orden de la primera aparición.
+    const merged = new Map<string, number>()
+    for (const i of items) {
+      if (!i || typeof i.id !== 'string' || !(i.quantity > 0)) continue
+      merged.set(i.id, (merged.get(i.id) ?? 0) + Math.floor(i.quantity))
+    }
+    selectedUpsells.value = [...merged].map(([id, quantity]) => ({ id, quantity }))
   }
 
   /** Step 3: actualiza datos del huésped. */
@@ -1006,6 +1210,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
     isSubmitting.value = true
     error.value = null
+    receivedUnpaidLocator.value = null
     if (!idempotencyKey.value) idempotencyKey.value = genIdempotencyKey()
     try {
       const base = window.location.origin
@@ -1025,7 +1230,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
       const promoPayload = promoResult.value?.valid && promoCode.value
         ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
         : {}
-      const upsellsPayload = selectedUpsells.value.length > 0 ? { upsells: selectedUpsells.value } : {}
+      // MR-10 (#275) — viaja la cantidad EFECTIVA (acotada al tope por kind, 1 en los de cantidad
+      // fija): lo que el huésped vio en el resumen es lo que se pide, y el backend no devuelve
+      // 400 `upsell_quantity_out_of_range` por un qty que el stepper ya no permite.
+      const upsellsPayload = upsellLines.value.length > 0
+        ? { upsells: upsellLines.value.map((l) => ({ id: l.id, quantity: l.quantity })) }
+        : {}
 
       // Tarea 10 (QA 2026-08-20/21) — 1 sola línea × 1 unidad usa el endpoint de SIEMPRE
       // (`POST /api/public/booking`, sin crear una fila de Grupo innecesaria para el caso común).
@@ -1056,10 +1266,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
           // contra la composición real (nunca confía en esto), pero de este lado ya viene limpio:
           // el composer solo lo setea cuando la línea tiene un bebé (ver useGuestComposer.ts).
           ...(line.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-          // REQ-01 (#233) — solo ids: el backend re-resuelve precio contra su catálogo.
-          ...(line.childAmenities && line.childAmenities.length > 0
-            ? { childAmenities: line.childAmenities.map((a) => ({ id: a.id })) }
+          // REQ-01 (#290) — solo keys: el backend cobra el precio real de la habitación asignada.
+          ...(line.roomAmenities && line.roomAmenities.length > 0
+            ? { roomAmenities: line.roomAmenities.map((a) => ({ key: a.key })) }
             : {}),
+          // MR-03 (#268) — solo el código: el backend recalcula contra su catálogo activo.
+          ...(line.mealPlan && line.mealPlan.code !== 'room_only' ? { mealPlan: line.mealPlan.code } : {}),
           guest: guestPayload,
           ...promoPayload,
           ...upsellsPayload,
@@ -1083,10 +1295,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
             ...(l.childrenAges && l.childrenAges.length > 0 ? { childrenAges: l.childrenAges } : {}),
             // Tarea 22 — POR LÍNEA, no global al carrito (a diferencia de `upsellsPayload`).
             ...(l.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-            // REQ-01 (#233) — POR LÍNEA, igual que la cuna.
-            ...(l.childAmenities && l.childAmenities.length > 0
-              ? { childAmenities: l.childAmenities.map((a) => ({ id: a.id })) }
+            // REQ-01 (#290) — POR LÍNEA, igual que la cuna.
+            ...(l.roomAmenities && l.roomAmenities.length > 0
+              ? { roomAmenities: l.roomAmenities.map((a) => ({ key: a.key })) }
               : {}),
+            // MR-03 (#268) — POR LÍNEA, igual que las amenidades.
+            ...(l.mealPlan && l.mealPlan.code !== 'room_only' ? { mealPlan: l.mealPlan.code } : {}),
           })),
           guest: guestPayload,
           ...promoPayload,
@@ -1107,11 +1321,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
         window.location.href = res.checkoutUrl
         return
       }
-      // Sin checkoutUrl: Stripe no configurado o gateway caído. Reserva creada pending.
+      // Sin checkoutUrl: Stripe no configurado o gateway caído (`res.paymentError`). La reserva
+      // existe (pending) y el backend (#267) ya le mandó al huésped el correo "recibimos tu
+      // pedido"; el hotel lo contacta para coordinar el pago. NO es un error: se deja
+      // status='failed' sólo para que el widget quede en PayStep, y PayStep muestra el
+      // localizador en vez del texto rojo.
       status.value = 'failed'
-      error.value = res.paymentError
-        ? `Tu reserva quedó creada pero el pago no se pudo iniciar (${res.paymentError}). Te contactaremos.`
-        : 'Tu reserva quedó creada pero el pago online no está disponible. Te contactaremos.'
+      error.value = null
+      receivedUnpaidLocator.value = String(res.reservationId).slice(0, 8)
     } catch (e) {
       status.value = 'failed'
       error.value = errMessage(e, 'No se pudo crear la reserva. Probá de nuevo.')
@@ -1151,13 +1368,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
     selectedUpsells.value = []
     mealPlans.value = []
     mealPlansLoading.value = false
-    childAmenities.value = []
+    roomAmenities.value = {}
     guest.value = { name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' }
     promoCode.value = ''
     promoResult.value = null
     promoLoading.value = false
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
     reservation.value = null
     isSubmitting.value = false
     idempotencyKey.value = ''
@@ -1183,13 +1401,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
     selectedUpsells,
     mealPlans,
     mealPlansLoading,
-    childAmenities,
+    roomAmenities,
     guest,
     promoCode,
     promoResult,
     promoLoading,
     status,
     error,
+    receivedUnpaidLocator,
     reservation,
     isSubmitting,
     idempotencyKey,
@@ -1208,6 +1427,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cartTotalGuests,
     cartTotalChildren,
     cartTotalFreeChildren,
+    cartTotalBabies,
+    upsellPersons,
     roomsSubtotal,
     subtotal,
     upsellsTotal,
@@ -1218,8 +1439,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
     estimatedTaxes,
     estimatedTotal,
     upsellLines,
-    childAmenitiesTotal,
-    childAmenityLines,
+    upsellMaxQty,
+    upsellStayPrice,
+    roomAmenitiesTotal,
+    roomAmenityLines,
+    mealPlansTotal,
+    mealPlanLines,
     totalBreakdown,
     searchValid,
     roomsValid,
@@ -1229,8 +1454,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // actions
     init,
     search,
+    roomAmenitiesFor,
     addToCart,
     removeCartLine,
+    removeCartLineUnit,
     clearCart,
     setSelectedUpsells,
     setGuest,

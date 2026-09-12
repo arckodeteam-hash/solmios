@@ -114,10 +114,18 @@
         <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
-      <!-- REQ-01 (#233) — amenidades infantiles, una fila por habitación × amenidad. -->
-      <div v-for="line in store.childAmenityLines" :key="`${line.lineKey}-${line.id}`" class="flex justify-between" data-testid="child-amenity-line">
-        <span class="text-text-muted">{{ t('pay.childAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+      <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292 incluida), una fila por
+           habitación × amenidad. -->
+      <div v-for="line in store.roomAmenityLines" :key="`${line.lineKey}-${line.key}`" class="flex justify-between" data-testid="room-amenity-line">
+        <span class="text-text-muted">{{ t('pay.roomAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
+      </div>
+      <!-- MR-03 (#268) — régimen, una fila por habitación con régimen ≠ solo alojamiento; los
+           incluidos se listan sin importe para que el huésped vea que están en la tarifa. -->
+      <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
+        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: t(MEAL_PLAN_LABEL_KEY[line.code]), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span v-if="line.priceMode === 'included'" class="font-semibold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
+        <span v-else class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
       <div v-if="store.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
@@ -186,9 +194,27 @@
       <span class="text-sm font-bold text-navy">{{ t('pay.acceptTerms') }}</span>
     </label>
 
-    <p v-if="store.error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
+    <p v-if="store.error" data-testid="pay-error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
+
+    <!-- #267 — reserva creada SIN pasarela (sin checkoutUrl): no es un error. El backend ya
+         le mandó al huésped el correo "recibimos tu pedido"; se muestra el localizador y se
+         oculta el botón de pagar (reintentar no tiene sentido). Mismo estilo que el aviso
+         `pendingApprovalNotice` de ConfirmStep. -->
+    <div
+      v-if="store.receivedUnpaidLocator"
+      data-testid="received-unpaid"
+      class="rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left"
+    >
+      <p class="text-sm font-bold text-navy">{{ t('pay.receivedUnpaidTitle') }}</p>
+      <p class="mt-1 text-sm text-text-muted">{{ t('pay.receivedUnpaidBody') }}</p>
+      <p class="mt-2 text-sm text-navy">
+        {{ t('pay.receivedUnpaidLocator') }}:
+        <span class="font-mono font-bold">{{ store.receivedUnpaidLocator }}</span>
+      </p>
+    </div>
 
     <button
+      v-if="!store.receivedUnpaidLocator"
       type="button"
       :disabled="store.isSubmitting || !termsAccepted"
       class="w-full rounded-xl bg-cyan px-6 py-4 text-base font-black text-white shadow-card transition hover:bg-cyan-light disabled:cursor-not-allowed disabled:opacity-60"
@@ -217,9 +243,13 @@ import { computed, ref } from 'vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { PromoValidationReason } from '@/types/booking'
+import { isCribAmenityKey } from '@/utils/crib-amenity'
+import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
+import { classifyAge } from '@/utils/child-composition'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
+// MR-03 (#268) — etiqueta del régimen por código: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts).
 
 // FIX 2026-08-22 — paridad con BookingModal.vue (`termsAccepted`): arranca en `false` siempre.
 // Sin `watch` de reset acá: a diferencia del modal (que queda montado con TODOS los steps
@@ -358,11 +388,25 @@ function cartLineGuestsLabel(line: CartLine): string {
     : t('rooms.guests.summary', {
         adults: line.adults,
         children: line.childrenAges.length,
-        ages: line.childrenAges.join(', '),
+        // REQ-02 (#234) — edad + clasificación por menor (bebé / niño sin plaza / niño con plaza).
+        ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
-  // REQ-01 (#233) — amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot).
-  const amenities = (line.childAmenities ?? []).map((a) => a.name)
-  return amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
+  // REQ-01 (#290) — amenidades de la habitación elegidas para ESTA habitación, por nombre
+  // (snapshot de la línea). La cuna (#292, `isCribAmenityKey`) ya se nombró arriba: no se repite.
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
+  return roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
+}
+
+/** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato EXACTO que `RoomsStep.vue`
+ *  (`childAgeLabel`); 'adult' cae en "consume plaza" como fallback defensivo. */
+function childAgeLabel(age: number): string {
+  const kind = classifyAge(age, store.childPolicy)
+  const classification = kind === 'baby'
+    ? t('rooms.guests.childBaby')
+    : kind === 'free'
+      ? t('rooms.guests.childFree')
+      : t('rooms.guests.childPaying')
+  return `${t('rooms.guests.childAgeYears', { age })} · ${classification}`
 }
 </script>
