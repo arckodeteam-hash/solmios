@@ -124,6 +124,13 @@
         <span class="text-text-muted">{{ t('pay.roomAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
+      <!-- MR-03 (#268) — régimen, una fila por habitación con régimen ≠ solo alojamiento; los
+           incluidos se listan sin importe para que el huésped vea que están en la tarifa. -->
+      <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
+        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t('pay.mealPlanLine', { label: t(MEAL_PLAN_LABEL_KEY[line.code]), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span v-if="line.priceMode === 'included'" class="font-semibold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
+        <span v-else class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
+      </div>
       <div v-if="store.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-semibold">−{{ formatPrice(store.promoDiscount, displayOrCharge) }}</span>
@@ -221,10 +228,17 @@
 import { computed, ref } from 'vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import type { PromoValidationReason } from '@/types/booking'
+import type { MealPlanCode, PromoValidationReason } from '@/types/booking'
+import type { BookingMessageKey } from '@/composables/useBookingI18n'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
+// MR-03 (#268) — etiqueta del régimen por código (mismas claves que RoomsStep/PriceBreakdownLines).
+const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode, BookingMessageKey> = {
+  breakfast: 'rooms.board.breakfast',
+  half_board: 'rooms.board.halfBoard',
+  all_inclusive: 'rooms.board.allInclusive',
+}
 
 // FIX 2026-08-22 — paridad con BookingModal.vue (`termsAccepted`): arranca en `false` siempre.
 // Sin `watch` de reset acá: a diferencia del modal (que queda montado con TODOS los steps
