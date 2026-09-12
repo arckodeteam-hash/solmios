@@ -17,4 +17,7 @@ export interface ReservasSockets {
   // (deposits release/refund, CRM, channel manager availability push). Montos exactos del
   // cálculo para que el conector no tenga que recalcular.
   onReservationCancelled?: (data: { reservationId: string; hotelId: string; refundAmount: number; cancellationFee: number; policyApplied: any }) => Promise<void>
+  // REQ-HAC-03 (#258) — Cambió la habitación de la reserva (asignar, reasignar o soltar: `roomId`
+  // null). TTLock genera/reemplaza el código acá; `previousRoomId` es para revocar el anterior.
+  onRoomAssigned?: (data: { reservationId: string; hotelId: string; roomId: string | null; previousRoomId: string | null }) => Promise<void>
 }

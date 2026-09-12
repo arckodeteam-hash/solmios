@@ -2,8 +2,50 @@ import { checkinHashFromId } from '../../../shared/utils/checkin-hash'
 import type { ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
 import { paidReposFrom, requireMoneyPort, type MoneyRowRef, type ReservationMoneyPort } from './money-port'
 
-export class ReservasQueries {
+/**
+ * Escrituras de folio/habitación que acompañan una reasignación en estadía (REQ-HAC-03,
+ * usecases/assign-room.ts). Se implementan sobre el ORM o sobre un `tx` de `orm.transaction`.
+ */
+export interface FolioRoomWriter {
+  findOpenFolioByReservation(reservationId: string): Promise<any | null>
+  updateFolio(id: string, patch: any): Promise<void>
+  updateRoom(roomId: string, patch: any): Promise<void>
+  /** La fila de la reserva se escribe DENTRO de la misma tx que folio y habitaciones (revisión #258). */
+  updateReservation(reservationId: string, patch: any): Promise<void>
+}
+
+function folioRoomWriter(db: any): FolioRoomWriter {
+  return {
+    async findOpenFolioByReservation(reservationId) {
+      const rows = (await db.findMany('Folios', { reservationId, status: 'open' })) as any[]
+      return rows?.[0] || null
+    },
+    async updateFolio(id, patch) { await db.update('Folios', id, patch) },
+    async updateRoom(roomId, patch) { await db.update('Rooms', roomId, patch) },
+    async updateReservation(reservationId, patch) { await db.update('Reservations', reservationId, patch) },
+  }
+}
+
+export class ReservasQueries implements FolioRoomWriter {
   constructor(private readonly orm: any) {}
+
+  // ── Folio / habitación (REQ-HAC-03) ─────────────────────────────────────────────────────────
+  async findOpenFolioByReservation(reservationId: string): Promise<any | null> {
+    return folioRoomWriter(this.orm).findOpenFolioByReservation(reservationId)
+  }
+
+  async updateFolio(id: string, patch: any): Promise<void> {
+    await this.orm.update('Folios', id, patch)
+  }
+
+  /**
+   * Corre `fn` dentro de `orm.transaction` (sqlite/postgres la tienen) con un writer atado al
+   * `tx`; si el ORM no la ofrece, corre secuencial sobre el ORM. Mismo patrón que checkin.ts.
+   */
+  async transaction<T>(fn: (q: FolioRoomWriter) => Promise<T>): Promise<T> {
+    if (typeof this.orm.transaction === 'function') return this.orm.transaction((tx: any) => fn(folioRoomWriter(tx)))
+    return fn(folioRoomWriter(this.orm))
+  }
 
   async findReservationByHash(hash: string): Promise<any> {
     const reservas = await this.orm.findMany('Reservations', {}) as any[]

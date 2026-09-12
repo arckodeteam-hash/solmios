@@ -1,7 +1,8 @@
 // reservas/usecases/reschedule.ts
 // Mover (cambiar habitación/fechas) o extender (cambiar salida) una reserva desde el planning.
 // - quoteReschedule: dry-run, NO escribe. Devuelve disponibilidad + diferencia de precio para el modal.
-// - commitReschedule: aplica el cambio (reusa updateReservation → revalida solape) y cobra la diferencia.
+// - commitReschedule: aplica el cambio (reusa updateReservation → validateRoomAssignment) y cobra la diferencia.
+//   En estadía (`checked_in`) el cambio de habitación delega ANTES en `assignRoom` (folio + estados).
 // El cobro NO se orquesta acá: se delega a un puerto inyectado por el connector (folio/efectivo/tarjeta).
 //
 // ─── Dos precios, el usuario elige (fix "siempre se queda con el mismo precio") ───────────────
@@ -17,6 +18,7 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { updateReservation } from './crud'
+import { assignRoom, assertNoRoomConflict, type RoomAssignmentDeps } from './assign-room'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
 import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, freeChildrenLimitError, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
@@ -164,6 +166,14 @@ export interface RescheduleDeps extends RepriceRepos {
    *  repreciar una reserva con `childrenAges`. Opcional: sin él, `guestsOfReservation` cae a
    *  contar solo adultos (comportamiento previo a este fix, no un caso roto). */
   configRepo?: any
+  /**
+   * REQ-HAC-03 (#258) — cambio de habitación por el MISMO camino que POST /assign-room. Con la
+   * reserva `checked_in`, `updateReservation` rechaza el `roomId` (409 `use_assign_endpoint`):
+   * el commit delega en `assignRoom` (mueve el folio abierto y los estados de ambas habitaciones)
+   * antes del update. Sin estas deps, mover una estadía es 409 (fail-closed); el service siempre
+   * las cablea (`roomAssignmentDeps()`). También aportan `blockRepo`/`auditPort` al PUT.
+   */
+  roomAssignment?: RoomAssignmentDeps
 }
 
 function assertOwnership(existing: any, user: { role: string; hotelId?: string }): void {
@@ -363,15 +373,36 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   const reclassified = quote.projectedAdults !== existingAdults || quote.projectedChildren !== existingChildren
   const reclassifyDto = reclassified ? { adults: quote.projectedAdults, children: quote.projectedChildren } : {}
 
-  // Reusa updateReservation: revalida solape (assertRoomAvailable) y emite el socket + invalida caché.
-  // El `afterPersist` recalcula el saldo persistido DENTRO de esa ventana: el socket sale con el
-  // pendiente del precio NUEVO y la caché del listado se invalida después de escribirlo (STR-2).
+  // ─── REQ-HAC-03 (#258): el cambio de habitación va por UN solo camino (assign-room.ts) ───────
+  // El quote ya es la decisión explícita de mover a ESA habitación (el modal muestra tipo y
+  // precio del destino), así que el cambio de tipo va con `allowTypeChange: true`: acá no es un
+  // efecto colateral de un selector, es lo que se pidió. El solape, el bloqueo y el sello
+  // `roomAssignedAt/By` los valida `validateRoomAssignment` (vía `updateReservation`).
+  //  · Antes del check-in: el `roomId` viaja en el dto del update (crud.ts delega en assign-room).
+  //  · En estadía: crud.ts rechaza el `roomId` (409 `use_assign_endpoint`) porque mover una estadía
+  //    también mueve el folio abierto y los estados de las habitaciones. Se delega en `assignRoom`
+  //    ANTES del update y el dto NO lleva `roomId` (ya quedó persistido). `assignRoom` valida el
+  //    solape con las fechas VIGENTES; si además se extiende la salida, se comprueba el rango
+  //    NUEVO acá antes de mover nada, para no dejar la estadía a medio mover si la extensión choca.
+  const cambiaHabitacion = Boolean(quote.roomId) && String(quote.roomId) !== String(existing.roomId ?? '')
+  const mueveEstadia = cambiaHabitacion && existing.status === 'checked_in'
+  if (mueveEstadia) {
+    if (!deps.roomAssignment) throw new ConflictError('No se puede mover una estadía sin deps de asignación', { reason: 'use_assign_endpoint' })
+    await assertNoRoomConflict(deps.roomAssignment, existing.hotelId, quote.roomId, quote.checkIn, quote.checkOut, id)
+    await assignRoom(deps.roomAssignment, id, { roomId: quote.roomId, allowTypeChange: true }, user)
+  }
+  const roomDto = cambiaHabitacion && !mueveEstadia ? { roomId: quote.roomId, allowTypeChange: true } : {}
+
+  // Reusa updateReservation: revalida solape (validateRoomAssignment / assertNoRoomConflict) y emite
+  // el socket + invalida caché. El `afterPersist` recalcula el saldo persistido DENTRO de esa
+  // ventana: el socket sale con el pendiente del precio NUEVO y la caché del listado se invalida
+  // después de escribirlo (STR-2).
   // SEC3-2: el dto lleva `totalAmount`, así que crud dispara `afterCeilingDrop` — hay que pasarle el
   // clamp. Sin él, un reagendado que BAJA el total (reprice con `creditAmount>0`) deja links pending
   // vivos por el saldo viejo: el huésped puede pagar un importe mayor que el nuevo.
   const reservation = await updateReservation(
     deps.repo, deps.logger, deps.cache, deps.sockets, id,
-    { roomId: quote.roomId, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal, ...reclassifyDto } as any,
+    { ...roomDto, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal, ...reclassifyDto } as any,
     user,
     deps.roomRepo, undefined, undefined, undefined,
     {
@@ -379,6 +410,7 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
       afterCeilingDrop: deps.ceilingGuard
         ? async (item) => { await deps.ceilingGuard!(String(item.hotelId), String(item.id)) }
         : undefined,
+      roomAssignment: deps.roomAssignment ? { blockRepo: deps.roomAssignment.blockRepo, auditPort: deps.roomAssignment.auditPort } : undefined,
     },
   )
 

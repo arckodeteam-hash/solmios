@@ -108,7 +108,8 @@ async function toRows(deps: InHouseDeps, hotelId: string, reservations: Reservas
   const guests = await Promise.all(guestIds.map((id) => deps.guestRepo.findOne({ id, hotelId })))
   const guestName = new Map(guestIds.map((id, i) => [id, String(guests[i]?.name ?? '')]))
   return reservations.map((r) => ({
-    id: r.id, hotelId: r.hotelId, roomId: r.roomId, roomNumber: roomNumber.get(r.roomId) ?? '',
+    // #258: roomId es nullable en el modelo; una reserva en casa SIEMPRE tiene habitación (se asigna al check-in).
+    id: r.id, hotelId: r.hotelId, roomId: r.roomId ?? '', roomNumber: roomNumber.get(r.roomId ?? '') ?? '',
     guestId: r.guestId ?? null, guestName: r.guestId ? guestName.get(r.guestId) ?? '' : '',
     checkIn: r.checkIn, checkOut: r.checkOut, nights: nightsBetween(r.checkIn, r.checkOut),
     status: String(r.status ?? ''),

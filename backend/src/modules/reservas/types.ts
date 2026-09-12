@@ -5,7 +5,13 @@ export type PreCheckinStatus = 'pending' | 'sent' | 'completed' | 'expired'
 export interface ReservasDTO {
   id: string
   guestId?: string
-  roomId: string
+  // REQ-HAC-01 (#256/#258) — null = todavía sin habitación asignada (se asigna al check-in).
+  // `roomType` es el tipo vendido (`rooms.type`); `roomAssignedAt`/`roomAssignedBy` (users.id)
+  // registran la asignación (REQ-HAC-03). Ver reservas/model.ts.
+  roomId: string | null
+  roomType?: string
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   hotelId: string
   checkIn: string
   checkOut: string
@@ -76,6 +82,8 @@ export interface ReservasDTO {
 export interface CreateReservasDTO {
   guestId?: string
   roomId: string
+  // REQ-HAC-01 (#258) — tipo vendido; si falta, el usecase lo rellena desde `rooms.type`.
+  roomType?: string
   hotelId: string
   checkIn: string
   checkOut: string
@@ -125,6 +133,7 @@ export interface CreateReservasDTO {
 export interface UpdateReservasDTO {
   guestId?: string
   roomId?: string
+  roomType?: string
   // NOTE: hotelId intentionally NOT here — cannot move reservation between hotels
   checkIn?: string
   checkOut?: string
@@ -163,6 +172,13 @@ export interface UpdateReservasDTO {
   // PC-8 (2026-08-19): editar/cambiar/quitar el código promocional. crud.updateReservation
   // valida + consume/libera usos según el cambio (schema Update ya lo declara).
   promoCode?: string
+}
+
+// REQ-HAC-03 (#258) — body de POST /api/reservas/:id/assign-room. `allowTypeChange` permite asignar
+// una unidad de un tipo distinto al vendido (`roomType`); sin el flag es 409 type_mismatch.
+export interface AssignRoomDTO {
+  roomId: string
+  allowTypeChange?: boolean
 }
 
 export interface ReservasQuery {
