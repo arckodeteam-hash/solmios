@@ -220,7 +220,8 @@
                : t('confirm.notPaid') }}
           </p>
           <!-- #270 (MR-05): recibo de pago en PDF (no es factura fiscal), el mismo que viaja
-               adjunto en el correo. Mismo HMAC que el polling: token inválido → 404. -->
+               adjunto en el correo. Mismo HMAC que el polling: token inválido → 404. Sólo se
+               ofrece cuando hubo un cobro (`hasReceipt`): sin pago no hay recibo que emitir. -->
           <a
             v-if="receiptUrl"
             :href="receiptUrl"
@@ -448,7 +449,7 @@ import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
-import { receiptPdfUrl } from '@/utils/booking-confirmation-format'
+import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import { useTracking, initTracking } from '@/composables/useTracking'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -688,7 +689,9 @@ function resolveIds(): { id: string; token: string } | null {
 
 /** (id, token) del último tick: el botón "Descargar recibo" (#270) se arma con ellos. */
 const resolvedIds = ref<{ id: string; token: string } | null>(null)
-const receiptUrl = computed(() => resolvedIds.value ? receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token) : '')
+/** Sólo con un cobro hecho (`paid`/`partial` con importe): sin pago el backend responde 409 y no hay recibo. */
+const hasReceipt = computed(() => receiptAvailable(paymentState.value, amountPaid.value))
+const receiptUrl = computed(() => resolvedIds.value && hasReceipt.value ? receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token) : '')
 
 /** Un tick del poll: valida ids, pide estado, clasifica resultado. */
 async function tick(): Promise<void> {

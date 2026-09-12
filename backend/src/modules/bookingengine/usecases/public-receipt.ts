@@ -14,6 +14,11 @@
 // el mismo recibo que el huésped descarga desde la confirmación.
 //
 // `toPdf` va inyectado (puppeteer en producción, stub en tests): el usecase no sabe de Chromium.
+//
+// Un recibo de PAGO exige un pago: con token válido pero reserva sin cobrar (pago pendiente,
+// vencido, cancelado antes de pagar) el endpoint responde 409 `not_paid` en vez de emitir un
+// "RECIBO DE PAGO" por 0. El estado sale de la misma fuente que `GET /api/public/reservations/:id`
+// (`payments` + `deposit` de respaldo, `paymentStatusOf`), así la pantalla y el PDF no se contradicen.
 
 import {
   buildReceiptLines,
@@ -22,6 +27,15 @@ import {
   type ReceiptData,
 } from '../../../shared/usecases/payment-receipt'
 import { reservationTokenMatches, PUBLIC_RESERVATION_NOT_FOUND } from './public-reservation'
+import { paymentStatusOf } from '../../../shared/utils/payment-status'
+import { paidForReservation } from '../../../shared/usecases/reservation-paid'
+import { chargeableTotal } from '../../../shared/utils/reservation-balance'
+
+/** 409: token válido pero la reserva no tiene ningún cobro — no hay recibo que emitir. */
+export const PUBLIC_RECEIPT_NOT_PAID: ReceiptPdfResponse = {
+  status: 409,
+  body: { error: 'Reservation not paid', reason: 'not_paid' },
+}
 
 export interface ReceiptPdfDeps {
   toPdf: (html: string) => Promise<Buffer>
@@ -72,6 +86,46 @@ async function findManySafe(orm: any, model: string, filter: Record<string, unkn
   } catch {
     return []
   }
+}
+
+/**
+ * ¿La reserva tiene algún cobro? Mismo criterio que `public-reservation.ts`: lo cobrado sale de
+ * `payments` (fuente de verdad del dinero) con `deposit` de respaldo si la consulta falla, y el
+ * total cobrable incluye extras. `paid`/`partial` = hay recibo; `unpaid` = no.
+ */
+async function hasPaymentFor(orm: any, reservation: any): Promise<boolean> {
+  let paid = Number(reservation.deposit) || 0
+  try {
+    paid = await paidForReservation(
+      {
+        folioRepo: { findMany: (f: any) => orm.findMany('Folios', f) },
+        invoiceRepo: { findMany: (f: any) => orm.findMany('Invoices', f) },
+        paymentRepo: { findMany: (f: any) => orm.findMany('Payment', f) },
+      },
+      String(reservation.hotelId),
+      String(reservation.id),
+      reservation,
+    )
+  } catch {
+    // Se queda con `deposit`: para el flujo del motor web espeja el cobro de la pasarela.
+  }
+  const addons = await findManySafe(orm, 'ReservationAddons', { reservationId: reservation.id, hotelId: reservation.hotelId })
+  return paymentStatusOf(chargeableTotal(reservation, addons as any[]), paid) !== 'unpaid'
+}
+
+/**
+ * El recibo es UNO por grupo (un solo cobro, `settle()` reparte el `deposit` entre las hermanas y
+ * la fila de `payments` cuelga de la líder): alcanza con que CUALQUIER fila del grupo tenga cobro.
+ * Sin grupo, la reserva sola.
+ */
+async function groupHasPayment(orm: any, reservation: any): Promise<boolean> {
+  const siblings = reservation.groupId
+    ? await findManySafe(orm, 'Reservations', { groupId: reservation.groupId, hotelId: reservation.hotelId })
+    : []
+  for (const row of siblings.length ? siblings : [reservation]) {
+    if (await hasPaymentFor(orm, row)) return true
+  }
+  return false
 }
 
 /**
@@ -171,7 +225,8 @@ export async function buildReceiptHtmlFor(orm: any, reservationId: string, platf
  * GET /api/public/reservations/:id/receipt.pdf?token=X
  *
  * @returns 404 (MISMO body que public-reservation) si no existe / sin token / token incorrecto /
- *          accessToken null. 200 con el PDF (`content-type: application/pdf`) si el token valida.
+ *          accessToken null. 409 `not_paid` si el token valida pero no hay ningún cobro.
+ *          200 con el PDF (`content-type: application/pdf`) si el token valida y hay pago.
  */
 export async function getPublicReceiptPdf(
   orm: any,
@@ -186,6 +241,7 @@ export async function getPublicReceiptPdf(
   const rows = await findManySafe(orm, 'Reservations', { id: reservationId })
   const reservation = rows[0]
   if (!reservation || !reservationTokenMatches(reservation, receivedToken)) return PUBLIC_RESERVATION_NOT_FOUND
+  if (!(await groupHasPayment(orm, reservation))) return PUBLIC_RECEIPT_NOT_PAID
 
   const html = await buildReceiptHtmlFor(orm, String(reservation.id), deps.platformName)
   if (!html) return PUBLIC_RESERVATION_NOT_FOUND

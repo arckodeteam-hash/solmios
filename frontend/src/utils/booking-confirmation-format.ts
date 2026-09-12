@@ -121,3 +121,14 @@ export function receiptPdfUrl(id: string | null | undefined, token: string | nul
   const query = new URLSearchParams({ token }).toString()
   return `/api/public/reservations/${encodeURIComponent(id)}/receipt.pdf?${query}`
 }
+
+/**
+ * ¿Hay un recibo de pago que ofrecer? Sólo cuando hubo un cobro: `paymentStatus` `paid` o
+ * `partial` con importe cobrado. Con la reserva sin pagar (pendiente, vencida, cancelada antes de
+ * pagar) el backend responde 409 `not_paid`, así que el botón no se muestra.
+ */
+export function receiptAvailable(paymentStatus: unknown, amountPaid: unknown): boolean {
+  const status = String(paymentStatus ?? '').toLowerCase()
+  const paid = Number(amountPaid ?? 0)
+  return (status === 'paid' || status === 'partial') && Number.isFinite(paid) && paid > 0
+}

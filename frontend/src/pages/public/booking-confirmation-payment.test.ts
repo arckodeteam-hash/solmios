@@ -52,4 +52,9 @@ describe('confirmación pública: botón Descargar recibo (#270)', () => {
   it('confirm.downloadReceipt existe en los 3 idiomas', () => {
     expect(i18nSrc.split("'confirm.downloadReceipt':").length - 1).toBe(3)
   })
+  // Sin cobro el backend responde 409 `not_paid`: el botón sólo se arma con `paid`/`partial` + importe.
+  it('el botón sólo se ofrece cuando hubo un cobro (hasReceipt sobre paymentStatus + amountPaid)', () => {
+    expect(src).toContain('receiptAvailable(paymentState.value, amountPaid.value)')
+    expect(src).toMatch(/resolvedIds\.value && hasReceipt\.value \? receiptPdfUrl\(/)
+  })
 })

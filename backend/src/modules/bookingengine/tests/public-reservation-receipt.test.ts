@@ -3,6 +3,8 @@
 // Cubre `GET /api/public/reservations/:id/receipt.pdf?token=X` (usecase `getPublicReceiptPdf`):
 // - Sin token → 404 (anti-enumeración).
 // - Token incorrecto → 404 con EXACTAMENTE el mismo body que sin token y que reserva inexistente.
+// - Token válido pero SIN ningún cobro (ni `payments` ni `deposit`) → 409 `not_paid`, sin PDF:
+//   no se emite un "RECIBO DE PAGO" de una reserva que nunca se pagó.
 // - Token válido → 200 `application/pdf`, y el documento (toPdf stub = el HTML tal cual) lleva
 //   localizador, hotel + RNC, huésped, cada línea del desglose (alojamiento, upsell, amenidad,
 //   promo, cada impuesto), total, referencia de Stripe y la leyenda "no es factura fiscal".
@@ -57,7 +59,9 @@ function makeOrm(opts: { reservations?: any[]; payments?: any[]; rooms?: any[]; 
   const guest = { id: 'g1', hotelId: 'h1', name: 'Ana <Pérez>', email: 'ana@example.com', phone: '+1 809 555 0199' }
   const rooms = opts.rooms ?? [{ id: 'r1', hotelId: 'h1', number: '101', name: 'Vista Mar', type: 'double' }]
   const payments = opts.payments ?? [
-    { id: 'p1', hotelId: 'h1', reservationId: reservations[0].id, method: 'card', amount: 380.16, status: 'completed', reference: 'cs_test_123', createdAt: '2026-09-01T10:05:00.000Z' },
+    // `type: 'charge'` + `completed`: lo que asienta el connector de pagos al cobrar — así la fila
+    // CUENTA como dinero recibido para `paidForReservation` (sin `type` se ignora).
+    { id: 'p1', hotelId: 'h1', reservationId: reservations[0].id, type: 'charge', method: 'card', amount: 380.16, status: 'completed', reference: 'cs_test_123', createdAt: '2026-09-01T10:05:00.000Z' },
   ]
   const calls: string[] = []
   const orm: any = {
@@ -171,13 +175,38 @@ describe('getPublicReceiptPdf — recibo de pago público (#270)', () => {
     expect(html).toContain('Emitido a través de SolmiOS')
   })
 
-  it('sin pago registrado → referencia "—" y método de la reserva', async () => {
-    const { orm, reservations } = makeOrm({ payments: [] })
+  it('cobro reflejado sólo en `deposit` (sin fila en payments) → 200, referencia "—" y método de la reserva', async () => {
+    const { orm, reservations } = makeOrm({ payments: [], reservations: [baseReservation({ deposit: 380.16 })] })
     const res = await getPublicReceiptPdf(orm, reservations[0].id, VALID_TOKEN, deps)
     expect(res.status).toBe(200)
     const html = res.body.toString()
     expect(html).toContain('Referencia: —')
     expect(html).toContain('Método: Tarjeta')
+  })
+
+  it('token válido pero reserva SIN ningún cobro → 409 not_paid y no genera PDF', async () => {
+    const { orm, reservations } = makeOrm({ payments: [] })
+    let pdfCalls = 0
+    const res = await getPublicReceiptPdf(orm, reservations[0].id, VALID_TOKEN, { toPdf: async (h) => { pdfCalls++; return Buffer.from(h) } })
+    expect(res.status).toBe(409)
+    expect(res.body).toEqual({ error: 'Reservation not paid', reason: 'not_paid' })
+    expect(res.headers).toBeUndefined()
+    expect(pdfCalls).toBe(0)
+  })
+
+  it('pago PARCIAL (deposit menor al total) → 200: hubo un cobro, hay recibo', async () => {
+    const { orm, reservations } = makeOrm({ payments: [], reservations: [baseReservation({ deposit: 100 })] })
+    const res = await getPublicReceiptPdf(orm, reservations[0].id, VALID_TOKEN, deps)
+    expect(res.status).toBe(200)
+  })
+
+  it('un pago `pending` en payments (todavía no entró) NO habilita el recibo → 409', async () => {
+    const { orm, reservations } = makeOrm({
+      payments: [{ id: 'p1', hotelId: 'h1', reservationId: 'res-12345678-abcd', type: 'charge', method: 'card', amount: 380.16, status: 'pending', createdAt: '2026-09-01T10:05:00.000Z' }],
+    })
+    const res = await getPublicReceiptPdf(orm, reservations[0].id, VALID_TOKEN, deps)
+    expect(res.status).toBe(409)
+    expect(res.body.reason).toBe('not_paid')
   })
 
   it('logo que no es URL http(s) no se inyecta', async () => {
@@ -212,7 +241,7 @@ describe('getPublicReceiptPdf — recibo de pago público (#270)', () => {
     ]
     const { orm } = makeOrm({
       reservations: [lead, sis1, sis2], rooms,
-      payments: [{ id: 'p1', hotelId: 'h1', reservationId: lead.id, method: 'card', amount: 708, status: 'completed', reference: 'cs_group_1' }],
+      payments: [{ id: 'p1', hotelId: 'h1', reservationId: lead.id, type: 'charge', method: 'card', amount: 708, status: 'completed', reference: 'cs_group_1' }],
     })
     const res = await getPublicReceiptPdf(orm, lead.id, VALID_TOKEN, deps)
     expect(res.status).toBe(200)
