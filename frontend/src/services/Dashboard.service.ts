@@ -9,6 +9,8 @@ interface RawDashboard {
   occupied: number
   checkins: number
   checkouts: number
+  /** HAC-06 (#261): llegadas de hoy (pending|confirmed) sin habitación asignada. */
+  arrivalsUnassigned?: number
   huespedes: number
   reservas: number
   dirty: number
@@ -18,11 +20,12 @@ interface RawDashboard {
   trends?: { ocupacion: { value: number; direction: string }; revenue: { value: number; direction: string } }
 }
 
-export function mapDashboard(d: RawDashboard): DashboardStats & { totalRooms: number; occupied: number; roomsByType: Record<string, number>; roomsByStatus: Record<string, number>; reservations: number; guests: number; pendingInvoices: number; dirty: number; maintenance: number; revenueToday: number; trends: any } {
+export function mapDashboard(d: RawDashboard): DashboardStats & { totalRooms: number; occupied: number; roomsByType: Record<string, number>; roomsByStatus: Record<string, number>; reservations: number; guests: number; pendingInvoices: number; dirty: number; maintenance: number; revenueToday: number; arrivalsUnassigned: number; trends: any } {
   return {
     occupancy: d.ocupacion ?? 0,
     arrivalsToday: d.checkins ?? 0,
     departuresToday: d.checkouts ?? 0,
+    arrivalsUnassigned: d.arrivalsUnassigned ?? 0,
     pendingClean: d.dirty ?? 0,
     openIncidents: d.maintenance ?? 0,
     revenueToday: d.revenueToday ?? 0,

@@ -167,34 +167,59 @@
               </div>
             </div>
 
-            <!-- Room groups -->
-            <template v-for="rt in filteredRoomTypes" :key="rt.type">
-              <div class="flex border-b border-border bg-navy/5">
+            <!-- Room groups. Cada grupo son sus carriles "Sin asignar" (REQ-HAC-06: reservas que
+                 vendieron el TIPO y todavía no tienen unidad — roomId null) y DESPUÉS sus
+                 habitaciones. `gridGroups` antepone un grupo "sin tipo" (key '') para las
+                 reservas que no tienen ni habitación ni roomType. Las filas se iteran juntas
+                 (`rowsOf`) para que la barra de una reserva se dibuje con el MISMO markup esté en
+                 una habitación o en la banda: sólo cambian la celda de la izquierda y qué se puede
+                 hacer con ella (la de la banda se arrastra a una fila para ASIGNARLA, no cambia de
+                 fechas ni se extiende). -->
+            <template v-for="rt in gridGroups" :key="rt.key">
+              <div class="flex border-b border-border" :class="rt.general ? 'bg-amber-50' : 'bg-navy/5'">
                 <div class="w-56 flex-shrink-0 px-4 py-2.5 border-r border-border flex items-center gap-2">
                   <div class="w-3 h-3 rounded" :class="rt.dot"></div>
                   <span class="text-sm font-black text-navy">{{ rt.type }}</span>
-                  <span class="text-[10px] text-text-muted">({{ rt.rooms.length }})</span>
+                  <span v-if="!rt.general" class="text-[10px] text-text-muted">({{ rt.rooms.length }})</span>
                 </div>
                 <div class="flex-1 px-4 py-2.5 flex items-center gap-4">
-                  <span class="text-[10px] font-bold text-teal">{{ rt.occupied }} ocupadas</span>
-                  <span class="text-[10px] text-text-muted">{{ rt.rooms.length - rt.occupied }} libres</span>
+                  <template v-if="!rt.general">
+                    <span class="text-[10px] font-bold text-teal">{{ rt.occupied }} ocupadas</span>
+                    <span class="text-[10px] text-text-muted">{{ rt.rooms.length - rt.occupied }} libres</span>
+                  </template>
+                  <span v-if="unassignedCountOf(rt.key) > 0" data-testid="unassigned-count"
+                    class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800 ring-1 ring-amber-300"
+                    :title="rt.general ? 'Reservas sin habitación ni tipo vendido en los días visibles' : `Reservas de tipo ${rt.type} sin habitación asignada en los días visibles — arrastrá cada una a una fila para asignarla`">
+                    {{ unassignedCountOf(rt.key) }} sin asignar
+                  </span>
                 </div>
               </div>
 
-              <div v-for="room in rt.rooms" :key="room.id" class="flex border-b border-navy/10 hover:bg-surface/30">
-                <div class="w-56 flex-shrink-0 px-4 py-3 border-r border-border flex items-center gap-2">
-                  <span class="font-bold text-sm text-navy">{{ room.number }}</span>
-                  <span class="text-[10px] text-text-muted truncate">{{ room.type }}</span>
-                  <button v-if="!embedded" @click.stop="openRoomLock(room)" class="ml-auto shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
-                    :class="hasLock(room.id) ? 'bg-teal/15 text-teal hover:bg-teal/25' : 'bg-navy/[0.04] text-navy/25 hover:bg-navy/10 hover:text-navy/50'"
-                    :title="hasLock(room.id) ? 'Cerradura asignada — gestionar' : 'Sin cerradura asignada'">
+              <div v-for="row in rowsOf(rt)" :key="row.rid" class="flex border-b"
+                :class="row.kind === 'lane' ? 'border-dashed border-amber-300 bg-amber-50/60' : 'border-navy/10 hover:bg-surface/30'"
+                :data-testid="row.kind === 'lane' ? 'unassigned-lane' : undefined"
+                :data-room-type="row.kind === 'lane' ? row.lane?.type : undefined">
+                <!-- Carril "Sin asignar": las reservas del tipo sin unidad, repartidas para que no se
+                     solapen (una fila por carril, ver utils/room-assign.ts). -->
+                <div v-if="row.kind === 'lane'" class="w-56 flex-shrink-0 px-4 py-3 border-r border-border flex items-center gap-2"
+                  title="Reservas sin habitación asignada: arrastrá la barra a una fila para asignarla">
+                  <span class="font-bold text-sm text-amber-700" :class="(row.lane?.idx ?? 0) > 0 ? 'opacity-60' : ''">Sin asignar</span>
+                  <span v-if="(row.lane?.idx ?? 0) > 0" class="text-[10px] font-bold text-amber-700/60">carril {{ (row.lane?.idx ?? 0) + 1 }}</span>
+                  <span class="text-[10px] text-text-muted truncate">{{ rt.general ? 'sin tipo' : rt.type }}</span>
+                </div>
+                <div v-else class="w-56 flex-shrink-0 px-4 py-3 border-r border-border flex items-center gap-2">
+                  <span class="font-bold text-sm text-navy">{{ row.room.number }}</span>
+                  <span class="text-[10px] text-text-muted truncate">{{ row.room.type }}</span>
+                  <button v-if="!embedded" @click.stop="openRoomLock(row.room)" class="ml-auto shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                    :class="hasLock(row.room.id) ? 'bg-teal/15 text-teal hover:bg-teal/25' : 'bg-navy/[0.04] text-navy/25 hover:bg-navy/10 hover:text-navy/50'"
+                    :title="hasLock(row.room.id) ? 'Cerradura asignada — gestionar' : 'Sin cerradura asignada'">
                     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
                       <rect x="5" y="10" width="14" height="11" rx="2"/><path stroke-linecap="round" d="M8 10V7a4 4 0 0 1 8 0v3"/>
                       <circle cx="9" cy="14.5" r="0.7" fill="currentColor"/><circle cx="12" cy="14.5" r="0.7" fill="currentColor"/><circle cx="15" cy="14.5" r="0.7" fill="currentColor"/>
                       <circle cx="9" cy="17.5" r="0.7" fill="currentColor"/><circle cx="12" cy="17.5" r="0.7" fill="currentColor"/><circle cx="15" cy="17.5" r="0.7" fill="currentColor"/>
                     </svg>
                   </button>
-                  <span class="w-2 h-2 rounded-full shrink-0" :class="[room.status === 'occupied' ? 'bg-coral' : 'bg-teal', embedded ? 'ml-auto' : '']"></span>
+                  <span class="w-2 h-2 rounded-full shrink-0" :class="[row.room.status === 'occupied' ? 'bg-coral' : 'bg-teal', embedded ? 'ml-auto' : '']"></span>
                 </div>
 
                 <!-- overflow-hidden acá (NO en cada celda individual, eso rompería el ancho de
@@ -202,62 +227,70 @@
                      arrastra cuando su checkIn real cae antes del rango visible — barStyle la
                      desplaza con `transform` hacia la izquierda para compensar el recorte, y sin
                      este overflow-hidden esa barra se metía visualmente ENCIMA de la columna del
-                     número de habitación (w-56 de al lado, fuera de este wrapper). -->
+                     número de habitación (w-56 de al lado, fuera de este wrapper).
+                     Las celdas de un carril "Sin asignar" NO llevan data-rid: no son destino de
+                     ningún drag (ni de asignación ni de mover) ni de selección de fechas. -->
                 <div class="flex-1 min-w-0 flex overflow-hidden">
-                  <div v-for="day in visibleDays" :key="day.dateStr + room.id"
-                    :data-rid="room.id" :data-date="day.dateStr"
-                    class="flex-1 min-w-[68px] h-12 border-r border-navy/15 relative cursor-pointer shrink-0"
+                  <div v-for="day in visibleDays" :key="day.dateStr + row.rid"
+                    :data-rid="row.kind === 'room' ? row.room.id : undefined" :data-date="day.dateStr"
+                    class="flex-1 min-w-[68px] h-12 relative shrink-0"
                     :class="[
+                      row.kind === 'lane' ? 'border-r border-amber-200/70 cursor-default' : 'border-r border-navy/15 cursor-pointer',
                       day.isToday ? 'bg-cyan/[0.16]' : '',
                       !day.isToday && day.isWeekend ? 'bg-cyan/10' : '',
-                      isInRange(room.id, day.dateStr) ? 'bg-cyan/30 ring-1 ring-cyan/60 ring-inset' : '',
-                      dragRoom?.id === room.id && !isInRange(room.id, day.dateStr) ? 'hover:bg-cyan/5' : '',
+                      row.kind === 'room' && isInRange(row.room.id, day.dateStr) ? 'bg-cyan/30 ring-1 ring-cyan/60 ring-inset' : '',
+                      row.kind === 'room' && dragRoom?.id === row.room.id && !isInRange(row.room.id, day.dateStr) ? 'hover:bg-cyan/5' : '',
                     ]"
-                    @mousedown.prevent="onMouseDown(room, day, $event)">
+                    @mousedown.prevent="row.kind === 'room' && onMouseDown(row.room, day, $event)">
 
-                    <!-- Reservation -->
-                    <div v-if="gRes(room.id, day.dateStr) && isResFirst(room.id, day.dateStr)"
+                    <!-- Reservation (en una habitación o en un carril "Sin asignar": mismo bloque) -->
+                    <div v-if="gRes(row.rid, day.dateStr) && isResFirst(row.rid, day.dateStr)"
                       class="absolute inset-y-1 left-0 rounded-md flex items-center pl-2 pr-4 z-10 overflow-hidden hover:brightness-90 select-none"
                       :class="[
-                        gRes(room.id, day.dateStr)!.bg,
+                        gRes(row.rid, day.dateStr)!.bg,
                         // Estadía cerrada: apagada y sin cursor de agarre — no se arrastra.
-                        gRes(room.id, day.dateStr)!.scope === 'none' ? 'opacity-50 saturate-50 cursor-default' : 'cursor-move',
-                        resDrag?.id === gRes(room.id, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '',
-                        resDrag?.id === gRes(room.id, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '',
+                        gRes(row.rid, day.dateStr)!.scope === 'none' ? 'opacity-50 saturate-50 cursor-default' : 'cursor-move',
+                        resDrag?.id === gRes(row.rid, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '',
+                        resDrag?.id === gRes(row.rid, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '',
                       ]"
-                      :title="gRes(room.id, day.dateStr)!.scope === 'none' ? 'Estadía cerrada — el huésped ya salió'
-                        : gRes(room.id, day.dateStr)!.scope === 'room-only' ? 'Huésped alojado — se puede cambiar de habitación o extender la salida, la entrada no se mueve'
+                      :data-testid="row.kind === 'lane' ? 'unassigned-bar' : undefined"
+                      :data-reservation-id="gRes(row.rid, day.dateStr)!.id"
+                      :title="row.kind === 'lane' ? 'Sin habitación asignada — arrastrá la barra a una fila para asignarla'
+                        : gRes(row.rid, day.dateStr)!.scope === 'none' ? 'Estadía cerrada — el huésped ya salió'
+                        : gRes(row.rid, day.dateStr)!.scope === 'room-only' ? 'Huésped alojado — se puede cambiar de habitación o extender la salida, la entrada no se mueve'
                         : ''"
-                      :style="barStyle(room.id, day)"
-                      @mousedown.stop="onResDown(gRes(room.id, day.dateStr)!, $event)"
-                      @click.stop="openContextDeferred(gRes(room.id, day.dateStr)!, room)"
-                      @dblclick.stop="openResFromDblClick(gRes(room.id, day.dateStr)!)"
-                      @contextmenu.prevent.stop="openContext(gRes(room.id, day.dateStr)!, room)">
-                      <ChannelIcon :channel="gRes(room.id, day.dateStr)!.chKey" :size="13" class="mr-1 shrink-0 ring-1 ring-white/40 rounded-[4px]" />
-                      <span class="text-[9px] font-extrabold truncate text-white"><span v-if="gRes(room.id, day.dateStr)!.pax" class="text-white/75">{{ gRes(room.id, day.dateStr)!.pax }}P·</span>{{ gRes(room.id, day.dateStr)!.name }}</span>
+                      :style="barStyle(row.rid, day)"
+                      @mousedown.stop="row.kind === 'lane' ? onUnassignedDown(gRes(row.rid, day.dateStr)!, $event) : onResDown(gRes(row.rid, day.dateStr)!, $event)"
+                      @click.stop="row.kind === 'lane' ? openResDirect(gRes(row.rid, day.dateStr)!) : openContextDeferred(gRes(row.rid, day.dateStr)!, row.room)"
+                      @dblclick.stop="openResFromDblClick(gRes(row.rid, day.dateStr)!)"
+                      @contextmenu.prevent.stop="row.kind === 'room' && openContext(gRes(row.rid, day.dateStr)!, row.room)">
+                      <ChannelIcon :channel="gRes(row.rid, day.dateStr)!.chKey" :size="13" class="mr-1 shrink-0 ring-1 ring-white/40 rounded-[4px]" />
+                      <span class="text-[9px] font-extrabold truncate text-white"><span v-if="gRes(row.rid, day.dateStr)!.pax" class="text-white/75">{{ gRes(row.rid, day.dateStr)!.pax }}P·</span>{{ gRes(row.rid, day.dateStr)!.name }}</span>
                       <span class="text-[8px] text-white/70 ml-auto shrink-0 flex items-center gap-0.5">
-                        <Icon v-if="gRes(room.id, day.dateStr)!.lockCode" name="lock" :size="10" :title="`Cerradura: ${gRes(room.id, day.dateStr)!.lockCode}`" />
-                        <Icon :name="PAY_ICON[gRes(room.id, day.dateStr)!.paymentStatus]" :size="10" :title="`Pago: ${gRes(room.id, day.dateStr)!.paymentStatus}`" />
-                        <span>{{ money }}{{ gRes(room.id, day.dateStr)!.amt }}</span>
+                        <Icon v-if="gRes(row.rid, day.dateStr)!.lockCode" name="lock" :size="10" :title="`Cerradura: ${gRes(row.rid, day.dateStr)!.lockCode}`" />
+                        <Icon :name="PAY_ICON[gRes(row.rid, day.dateStr)!.paymentStatus]" :size="10" :title="`Pago: ${gRes(row.rid, day.dateStr)!.paymentStatus}`" />
+                        <span>{{ money }}{{ gRes(row.rid, day.dateStr)!.amt }}</span>
                       </span>
                       <!-- Handle para extender/acortar (arrastrar el borde derecho) — #204/#207.
                            w-2 (8px), NO w-4 (16px): con el handle ancho, arrastrar la reserva desde
-                           cerca del borde derecho para MOVERLA disparaba resize por error. -->
-                      <div v-if="gRes(room.id, day.dateStr)!.scope !== 'none'"
+                           cerca del borde derecho para MOVERLA disparaba resize por error.
+                           En la banda no hay handle: desde ahí sólo se asigna habitación, las
+                           fechas se tocan una vez que la reserva tiene unidad. -->
+                      <div v-if="row.kind === 'room' && gRes(row.rid, day.dateStr)!.scope !== 'none'"
                         class="absolute right-0 inset-y-0 w-2 cursor-ew-resize bg-white/10 hover:bg-white/70 z-20 flex items-center justify-center rounded-r-md"
                         title="Arrastrá para extender o acortar la estadía"
-                        @mousedown.stop.prevent="onResizeDown(gRes(room.id, day.dateStr)!, $event)"
+                        @mousedown.stop.prevent="onResizeDown(gRes(row.rid, day.dateStr)!, $event)"
                         @click.stop>
                         <span class="w-0.5 h-4 bg-white/90 rounded"></span>
                       </div>
                     </div>
 
                     <!-- Block -->
-                    <div v-if="gBlk(room.id, day.dateStr) && isBlkFirst(room.id, day.dateStr)"
+                    <div v-if="row.kind === 'room' && gBlk(row.room.id, day.dateStr) && isBlkFirst(row.room.id, day.dateStr)"
                       class="absolute inset-y-1 left-0 rounded-md flex items-center px-2 z-10 bg-gray-300/80 cursor-pointer hover:bg-gray-400/80"
-                      :style="{ width: `calc(${blkSpan(room.id, day)} * 100%)` }"
-                      @mousedown.stop @click.stop="confirmUnblock(gBlk(room.id, day.dateStr)!)">
-                      <span class="text-[9px] font-bold text-gray-600 truncate flex items-center gap-1"><Icon name="ban" :size="10" /> {{ gBlk(room.id, day.dateStr)!.reason || 'Bloqueo' }}</span>
+                      :style="{ width: `calc(${blkSpan(row.room.id, day)} * 100%)` }"
+                      @mousedown.stop @click.stop="confirmUnblock(gBlk(row.room.id, day.dateStr)!)">
+                      <span class="text-[9px] font-bold text-gray-600 truncate flex items-center gap-1"><Icon name="ban" :size="10" /> {{ gBlk(row.room.id, day.dateStr)!.reason || 'Bloqueo' }}</span>
                     </div>
                   </div>
                 </div>
@@ -851,8 +884,12 @@
     <Teleport to="body">
       <div v-if="resDrag && dragPointer" class="fixed z-[60] pointer-events-none px-3 py-2 rounded-xl bg-navy text-white text-xs font-bold shadow-xl whitespace-nowrap"
         :style="{ left: (dragPointer.x + 14) + 'px', top: (dragPointer.y + 14) + 'px' }">
-        <div>{{ resDrag.mode === 'resize' ? 'Extender/acortar' : resDrag.scope === 'room-only' ? 'Cambiar de habitación' : 'Mover' }} · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
-        <div v-if="resDrag.scope === 'room-only'" class="text-white/70">El huésped ya entró: las fechas no se mueven</div>
+        <template v-if="resDrag.mode === 'assign'">
+          <div>Asignar habitación{{ resDrag.roomId ? ` · Hab. ${roomNumberOf(resDrag.roomId)}` : '' }}</div>
+          <div class="text-white/70">{{ resDrag.roomId ? 'Soltá para asignarla' : 'Soltá sobre la fila de una habitación' }}</div>
+        </template>
+        <div v-else>{{ resDrag.mode === 'resize' ? 'Extender/acortar' : resDrag.scope === 'room-only' ? 'Cambiar de habitación' : 'Mover' }} · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
+        <div v-if="resDrag.mode !== 'assign' && resDrag.scope === 'room-only'" class="text-white/70">El huésped ya entró: las fechas no se mueven</div>
         <div class="text-white/70 tabular-nums">{{ resDrag.checkIn }} → {{ resDrag.checkOut }} · {{ nightsBetween(resDrag.checkIn, resDrag.checkOut) }}n</div>
       </div>
     </Teleport>
@@ -880,6 +917,7 @@ import RescheduleModal from '@/components/features/RescheduleModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import { moveDragDestination, dragScopeFor, type DragScope } from '@/utils/planning-drag'
+import { layoutUnassignedLanes, assignErrorMessage } from '@/utils/room-assign'
 import Icon from '@/components/ui/Icon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppPopover from '@/components/ui/AppPopover.vue'
@@ -976,7 +1014,10 @@ const dragEnd = ref('')
 // sumando las noches desde ahí, la reserva se veía "alargarse" sola. Con ancla, el movimiento es
 // SIEMPRE relativo (delta de días desde donde agarraste), como cualquier drag — arrastrar es
 // arrastrar, nunca reancla el inicio real de la reserva a la posición del cursor.
-const resDrag = ref<{ id: string; mode: 'move' | 'resize'; scope: DragScope; triedDates?: boolean; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
+// `mode: 'assign'` (REQ-HAC-06): la barra sale de la banda "Sin asignar" y se suelta sobre la fila
+// de una habitación. Sólo importa la habitación destino — las fechas quedan clavadas — y al soltar
+// se llama a assign-room, nunca al modal de reprogramar. `roomId` = '' mientras no hay fila debajo.
+const resDrag = ref<{ id: string; mode: 'move' | 'resize' | 'assign'; scope: DragScope; triedDates?: boolean; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
 // Posición del cursor mientras se arrastra — alimenta el cartel flotante (ver template, Teleport
 // a body) que muestra fechas/noches en vivo, para no depender de leer el ancho dibujado de la
 // barra (que se recorta visualmente cerca de los bordes del calendario, ver comentario del cartel).
@@ -1317,7 +1358,9 @@ const DOT: Record<string, string> = { single: 'bg-teal', simple: 'bg-teal', doub
 const roomTypes = computed(() => {
   const g: Record<string, any[]> = {}
   for (const r of planRooms.value) { const t = r.type ?? 'double'; if (!g[t]) g[t] = []; g[t].push({ id: r.id, number: r.number, type: r.type, status: r.status }) }
-  return Object.entries(g).map(([t, rooms]) => ({ type: t.charAt(0).toUpperCase() + t.slice(1), dot: DOT[t.toLowerCase()] ?? 'bg-cyan', occupied: rooms.filter((r: any) => r.status === 'occupied').length, rooms }))
+  // `key` es el tipo TAL CUAL lo guarda la habitación: contra eso se compara `reserva.roomType`
+  // (el backend también compara exacto en assign-room). `type` es sólo el rótulo.
+  return Object.entries(g).map(([t, rooms]) => ({ key: t, type: t.charAt(0).toUpperCase() + t.slice(1), dot: DOT[t.toLowerCase()] ?? 'bg-cyan', occupied: rooms.filter((r: any) => r.status === 'occupied').length, rooms }))
 })
 const filteredRoomTypes = computed(() => {
   if (typeFilter.value.size === 0) return roomTypes.value
@@ -1327,6 +1370,68 @@ function toggleTypeFilter(type: string) {
   const s = new Set(typeFilter.value)
   s.has(type) ? s.delete(type) : s.add(type)
   typeFilter.value = s
+}
+
+// ── Banda "Sin asignar" (REQ-HAC-06) ──
+// Una reserva vende un TIPO y recibe la unidad en recepción: mientras `roomId` es null no cae en
+// ninguna fila de habitación, así que se dibuja en carriles propios encima de las habitaciones de
+// su tipo. Los carriles salen de `layoutUnassignedLanes` (puro, testeado) para que dos reservas
+// que se pisan en fechas no se dibujen una encima de la otra. Se reparten sólo las que tocan los
+// días visibles: una reserva del mes que viene no tiene por qué dejar un carril vacío hoy, y el
+// contador del encabezado dice lo mismo que se ve en la banda.
+type UnassignedLane = { key: string; type: string; idx: number; items: any[] }
+const UNASSIGNED_ROW_PREFIX = 'unassigned:'
+const unassignedByType = computed(() => {
+  const known = new Set(roomTypes.value.map(rt => rt.key))
+  const first = visibleDays.value[0]?.dateStr || ''
+  const last = visibleDays.value[visibleDays.value.length - 1]?.dateStr || ''
+  const groups: Record<string, any[]> = {}
+  for (const r of planReservas.value) {
+    if (r.roomId || r.status === 'cancelled' || r.status === 'no_show') continue
+    const ci = String(r.checkIn || '').slice(0, 10), co = String(r.checkOut || '').slice(0, 10)
+    if (!(co > first && ci <= last)) continue
+    // Sin tipo (o con un tipo que ya no existe entre las habitaciones) → banda general (key '').
+    const t = String(r.roomType ?? '')
+    const k = known.has(t) ? t : ''
+    ;(groups[k] ||= []).push(r)
+  }
+  const out = new Map<string, UnassignedLane[]>()
+  for (const [k, items] of Object.entries(groups)) {
+    out.set(k, layoutUnassignedLanes(items).map((lane, idx) => ({ key: `${UNASSIGNED_ROW_PREFIX}${k}:${idx}`, type: k, idx, items: lane })))
+  }
+  return out
+})
+const laneByKey = computed(() => {
+  const m = new Map<string, UnassignedLane>()
+  for (const lanes of unassignedByType.value.values()) for (const l of lanes) m.set(l.key, l)
+  return m
+})
+function unassignedLanesOf(typeKey: string): UnassignedLane[] { return unassignedByType.value.get(typeKey) ?? [] }
+function unassignedCountOf(typeKey: string): number { return unassignedLanesOf(typeKey).reduce((n, l) => n + l.items.length, 0) }
+
+// Grupos que dibuja la grilla: un grupo "sin tipo" al principio (sólo si hay reservas sin
+// habitación NI tipo vendido) y después los tipos de habitación filtrados.
+type GridGroup = { key: string; type: string; dot: string; general: boolean; occupied: number; rooms: any[] }
+const gridGroups = computed<GridGroup[]>(() => {
+  const groups: GridGroup[] = filteredRoomTypes.value.map(rt => ({ ...rt, general: false }))
+  if (unassignedCountOf('') > 0) groups.unshift({ key: '', type: 'Sin asignar', dot: 'bg-amber-400', general: true, occupied: 0, rooms: [] })
+  return groups
+})
+// Filas de un grupo: primero sus carriles "Sin asignar", después sus habitaciones. `rid` es lo
+// que reciben gRes/isResFirst/resSpan/barStyle: el id de la habitación o la clave del carril.
+type GridRow = { kind: 'room' | 'lane'; rid: any; room: any; lane: UnassignedLane | null }
+function rowsOf(rt: GridGroup): GridRow[] {
+  return [
+    ...unassignedLanesOf(rt.key).map(lane => ({ kind: 'lane' as const, rid: lane.key, room: null, lane })),
+    ...rt.rooms.map((room: any) => ({ kind: 'room' as const, rid: room.id, room, lane: null })),
+  ]
+}
+// Reservas de un carril: las suyas, menos la que se está arrastrando a una habitación (mientras
+// hay una fila debajo se dibuja como preview en esa fila, vía dispReservas). Los carriles NO se
+// recalculan durante el drag para que las filas no se muevan bajo el cursor.
+function laneReservas(lane: UnassignedLane): any[] {
+  const rd = resDrag.value
+  return rd?.mode === 'assign' && rd.roomId ? lane.items.filter((b: any) => b.id !== rd.id) : lane.items
 }
 
 // Data access
@@ -1345,7 +1450,10 @@ const PAY_METHODS: readonly { v: string; l: string }[] = [
 ]
 
 function gRes(rid: any, ds: string) {
-  const r = dispReservas.value.find((b: any) => String(b.roomId) === String(rid) && b.status !== 'cancelled' && ds >= String(b.checkIn||'').slice(0,10) && ds < String(b.checkOut||'').slice(0,10))
+  // `rid` es el id de una habitación o la clave de un carril "Sin asignar" (ver rowsOf).
+  const inDay = (b: any) => b.status !== 'cancelled' && ds >= String(b.checkIn||'').slice(0,10) && ds < String(b.checkOut||'').slice(0,10)
+  const lane = laneByKey.value.get(String(rid))
+  const r = lane ? laneReservas(lane).find(inDay) : dispReservas.value.find((b: any) => String(b.roomId) === String(rid) && inDay(b))
   if (!r) return null
   const ch = (r.channel || 'direct').toLowerCase(); const cc = CH[ch] || { l: r.channel || 'Directa', bg: 'bg-gray-400' }
   const status = r.status || 'pending'
@@ -1759,11 +1867,60 @@ function onResizeDown(rb: any, e: MouseEvent) {
   resDrag.value = { id: rb.id, mode: 'resize', scope: 'full', roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate: '', moved: false }
 }
 
+// mousedown en una barra de la banda "Sin asignar" → arrastrar hasta la fila de una habitación
+// para asignársela (REQ-HAC-06). Las fechas no se tocan: sólo cuenta la fila donde se suelta.
+function onUnassignedDown(rb: any, e: MouseEvent) {
+  e.stopPropagation()
+  if (duplicateModeBlocks()) return
+  const orig = planReservas.value.find((x: any) => x.id === rb.id)
+  if (!orig) return
+  const ci = String(orig.checkIn || '').slice(0, 10), co = String(orig.checkOut || '').slice(0, 10)
+  resDrag.value = { id: rb.id, mode: 'assign', scope: 'room-only', roomId: '', checkIn: ci, checkOut: co, origRoomId: '', origCheckIn: ci, origCheckOut: co, anchorDate: '', moved: false }
+}
+/** Suelta una reserva de la banda sobre `room`: confirma si el tipo no es el vendido, llama a
+ *  assign-room y recarga el planning. Si el backend la rechaza (ocupada, fuera de servicio…), el
+ *  toast dice por qué y la barra sigue en la banda — el preview ya se descartó al soltar. */
+async function assignFromBand(reservationId: string, room: any) {
+  const orig = planReservas.value.find((x: any) => x.id === reservationId)
+  if (!orig) return
+  let allowTypeChange = false
+  const sold = String(orig.roomType ?? '')
+  if (sold && String(room.type ?? '') !== sold) {
+    if (!confirm(`La habitación ${room.number} es de tipo ${room.type} y la reserva vendió ${sold}. ¿Asignar igual?`)) return
+    allowTypeChange = true
+  }
+  try {
+    await ReservationService.assignRoom(String(orig.id), String(room.id), allowTypeChange)
+    toast.success(`Habitación ${room.number} asignada`)
+    await reloadPlanning()
+    emit('changed')
+  } catch (e) {
+    toast.error(assignErrorMessage(e))
+  }
+}
+/** Vuelve a pedir GET /planning (habitaciones + reservas). Best-effort: si falla, queda lo que había. */
+async function reloadPlanning() {
+  try {
+    const d = await OperationsService.planning(hid.value)
+    planRooms.value = d.rooms ?? planRooms.value
+    planReservas.value = d.reservas ?? planReservas.value
+  } catch { /* recarga best-effort */ }
+}
+
 // Actualiza el preview según la celda bajo el cursor. Devuelve true si consumió el evento.
 function onResDragMove(e: MouseEvent): boolean {
   const rd = resDrag.value
   if (!rd) return false
   dragPointer.value = { x: e.clientX, y: e.clientY }
+  if (rd.mode === 'assign') {
+    // Sólo la fila importa. Sin celda de habitación debajo (la banda, el margen, el encabezado)
+    // el preview vuelve a la banda; con una, la barra se dibuja en esa fila con sus fechas reales.
+    const cell = (document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]).find(el => el.matches?.('[data-rid][data-date]'))
+    const rid = cell?.dataset.rid || ''
+    if (rid !== rd.roomId) rd.moved = true
+    rd.roomId = rid
+    return true
+  }
   // elementsFromPoint (PLURAL): la barra que se arrastra sigue al cursor y queda ENCIMA de las
   // celdas. Con elementFromPoint (singular) el punto caía sobre la barra → su celda origen, y
   // `moved` nunca se activaba: mover no hacía nada y al soltar se abría el menú contextual.
@@ -1803,6 +1960,14 @@ function onResDragEnd(): boolean {
   if (!rd) return false
   resDrag.value = null
   dragPointer.value = null
+  if (rd.mode === 'assign') {
+    if (!rd.moved) return true // click sobre la barra de la banda → abre el detalle
+    // Sin `suppressClick`: con `moved` la barra ya está en pointer-events-none, el click del
+    // navegador cae en la celda y nunca llega a la barra (y el flag quedaría colgado).
+    const room = rd.roomId ? planRooms.value.find((r: any) => String(r.id) === rd.roomId) : null
+    if (room) assignFromBand(rd.id, room) // soltada fuera de una fila de habitación: no pasa nada
+    return true
+  }
   if (rd.triedDates && !rd.moved) {
     toast.info('El huésped ya hizo check-in: la fecha de entrada no se mueve. Podés cambiarlo de habitación arrastrándolo hacia otra fila, o extender la salida desde el borde derecho.')
     suppressClick = true   // el aviso ya explicó lo que pasó; no abrir además el panel

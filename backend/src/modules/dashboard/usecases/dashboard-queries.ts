@@ -33,13 +33,17 @@ export class DashboardQueries {
     const revenueToday = revenueOn(t)
     const checkins = res.filter((r: any) => r.checkIn && String(r.checkIn).slice(0, 10) === t && (r.status === 'confirmed' || r.status === 'checked_in')).length
     const checkouts = res.filter((r: any) => r.checkOut && String(r.checkOut).slice(0, 10) === t && (r.status === 'checked_in' || r.status === 'checked_out')).length
+    // HAC-06 (#261): llegadas de hoy que todavía no tienen habitación asignada (roomId null desde
+    // HAC-03). Solo pending|confirmed: una checked_in ya tiene habitación por definición y una
+    // cancelled/no_show no llega.
+    const arrivalsUnassigned = res.filter((r: any) => r.checkIn && String(r.checkIn).slice(0, 10) === t && (r.status === 'pending' || r.status === 'confirmed') && !r.roomId).length
     const yesterday = new Date(Date.now() - MS_PER_DAY).toISOString().split('T')[0]
     const occYesterday = rooms.length ? Math.round((rooms.filter((r: any) => r.status === 'occupied').length / rooms.length) * 100) : 0
     const revYesterday = revenueOn(yesterday)
     const occToday = rooms.length ? Math.round((occupied / rooms.length) * 100) : 0
     return {
       ocupacion: occToday, revenue: revenueRes.reduce((s: number, r: any) => s + (r.totalAmount || 0), 0), revenueToday,
-      totalRooms: rooms.length, occupied, checkins, checkouts,
+      totalRooms: rooms.length, occupied, checkins, checkouts, arrivalsUnassigned,
       huespedes: guests.length, reservas: res.length, dirty, maintenance,
       roomsByType: rooms.reduce((a: any, r: any) => ((a[r.type] = (a[r.type] || 0) + 1), a), {}),
       roomsByStatus: rooms.reduce((a: any, r: any) => ((a[r.status] = (a[r.status] || 0) + 1), a), {}),

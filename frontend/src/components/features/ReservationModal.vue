@@ -18,6 +18,7 @@ import { ConfigService } from '@/services/Platform.service'
 import { ApiError } from '@/services/http'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
+import { TeamService, type TeamMember } from '@/services/Team.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import { paymentStateBadge } from '@/utils/payment-state'
@@ -29,6 +30,7 @@ import CancelReservationModal from '@/components/features/CancelReservationModal
 import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
@@ -156,6 +158,64 @@ const doorLock = () => operateDoor('lock')
 async function onRoomLockChanged() {
   await load()
   if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+}
+
+// ── Habitación asignada (REQ-HAC-06, #261) ──
+// La reserva vendió un TIPO (`d.roomType`); la unidad (`d.room`) la elige recepción con
+// RoomAssignModal. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen cuándo y quién: el nombre
+// se resuelve contra el equipo del hotel (GET /usuarios), cargado una sola vez y sólo si hace falta.
+const showRoomAssign = ref(false)
+const teamMembers = ref<TeamMember[] | null>(null)
+let teamLoading: Promise<void> | null = null
+
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return '—'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
+
+/** Asignar / Cambiar: sólo con permiso de edición y con la reserva viva (el backend rechaza
+ *  cambiar la unidad de un check-out, una cancelada o un no-show). */
+const canAssignRoom = computed(() => {
+  const st = d.value?.status
+  return !!d.value && can('reservations', 'edit') && st !== 'cancelled' && st !== 'no_show' && st !== 'checked_out'
+})
+
+function ensureTeamLoaded(): Promise<void> {
+  if (teamMembers.value) return Promise.resolve()
+  if (!teamLoading) {
+    teamLoading = TeamService.list()
+      .then((r) => { teamMembers.value = r?.data ?? [] })
+      .catch(() => { teamMembers.value = [] })
+      .finally(() => { teamLoading = null })
+  }
+  return teamLoading
+}
+
+const assignedByName = computed(() => {
+  const id = d.value?.roomAssignedBy
+  if (!id) return '—'
+  const m = teamMembers.value?.find((u) => u.id === id)
+  if (m) return m.name || m.email || '—'
+  return `${String(id).slice(0, 8)}…`
+})
+
+// Carga lazy: sólo cuando el detalle trae `roomAssignedBy` (reservas asignadas antes de HAC-03
+// no lo tienen y no hace falta pedir el equipo).
+// (`detail`, no `d`: este watch es inmediato y `d` se declara más abajo.)
+watch(() => detail.value?.roomAssignedBy, (id) => { if (id) void ensureTeamLoaded() }, { immediate: true })
+
+/** Asignación persistida por RoomAssignModal (ya mostró el toast): se recarga el detalle
+ *  (habitación, fecha/quién, cerradura de la nueva unidad) y se avisa al listado. */
+async function onRoomAssigned() {
+  showRoomAssign.value = false
+  await load({ silent: true })
+  if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+  emit('changed')
 }
 
 async function loadRoomLockDevice(roomId?: string | null) {
@@ -1357,9 +1417,33 @@ function facturar() {
                 <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
               </summary>
               <div class="px-4 pb-4 pt-1 space-y-3 text-sm">
-                <div v-if="d.room">
-                  <div class="font-bold text-navy">Habitación {{ d.room.number }} <span class="text-text-muted font-normal">{{ d.room.name || d.room.type }}</span></div>
-                  <div class="text-xs text-text-muted">Asignada: ({{ fmtDate(d.checkIn) }})</div>
+                <!-- REQ-HAC-06 (#261) — tipo vendido + unidad asignada (o "Sin asignar") con
+                     quién/cuándo la asignó. Asignar / Cambiar abren RoomAssignModal. -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 space-y-0.5">
+                    <div class="text-xs"><span class="text-text-muted">Tipo:</span> <span class="font-bold text-navy" data-testid="room-type-label">{{ typeLabel(d.roomType || d.room?.type) }}</span></div>
+                    <div v-if="d.room" class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span> <span class="font-bold text-navy" data-testid="room-number">{{ d.room.number }}</span>
+                      <span v-if="d.room.name" class="text-text-muted text-xs ml-1">{{ d.room.name }}</span>
+                      <span v-if="d.roomAssignedAt" data-testid="room-assigned-meta" class="block text-[11px] text-text-muted">(asignada el {{ fmtDateTime(d.roomAssignedAt) }} por {{ assignedByName }})</span>
+                    </div>
+                    <div v-else class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span>
+                      <span data-testid="room-unassigned" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                        <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"></span>Sin asignar
+                      </span>
+                    </div>
+                  </div>
+                  <template v-if="canAssignRoom">
+                    <button v-if="!d.room" type="button" data-testid="assign-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 bg-navy text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-navy-light disabled:opacity-50">
+                      Asignar habitación
+                    </button>
+                    <button v-else type="button" data-testid="change-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 border border-border text-navy rounded-lg text-xs font-bold cursor-pointer hover:bg-surface disabled:opacity-50">
+                      Cambiar
+                    </button>
+                  </template>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
                   <div data-testid="reservation-meal-plan"><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(mealPlanCode) }}</span><span v-if="mealPlanDetail" class="text-text-muted">{{ mealPlanDetail }}</span></div>
@@ -2205,6 +2289,10 @@ function facturar() {
        cambiar algo (código generado / cerradura asignada). -->
   <RoomLockModal v-if="showRoomLockManager && d" :room-id="d.roomId ?? null" :room-number="String(d.room?.number ?? '')"
     :reservation-id="d.id" @close="showRoomLockManager = false" @changed="onRoomLockChanged" />
+
+  <!-- REQ-HAC-06 (#261) — asignar / cambiar la unidad concreta de la reserva (apilado como Anular). -->
+  <RoomAssignModal v-if="d" :open="showRoomAssign" :reservation-id="d.id" :room-type="d.roomType || d.room?.type || null"
+    :current-room-id="d.roomId || null" @close="showRoomAssign = false" @assigned="onRoomAssigned" />
 
   <!-- Loading -->
   <Teleport to="body">

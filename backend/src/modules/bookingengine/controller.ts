@@ -413,12 +413,17 @@ export class BookingengineController {
     // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el
     // listado de Administración podía tardar hasta 5 min (CACHE_TTL) en mostrar el alta.
     // Best-effort: un fallo acá no puede tumbar una reserva que YA se creó con éxito.
+    // #267: el payload lleva huésped y si hubo pasarela (`hasCheckout`) para que los connectors
+    // no relean la reserva; `paid: false` siempre — el cobro, si lo hay, avisa por `onBookingPaid`.
     if (result.status === 201 && result.body?.reservation) {
       const r = result.body.reservation
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
         checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -459,10 +464,14 @@ export class BookingengineController {
     )
     // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
     // directo a Reservations, sin pasar por el CRUD de `reservas`.
+    // #267: el payload lleva huésped y si hubo pasarela para que los connectors no relean la reserva.
     if (result.status === 201 && Array.isArray(result.body?.reservations) && result.body.reservations[0]) {
       const r = result.body.reservations[0]
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública grupal) falló', { err: err instanceof Error ? err.message : err })
       })

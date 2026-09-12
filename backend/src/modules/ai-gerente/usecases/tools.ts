@@ -116,6 +116,8 @@ export async function executeManagerTool(name: string, args: Record<string, unkn
       }
       const reservation = await reservationRepo.create({
         id: crypto.randomUUID(), hotelId, roomId, guestId,
+        // REQ-HAC-01 (#258): tipo vendido en la fila, como el panel y el motor público.
+        roomType: room?.type ? String(room.type) : undefined,
         checkIn, checkOut, adults, status: 'confirmed', totalAmount: total, createdAt: new Date().toISOString(),
       } as any)
       return { ok: true, reservationId: reservation.id, guestId, roomId, nights, totalAmount: total }

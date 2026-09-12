@@ -1,9 +1,12 @@
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** Detalle estructurado del backend (p. ej. el 409 de assign-room trae `{ reason, locator, ... }`). */
+  details?: Record<string, unknown>
+  constructor(status: number, message: string, details?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    if (details) this.details = details
   }
 }
 
@@ -203,6 +206,14 @@ export function toApiUrl(path: string): string {
   return path === '/api' || path.startsWith('/api/') || path.startsWith('/api?') ? path : `/api${path}`
 }
 
+/** `details` estructurado del error (el 409 de assign-room trae `{ reason, locator, ... }`): el
+ *  framework lo deja en `error.details`, server.ts en la raíz. Mismo helper para el camino normal
+ *  y para el reintento tras 401, así el motivo no se pierde según cuándo venció el token. */
+function errorDetails(raw: any, errObj: any): Record<string, unknown> | undefined {
+  const details = raw?.details ?? (errObj && typeof errObj === 'object' ? errObj.details : undefined)
+  return details && typeof details === 'object' ? details : undefined
+}
+
 async function request<T>(method: string, path: string, body?: unknown, _isRetry = false): Promise<T> {
   // FormData (multipart): el browser setea el boundary; NO forzar Content-Type ni stringificar.
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
@@ -265,7 +276,7 @@ async function request<T>(method: string, path: string, body?: unknown, _isRetry
           const raw = text ? JSON.parse(text) : null
           const errObj = raw?.error ?? raw
           const msg = (typeof errObj === 'object' && errObj?.message) || raw?.error || raw?.message || `Error ${retryRes.status}`
-          throw new ApiError(retryRes.status, msg)
+          throw new ApiError(retryRes.status, msg, errorDetails(raw, errObj))
         }
         const text = await retryRes.text()
         const raw = text ? JSON.parse(text) : null
@@ -333,7 +344,7 @@ function withFieldDetail(message: string, errObj: unknown): string {
     // El framework envuelve errores en { success, error }; server.ts usa { error }
     const errObj = raw?.error ?? raw
     const msg = (typeof errObj === 'object' && errObj?.message) || raw?.error || raw?.message || `Error ${res.status}`
-    throw new ApiError(res.status, withFieldDetail(msg, errObj))
+    throw new ApiError(res.status, withFieldDetail(msg, errObj), errorDetails(raw, errObj))
   }
 
   // Envelope del framework arckode: { success, data, meta, error }

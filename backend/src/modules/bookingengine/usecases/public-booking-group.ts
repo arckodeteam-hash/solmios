@@ -672,6 +672,9 @@ export async function createPublicBookingGroup(
           // porque los reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
           const reservation = await tx.create('Reservations', {
             id: crypto.randomUUID(), hotelId, roomId, guestId: guest.id, groupId: group.id,
+            // REQ-HAC-01 (#258): tipo vendido en la fila (las unidades se buscaron por
+            // `Rooms.type = line.roomType`, así que es el `room.type` de cada una).
+            roomType: line.roomType,
             checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
             adults: line.adults, children: line.children, childrenAges: line.childrenAges,
             // Requerimiento 12 (edad de referencia, 2026-09-03) — mismo ancla que public-booking.ts:

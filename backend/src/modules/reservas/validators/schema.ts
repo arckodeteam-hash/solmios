@@ -6,7 +6,10 @@ const PRECHECKIN_ENUM = ['pending', 'sent', 'completed', 'expired']
 
 export const CreateReservasSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
+  // REQ-HAC-01 (#258): el alta del panel SIGUE exigiendo roomId (la creación sin habitación es
+  // HAC-05). `roomType` es opcional: si falta, el usecase lo toma de `rooms.type`.
   roomId: { type: 'string' as const, required: true },
+  roomType: { type: 'string' as const, max: 50 },
   checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, required: true, min: 0 },
@@ -84,6 +87,12 @@ export const StayQuoteSchema: Record<string, ValidationRule> = {
 
 export const UpdateReservasSchema: Record<string, ValidationRule> = {
   roomId: { type: 'string' as const },
+  roomType: { type: 'string' as const, max: 50 },
+  // REQ-HAC-03 (#258): el PUT con `roomId` de otro tipo delega en `validateRoomAssignment`, que
+  // exige `allowTypeChange` explícito (409 `type_mismatch`). `validateSchema` es lista blanca: sin
+  // declararlo acá el flag se descartaba en silencio y cambiar de tipo por PUT daba SIEMPRE 409.
+  // No se persiste (el ORM sólo escribe campos del modelo); es una decisión, no un dato.
+  allowTypeChange: { type: 'boolean' as const },
   checkIn: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, min: 0 },
@@ -178,6 +187,13 @@ export const ManualMessageLogSchema: Record<string, ValidationRule> = {
 // ── Cancel (F2 plan #627): aplica política de cancelación. reason opcional ──
 export const CancelReservationSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 500 },
+}
+
+// ── Assign room (REQ-HAC-03, #258): POST /api/reservas/:id/assign-room ──
+// `allowTypeChange` habilita asignar una unidad de tipo distinto al vendido (`roomType`).
+export const AssignRoomSchema: Record<string, ValidationRule> = {
+  roomId: { type: 'string' as const, required: true },
+  allowTypeChange: { type: 'boolean' as const },
 }
 
 // ── Reject (#271 MR-06): rechazo de una reserva pendiente de aprobación ──
