@@ -506,7 +506,7 @@
                   class="px-3 py-1.5 rounded-full text-xs font-bold border border-border text-navy hover:border-navy/30 transition-colors cursor-pointer">
                   + Agregar amenidad
                 </button>
-                <p v-if="showCustomAmenitiesError" class="mt-2 text-[11px] font-bold text-coral" data-testid="custom-amenity-error">{{ customAmenitiesError }}</p>
+                <p v-if="showCustomAmenitiesError || customAmenitiesServerError" class="mt-2 text-[11px] font-bold text-coral" data-testid="custom-amenity-error">{{ customAmenitiesError || customAmenitiesServerError }}</p>
               </div>
             </div>
       </div>
@@ -752,15 +752,24 @@ function customAmenityRowError(row: RoomAmenityItem): string | null {
   const raw: unknown = row.price
   if (raw === '' || raw === null || typeof raw !== 'number' || Number.isNaN(raw)) return 'Ingresá un precio válido (0 = gratis)'
   if (raw < 0) return 'El precio no puede ser negativo'
+  if (row.name.trim().length > 80) return 'El nombre no puede superar los 80 caracteres'
   return null
 }
+// Espeja las reglas del backend (normalizeRoomAmenityItems): dos filas cuyo nombre normaliza a la
+// misma key `custom:<slug>` serían un 400 al guardar — mejor avisarlo antes.
 const customAmenitiesError = computed<string | null>(() => {
+  const seen = new Set<string>()
   for (const row of form.value.customAmenities) {
     const err = customAmenityRowError(row)
     if (err) return err
+    const key = customAmenityKey(row)
+    if (seen.has(key)) return `Hay dos amenidades con el mismo nombre ("${row.name.trim()}")`
+    seen.add(key)
   }
   return null
 })
+// Error del servidor al guardar las amenidades (p. ej. 400): se muestra inline y el modal queda abierto.
+const customAmenitiesServerError = ref<string | null>(null)
 
 const formValid = computed(() => !numberError.value && !priceError.value)
 const showNumberError = computed(() => touched.value.number && !!numberError.value)
@@ -1055,13 +1064,13 @@ function openEditFromDetail() {
   // Clonado: el form se edita sin tocar la card hasta que se guarde y recargue.
   const customAmenities = (room.customAmenities || []).map(a => ({ ...a }))
   form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, maxAdults: room.maxAdults ?? null, maxChildren: room.maxChildren ?? null, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, customAmenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
-  touched.value = { number: false, basePrice: false, customAmenities: false }
+  touched.value = { number: false, basePrice: false, customAmenities: false }; customAmenitiesServerError.value = null
 }
 
 function openNew() {
   editId.value = ''; modal.value = { show: true, edit: false }
   form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, maxAdults: null, maxChildren: null, basePrice: 80, status: 'available', amenities: [], customAmenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
-  touched.value = { number: false, basePrice: false, customAmenities: false }
+  touched.value = { number: false, basePrice: false, customAmenities: false }; customAmenitiesServerError.value = null
 }
 
 async function changeStatus(newStatus: string) {
@@ -1100,7 +1109,17 @@ async function save() {
     const items: RoomAmenityItem[] = form.value.customAmenities.map(a => ({
       ...(a.key ? { key: a.key } : {}), name: a.name.trim(), price: Number(a.price), isActive: !!a.isActive,
     }))
-    await AmenitiesService.saveRoom(roomId, form.value.amenities, items)
+    // Si las amenidades fallan (400 del backend), la habitación ya quedó guardada pero el modal
+    // NO se cierra: el hotel ve el motivo y no pierde lo que tipeó (#290).
+    try {
+      await AmenitiesService.saveRoom(roomId, form.value.amenities, items)
+    } catch (e) {
+      const detail = e instanceof ApiError && e.message ? e.message : null
+      customAmenitiesServerError.value = detail ? `No se guardaron las amenidades: ${detail}` : 'No se pudieron guardar las amenidades'
+      touched.value.customAmenities = true
+      if (!editId.value) editId.value = roomId
+      saving.value = false; await load(); return
+    }
     toast.success(editId.value ? `Habitación ${form.value.number} actualizada` : `Habitación ${form.value.number} creada`)
   } catch (e) {
     const msg = e instanceof ApiError ? `Error (${e.status})` : 'Sin conexión'

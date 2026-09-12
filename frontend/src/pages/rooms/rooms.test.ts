@@ -339,6 +339,45 @@ describe('rooms — amenidades personalizadas y con precio (#290)', () => {
     await flushPromises()
     expect(q('custom-amenity-row')).toHaveLength(0)
   })
+
+  it('dos filas con el mismo nombre normalizado ("Cuna" y "cuna") → error inline y NO se guarda (el backend lo rechazaría con 400)', async () => {
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+
+    q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!.click()
+    q<HTMLButtonElement>('custom-amenity-add')[0].click()
+    await flushPromises()
+    setInput(q('custom-amenity-name')[1], 'cuna')
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('mismo nombre')
+    expect(RoomService.create).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+  })
+
+  it('si el backend rechaza las amenidades, el modal queda abierto con el motivo (no se pierde lo tipeado)', async () => {
+    const { ApiError } = await import('@/services/http')
+    vi.mocked(AmenitiesService.saveRoom).mockRejectedValueOnce(new ApiError(400, 'key duplicada: custom:cuna'))
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+    q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!.click()
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledTimes(1)
+    // El modal sigue abierto: la fila "Cuna" sigue ahí y el error explica el motivo del servidor.
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna'])
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('key duplicada: custom:cuna')
+  })
 })
 
 describe('rooms — eliminar con confirmación y toast con nombre (A10)', () => {
