@@ -170,8 +170,14 @@ export class AbandonRecoveryService {
       const link = buildRecoveryLink(this.config.publicBaseUrl, hotelSlug, r.id, r.accessToken)
       const html = renderAbandonEmailHtml({ link, reservationId: r.id, pendingTtlMinutes: ttlMinutes })
 
+      // EmailService.enqueue exige hotelId (multi-tenancy): sin él no hay cómo encolar.
+      if (!r.hotelId) {
+        result.errors.push({ reservationId: r.id, reason: 'reserva sin hotelId' })
+        continue
+      }
+
       try {
-        const r2 = await sendAbandonEmail(this.deps.email, guestEmail, emailSubject(), html)
+        const r2 = await sendAbandonEmail(this.deps.email, { to: guestEmail, subject: emailSubject(), html, hotelId: r.hotelId, relatedId: r.id })
         if (r2?.sent) {
           await this.deps.reservations.update(r.id, { abandonEmailSent: true })
           result.emailed++
