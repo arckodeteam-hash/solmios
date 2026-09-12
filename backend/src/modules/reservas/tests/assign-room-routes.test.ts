@@ -244,3 +244,31 @@ describe('#258 — DELETE /api/reservas/:id/assign-room', () => {
     expect(reservation().roomId).toBe('room-101')
   })
 })
+
+// El PUT genérico delega en `validateRoomAssignment` con `allowTypeChange` del body. Como
+// `validateSchema` es lista blanca, `UpdateReservasSchema` tiene que declararlo: sin eso el flag
+// se descartaba en silencio y cambiar de tipo por PUT daba SIEMPRE 409 `type_mismatch`.
+describe('#258 — PUT /api/reservas/:id con roomId de otro tipo', () => {
+  /** El PUT recalcula el saldo (paymentState) y exige el puerto de dinero que cablea reservas-money. */
+  const emptyMoneyPort = { folios: async () => [], invoices: async () => [], payments: async () => [], reservationIdOf: async () => null }
+  const mountWithMoney = () => { const m = mount(); m.service.setOrchestrationDeps({ moneyPort: emptyMoneyPort }); return m }
+
+  it('sin allowTypeChange → 409 type_mismatch (la reserva no cambia)', async () => {
+    const { router, auth, reservation } = mountWithMoney()
+    const res = await router.resolve('PUT', BASE, { headers: headers(auth, 'receptionist'), body: { roomId: 'room-201' } })
+    expect(res.status).toBe(409)
+    expect(reservation().roomId).toBeNull()
+  })
+
+  it('con allowTypeChange:true → 200, roomId nuevo y roomType pasa al de la unidad (suite)', async () => {
+    const { router, auth, reservation } = mountWithMoney()
+    const res = await router.resolve('PUT', BASE, { headers: headers(auth, 'receptionist'), body: { roomId: 'room-201', allowTypeChange: true } })
+    expect(res.status).toBe(200)
+    const row = reservation()
+    expect(row.roomId).toBe('room-201')
+    expect(row.roomType).toBe('suite')
+    expect(row.roomAssignedBy).toBe('user-receptionist')
+    // El flag es una decisión del request, no un dato: no queda en la fila.
+    expect(row.allowTypeChange).toBeUndefined()
+  })
+})
