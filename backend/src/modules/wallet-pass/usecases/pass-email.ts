@@ -52,6 +52,8 @@ export interface PassEmailInput {
 }
 
 const SUBJECT_ES = 'Tu pase de reserva + código de acceso — {hotel_name}'
+/** Pase parcial (#262, sin lockCode): el asunto no promete un código que el correo no trae. */
+const SUBJECT_PARTIAL_ES = 'Tu pase de reserva — {hotel_name}'
 const APPLE_BUTTON_LABEL = 'Agregar a Apple Wallet'
 const GOOGLE_BUTTON_LABEL = 'Agregar a Google Wallet'
 
@@ -151,7 +153,7 @@ export async function sendWalletPassEmail(
     return { status: 'skipped' }
   }
   try {
-    const subject = SUBJECT_ES.replace('{hotel_name}', input.hotelName)
+    const subject = (input.lockCode ? SUBJECT_ES : SUBJECT_PARTIAL_ES).replace('{hotel_name}', input.hotelName)
     const html = renderWalletPassEmail(input)
     const queueId = await deps.emailService.enqueue({
       to: input.to,

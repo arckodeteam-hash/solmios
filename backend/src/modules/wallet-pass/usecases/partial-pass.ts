@@ -16,6 +16,7 @@
 import { resolveReservationInfo } from './generate-pass'
 import type { GeneratePassDeps } from './generate-pass'
 import { sendWalletPassEmail } from './pass-email'
+import { isDuplicateError } from './duplicate-detector'
 import type { WalletPassDTO } from '../types'
 
 export async function sendPartialPassNow(
@@ -26,14 +27,37 @@ export async function sendPartialPassNow(
   try {
     if (!deps.emailService) return false
 
-    // Ya hay fila (parcial o completa): no se reenvía.
+    // Ya hay fila completa, o parcial con el correo YA enviado: no se reenvía. Una parcial sin
+    // `emailSentAt` es un envío que quedó a medias (proceso caído entre reservar y mandar): se reintenta.
     const existing = await deps.walletPassRepo.findOne({ reservationId }).catch(() => null)
-    if (existing) return false
+    if (existing && (existing.lockCode || existing.emailSentAt)) return false
 
     const info = await resolveReservationInfo(deps, reservationId)
     if (!info?.guestEmail) {
       log.info('partial-pass: reserva sin email de huésped', { reservationId })
       return false
+    }
+
+    // La fila se RESERVA antes de mandar: UNIQUE(reservationId) es lo que impide que dos corridas
+    // solapadas del cron le manden el correo dos veces al huésped. La que pierde la carrera ve el
+    // duplicado y sale sin enviar.
+    let row = existing
+    if (!row) {
+      try {
+        row = await deps.walletPassRepo.create({
+          hotelId: info.hotelId,
+          reservationId,
+          appleUrl: null,
+          googleUrl: null,
+          lockCode: '',
+          generatedAt: new Date().toISOString(),
+          emailSentAt: null,
+        } as Omit<WalletPassDTO, 'id'>)
+      } catch (e: unknown) {
+        if (!isDuplicateError(e)) throw e
+        log.info('partial-pass: otra corrida ya reservó la fila', { reservationId })
+        return false
+      }
     }
 
     const result = await sendWalletPassEmail(
@@ -53,18 +77,13 @@ export async function sendPartialPassNow(
         lockCode: '',
       },
     )
-    if (result.status !== 'sent') return false
+    if (result.status !== 'sent') {
+      // Sin correo la fila no sirve de dedup: se libera para que el próximo tick reintente.
+      if (!existing) await deps.walletPassRepo.delete(row.id).catch(() => undefined)
+      return false
+    }
 
-    const now = new Date().toISOString()
-    await deps.walletPassRepo.create({
-      hotelId: info.hotelId,
-      reservationId,
-      appleUrl: null,
-      googleUrl: null,
-      lockCode: '',
-      generatedAt: now,
-      emailSentAt: now,
-    } as Omit<WalletPassDTO, 'id'>)
+    await deps.walletPassRepo.update(row.id, { emailSentAt: new Date().toISOString() } as Partial<WalletPassDTO>)
     log.info('partial-pass: pase parcial enviado', { reservationId, hotelId: info.hotelId })
     return true
   } catch (e) {

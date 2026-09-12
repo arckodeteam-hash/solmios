@@ -49,6 +49,11 @@ function makeWalletRepo(rows: WalletPassDTO[]): RepositoryAdapter<WalletPassDTO>
       Object.assign(row, data)
       return row
     },
+    delete: async (id: any) => {
+      const i = rows.findIndex((r) => r.id === id)
+      if (i >= 0) rows.splice(i, 1)
+      return i >= 0
+    },
   })
 }
 
@@ -181,6 +186,48 @@ describe('wallet-pass/usecases/partial-pass — #262 pase parcial', () => {
 
     expect(await sendPartialPassNow(deps, 'r1')).toBe(false)
     expect(rows).toHaveLength(0)
+  })
+
+  it('el asunto del parcial no promete código de acceso', async () => {
+    const enqueue = mock(async () => 'q-1')
+    const deps = makeDeps({ emailService: { enqueue } as any })
+    expect(await sendPartialPassNow(deps, 'r1')).toBe(true)
+    const sent = (enqueue.mock.calls[0] as any[])[0] as { subject: string }
+    expect(sent.subject).toBe('Tu pase de reserva — Hotel Test')
+    expect(sent.subject).not.toContain('código')
+  })
+
+  it('dos corridas solapadas → un solo correo: la fila se reserva ANTES de mandar (UNIQUE reservationId)', async () => {
+    const rows: WalletPassDTO[] = []
+    const base = makeWalletRepo(rows)
+    // Simula el UNIQUE de la base: el segundo create de la misma reserva revienta como SQLite.
+    const repo = {
+      ...base,
+      create: async (data: any) => {
+        if (rows.some((r) => r.reservationId === data.reservationId)) {
+          throw new Error('UNIQUE constraint failed: wallet_passes.reservationId')
+        }
+        return base.create(data)
+      },
+    } as RepositoryAdapter<WalletPassDTO>
+    const enqueue = mock(async () => 'q-1')
+    const deps = makeDeps({ walletPassRepo: repo, emailService: { enqueue } as any })
+    // Las dos pasan el findOne inicial (todavía sin fila) al mismo tiempo.
+    const [a, b] = await Promise.all([sendPartialPassNow(deps, 'r1'), sendPartialPassNow(deps, 'r1')])
+    expect([a, b].filter(Boolean)).toHaveLength(1)
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].emailSentAt).toBeTruthy()
+  })
+
+  it('fila parcial sin emailSentAt (envío a medias) → reintenta sobre la misma fila', async () => {
+    const rows: WalletPassDTO[] = [{ id: 'wp-0', hotelId: 'h1', reservationId: 'r1', appleUrl: null, googleUrl: null, lockCode: '', generatedAt: '2026-01-01T00:00:00.000Z', emailSentAt: null } as any]
+    const enqueue = mock(async () => 'q-1')
+    const deps = makeDeps({ walletPassRepo: makeWalletRepo(rows), emailService: { enqueue } as any })
+    expect(await sendPartialPassNow(deps, 'r1')).toBe(true)
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].emailSentAt).toBeTruthy()
   })
 })
 
