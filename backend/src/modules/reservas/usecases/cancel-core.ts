@@ -52,8 +52,27 @@ import {
  * - `no-charge` (#248, REQ-RWP-05): reserva web que NUNCA se pagó y venció por el TTL del hotel.
  *   No hay plata en juego (nada cobrado, nada retenido), así que no aplica política alguna:
  *   fee 0, refund 0, snapshot `policyId: 'payment_timeout'`. Tampoco consulta policyRepo/hotelRepo.
+ *
+ * - `hotel-rejected` (#271, MR-06): el HOTEL rechazó una reserva web pendiente de aprobación. El
+ *   huésped no hizo nada mal, así que no hay penalidad: fee 0 y `refundAmount` = lo que
+ *   `usecases/reject.ts` YA devolvió por Stripe (`opts.refundAmount`), snapshot
+ *   `policyId: 'hotel_rejected'`. No consulta policyRepo/hotelRepo.
  */
-export type PenaltyMode = 'hotel-policy' | 'channel-managed' | 'no-charge'
+export type PenaltyMode = 'hotel-policy' | 'channel-managed' | 'no-charge' | 'hotel-rejected'
+
+/** Opciones de `applyCancellation`. */
+export interface CancelCoreOpts {
+  reason?: string
+  penaltyMode?: PenaltyMode
+  /** Sólo `hotel-rejected`: monto ya reembolsado al huésped, para persistirlo en el snapshot. */
+  refundAmount?: number
+  /**
+   * Campos extra que se mergean en el MISMO `repo.update` que marca `cancelled` (p.ej.
+   * `{ approvalStatus: 'rejected' }`). Un solo write: no queda una ventana en la que la reserva
+   * está cancelada pero todavía figura "por aprobar" en el KPI del panel.
+   */
+  patch?: Record<string, unknown>
+}
 
 export interface CancelCoreDeps {
   repo: RepositoryAdapter<any>
@@ -121,6 +140,20 @@ function paymentTimeoutPenalty(): PenaltyResult {
   }
 }
 
+/** Snapshot sintético para `hotel-rejected` (#271): sin penalidad, refund = lo ya devuelto por Stripe. */
+function hotelRejectedPenalty(refundAmount: number): PenaltyResult {
+  const label = 'Rechazada por el hotel'
+  const matchedTier = { deadlineHours: 0, penaltyPercent: 0, refundable: true, label } as PenaltyResult['matchedTier']
+  return {
+    refundable: true,
+    penaltyPercent: 0,
+    refundAmount,
+    cancellationFee: 0,
+    matchedTier,
+    policyApplied: { tiers: [matchedTier], policyId: 'hotel_rejected', source: 'default', label },
+  }
+}
+
 /** Reconstruye el snapshot ya persistido de una reserva cancelada (para el retorno idempotente). */
 function snapshotOf(item: any): PenaltyResult {
   const policyApplied = item.policyApplied ?? null
@@ -150,7 +183,7 @@ function snapshotOf(item: any): PenaltyResult {
 export async function applyCancellation(
   deps: CancelCoreDeps,
   item: any,
-  opts: { reason?: string; penaltyMode?: PenaltyMode } = {},
+  opts: CancelCoreOpts = {},
 ): Promise<CancelCoreResult> {
   const { repo, policyRepo, hotelRepo, logger, cache, sockets } = deps
 
@@ -176,6 +209,8 @@ export async function applyCancellation(
     penalty = channelManagedPenalty(depositAmount)
   } else if (opts.penaltyMode === 'no-charge') {
     penalty = paymentTimeoutPenalty()
+  } else if (opts.penaltyMode === 'hotel-rejected') {
+    penalty = hotelRejectedPenalty(Number(opts.refundAmount ?? 0))
   } else {
     // resolvePolicy trae TODAS las políticas del hotel y aplica channel > base > preset > default.
     // computePenalty (F1) devuelve el snapshot a persistir. USAR TAL CUAL.
@@ -191,6 +226,7 @@ export async function applyCancellation(
   }
 
   const updated = await repo.update(item.id, {
+    ...(opts.patch ?? {}),
     status: 'cancelled',
     cancelledAt: nowIso,
     cancellationReason: opts.reason ?? '',

@@ -64,7 +64,8 @@ export interface ReservasDTO {
   policyApplied?: any
   // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
   // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
-  approvalStatus?: 'pending' | 'approved'
+  // 'rejected' (#271 MR-06): el hotel la rechazó — la reserva queda además `status: 'cancelled'`.
+  approvalStatus?: 'pending' | 'approved' | 'rejected'
   // REQ-RWP-04 (#247) — etiqueta de cobro calculada (payments + extras, ver crud.ts). Sólo la
   // devuelven el listado y mark-paid; NO es columna de la tabla.
   paymentState?: 'pending' | 'partial' | 'paid'

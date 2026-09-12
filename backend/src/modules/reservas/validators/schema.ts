@@ -176,6 +176,13 @@ export const CancelReservationSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 500 },
 }
 
+// ── Reject (#271 MR-06): rechazo de una reserva pendiente de aprobación ──
+// El motivo es obligatorio y con largo mínimo: el huésped lo lee en el email de rechazo.
+// `min` en el validador nativo cuenta caracteres del string ya trimeado.
+export const RejectReservationSchema: Record<string, ValidationRule> = {
+  reason: { type: 'string' as const, required: true, min: 10, max: 500 },
+}
+
 // ── Reschedule (planning): mover/extender reserva ──
 // El objeto `charge` se valida aparte con RescheduleChargeSchema (validateSchema no anida objetos).
 export const RescheduleSchema: Record<string, ValidationRule> = {

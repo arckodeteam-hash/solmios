@@ -83,6 +83,9 @@ export function mapReservation(r: RawReservation): Reservation {
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
+    // #271 MR-06 — misma convención que checkIn/checkOut (ISO tal cual, tipado como Date): el
+    // listado lo usa para "Más antigua: hace N h" en el KPI "Por aprobar".
+    createdAt: r.createdAt as unknown as Date,
   } as Reservation
 }
 
@@ -261,6 +264,20 @@ export const ReservationService = {
   async approve(id: string): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/approve`, {})
     return mapReservation(data)
+  },
+
+  /**
+   * #271 MR-06 — rechaza una reserva pendiente de revisión: el backend la cancela
+   * (`approvalStatus: 'rejected'`, `status: 'cancelled'`), reembolsa el 100% de lo cobrado por
+   * Stripe (el grupo entero si tiene `groupId`), libera la habitación y le manda el motivo al
+   * huésped por email. El motivo es obligatorio (≥ 10 caracteres; 400 si no) porque es lo que
+   * el huésped va a leer. 409 si la reserva ya no está `pending`. Además de la reserva, la
+   * respuesta trae `refundedAmount` (lo devuelto por Stripe; 0 si pagó por otro medio) y
+   * `rejectedCount` (cuántas reservas cayeron: 1 sin grupo).
+   */
+  async reject(id: string, reason: string): Promise<Reservation & { refundedAmount?: number; rejectedCount?: number }> {
+    const data = await http.post<RawReservation & { refundedAmount?: number; rejectedCount?: number }>(`/reservas/${id}/reject`, { reason })
+    return { ...mapReservation(data), refundedAmount: data.refundedAmount, rejectedCount: data.rejectedCount }
   },
 
   /**

@@ -672,6 +672,97 @@ las filas para las reservas del motor anteriores al cambio a partir de
 - WHEN checkout
 - THEN factura con 3 líneas, `amountPaid = total`, saldo 0 y `creditBalance` 0
 
+### Requirement: Rechazo manual de una reserva web pendiente de aprobación (#271 MR-06)
+
+Cuando el hotel tiene apagada la "confirmación instantánea", una reserva web nace pagada pero
+con `approvalStatus:'pending'`. El hotel MUST poder rechazarla, el huésped MUST enterarse del
+resultado (aprobada o rechazada) por email y el hotel MUST recibir un recordatorio si se pasa
+del plazo que él mismo configuró.
+
+**Rechazar.** `POST /api/reservas/:id/reject { reason }` (`reservas/usecases/reject.ts`) MUST
+exigir el permiso `reservations:edit` — el MISMO que aprobar; `/panel/roles` NO necesita un
+permiso nuevo. `reason` MUST tener ≥ 10 caracteres (400): es el texto que lee el huésped. Sólo
+una reserva con `approvalStatus:'pending'` y no cancelada se puede rechazar (409); una reserva
+de otro hotel responde 404 (nunca 403). El rechazo MUST dejar `approvalStatus:'rejected'`,
+`status:'cancelled'`, `cancellationReason` = motivo, reembolsar el 100 % de lo cobrado por
+Stripe vía `payments.refundPayment` (fila `payments` `type:'refund'`, el cobro original pasa
+a `refunded`), llamar `pushAvailability(hotelId, roomId)`, emitir `onReservationCancelled`
+(libera depósito, código de puerta y uso de promo) y encolar el email `reservation_rejected`
+con `{rejection_reason}` y `{refund_amount}`. Un grupo se rechaza entero desde cualquiera de
+sus reservas con UN solo reembolso (el cobro vive en la líder); si falla el refund, la
+reserva MUST NOT quedar cancelada.
+
+**Aprobar.** `POST /api/reservas/:id/approve` MUST encolar `reservation_approved` al huésped
+y marcar como leídas las notificaciones de la campanita del hotel asociadas a esa reserva
+(`closeReservationNotifications`). Ambas plantillas (`reservation_approved`,
+`reservation_rejected`) tienen defaults en `services/notification-defaults.ts` y el hotel las
+edita en Marketing → Plantillas.
+
+**Plazo y recordatorio.** `booking_config.approvalDeadlineHours` (entero 1–168, default 24,
+editable en `/panel/booking-engine`). El cron `shared/usecases/approval-reminder-cron.ts`
+MUST avisar al hotel (campanita + email interno) por cada reserva `approvalStatus:'pending'`
+no cancelada cuyo `createdAt + approvalDeadlineHours` ya pasó, UNA sola vez por reserva
+(marca `reservations.approvalReminderAt`; un grupo cuenta como una). El cron MUST NOT
+aprobar ni rechazar automáticamente: sólo recuerda. Kill-switch
+`BOOKING_APPROVAL_REMINDER_DISABLED=1` (loguea y no barre).
+
+**Huésped.** `GET /api/public/reservation` MUST exponer `approvalStatus`
+(`pending|approved|rejected|null`) y `approvalDeadlineHours`, y SOLO cuando
+`approvalStatus:'rejected'` también `rejectionReason` y `refundAmount` (en cualquier otro
+estado, `null`). La confirmación pública (`booking-confirmation.vue`) MUST mostrar, bajo el
+aviso de "pendiente de aprobación", "El hotel revisará su reserva en las próximas {hours} h"
+(`data-testid="confirm-approval-deadline"`); y si la reserva fue rechazada, en lugar del
+bloque de éxito, "El hotel no pudo confirmar su reserva" con el motivo del hotel y el importe
+devuelto (`data-testid="confirm-rejected"`, `confirm-rejected-reason`), sin botón "Cancelar
+reserva". Una reserva `cancelled` + `approvalStatus:'rejected'` MUST NOT caer en la rama
+"venció" ni en la de "pago rechazado".
+
+**Database changes:** `reservations.approvalReminderAt` (TEXT, nullable — dedup del
+recordatorio); `booking_config.approvalDeadlineHours` (INTEGER, nullable → 24). Ambas vía
+`addColumnIfMissing` en `migrate-db.ts`; `approvalStatus` admite el valor `'rejected'`.
+
+**API endpoints:** `POST /api/reservas/:id/reject { reason }` (`reservations:edit`) →
+200 con la reserva + `refundedAmount` y `rejectedCount`; 400/404/409 según arriba.
+`POST /api/reservas/:id/approve` sin cambios de contrato. `PUT /api/booking-engine/config`
+acepta `approvalDeadlineHours`. `GET /api/public/reservation` suma los campos de arriba.
+
+**UI requirements:** panel `/panel/reservations` con botón "Rechazar" junto a "Aprobar" para
+las pendientes de aprobación, modal `RejectReservationModal.vue` con motivo obligatorio
+(≥ 10) y aviso del reembolso; `/panel/booking-engine` con "Horas para aprobar" (1–168);
+confirmación pública con plazo y rama rechazada (es/en/pt en `useBookingI18n.ts`).
+
+#### Scenario: Rechazo con reembolso
+
+- GIVEN una reserva web `pending` de aprobación con un pago Stripe `completed` de 150.00
+- WHEN `POST /api/reservas/:id/reject { reason: 'Sin disponibilidad real esa noche' }` por un usuario con `reservations:edit`
+- THEN queda `approvalStatus:'rejected'`, `status:'cancelled'`, `cancellationReason` = motivo, hay una fila `payments` `type:'refund'` de 150.00, se llamó `pushAvailability` y se encoló `reservation_rejected` con motivo e importe
+
+#### Scenario: Motivo corto, estado incorrecto, otro hotel
+
+- WHEN el motivo tiene 5 caracteres → 400; la reserva ya está `approved` o `cancelled` → 409; es de otro hotel → 404
+
+#### Scenario: Grupo
+
+- GIVEN un grupo de 3 con el cobro en la líder
+- WHEN se rechaza cualquiera de las tres
+- THEN las tres quedan `cancelled`/`rejected` y hay UN solo refund
+
+#### Scenario: Aprobación avisa al huésped
+
+- WHEN `POST /api/reservas/:id/approve`
+- THEN se encola `reservation_approved` y las notificaciones del hotel de esa reserva quedan leídas
+
+#### Scenario: Recordatorio una sola vez
+
+- GIVEN `approvalDeadlineHours` 24 y una reserva pendiente creada hace 25 h
+- WHEN corre el cron dos veces
+- THEN el hotel recibe UN aviso, `approvalReminderAt` queda seteado y la reserva sigue `pending` (no se aprobó ni rechazó); con `BOOKING_APPROVAL_REMINDER_DISABLED=1` no se avisa
+
+#### Scenario: Confirmación pública
+
+- WHEN el huésped abre la confirmación de una reserva pendiente → ve "El hotel revisará su reserva en las próximas 24 h"
+- AND de una rechazada con `refundAmount` 150.00 → ve "El hotel no pudo confirmar su reserva", "Se reembolsó 150.00 USD al medio de pago original" y el motivo, sin enlace "Cancelar reserva"
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir

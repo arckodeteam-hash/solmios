@@ -28,6 +28,8 @@ export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   stripeAccountId: { type: 'string' as const },
   // #266 — Minutos para completar el pago de una reserva web (15–1440; default 60).
   pendingTtlMinutes: { type: 'integer' as const, min: 15, max: 1440, message: 'pendingTtlMinutes debe ser un entero entre 15 y 1440' },
+  // #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168; default 24).
+  approvalDeadlineHours: { type: 'integer' as const, min: 1, max: 168, message: 'approvalDeadlineHours debe ser un entero entre 1 y 168' },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────
