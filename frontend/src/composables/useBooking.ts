@@ -253,8 +253,8 @@ export interface CartLine {
    *  es global al carrito). `undefined`/`false` en líneas sin bebé o del flujo legacy.
    *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable.
    *  #292 — la cuna se cobra como la amenidad de habitación `custom:cuna` (`CRIB_AMENITY_KEY`):
-   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el composer la
-   *  agrega en `setNeedsCrib`); el backend re-valida y la fuerza/quita según corresponda. */
+   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el huésped la
+   *  tilda en el checklist genérico — #341: `needsCrib` es el espejo de esa key, derivado en `toggleRoomAmenity`). */
   needsCrib?: boolean
   cribCount?: number
   /** REQ-01 (#290, amenidades de la habitación) — elegidas para ESTA línea, POR LÍNEA igual que
@@ -289,20 +289,19 @@ export interface CartLine {
 export interface ComposerState {
   adults: number
   ages: number[]
-  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — por TARJETA, igual que adults/ages:
-  // cada habitación pide su propia cuna para SU bebé, no la del carrito entero. Sí/No únicamente
-  // (el pedido de corrección es explícito: "no preguntar si desea una, dos o más cunas") — no
-  // existe una cantidad en el estado, `addComposedRoom` la deriva SIEMPRE en 1/0 al enviar.
-  // #292 — `needsCrib:true` va SIEMPRE acompañado de `CRIB_AMENITY_KEY` en `roomAmenityKeys`
-  // (`setNeedsCrib` los mueve juntos): así el precio de la cuna viaja por el mecanismo de
-  // amenidades de habitación, sin un camino de cobro aparte.
+  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09; #292; #341 — por TARJETA, igual que
+  // adults/ages. Desde #341 la cuna es UNA AMENIDAD MÁS del checklist genérico (ya no existe la
+  // pregunta "¿Necesita cuna?" ni el gate por bebé): `needsCrib` es un ESPEJO derivado de
+  // `roomAmenityKeys` — true exactamente cuando hay una key cuna (`isCribAmenityKey`) tildada.
+  // `toggleRoomAmenity` lo recalcula en cada cambio; nadie lo escribe a mano. Sí/No únicamente:
+  // no existe una cantidad en el estado, `addComposedRoom` deriva `cribCount` SIEMPRE en 1/0.
   needsCrib: boolean
   // REQ-01 (#290, amenidades de la habitación) — keys del catálogo por tipo
-  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta. Opcional y ausente en el estado
-  // fresco (se crea recién al primer toggle): el estado inicial sigue siendo exactamente
-  // `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan. Sin relación
-  // con la composición salvo la cuna (ver `syncCribToBabies`): una cama extra no se limpia al
-  // cambiar edades. Leer vía `roomAmenityKeys(rt)`.
+  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta, cuna incluida (#341). Opcional y
+  // ausente en el estado fresco (se crea recién al primer toggle): el estado inicial sigue siendo
+  // exactamente `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan.
+  // Sin relación con la composición: ni una cama extra ni la cuna se limpian al cambiar edades o
+  // cantidad de niños. Leer vía `roomAmenityKeys(rt)`.
   roomAmenityKeys?: string[]
   // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
   // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);

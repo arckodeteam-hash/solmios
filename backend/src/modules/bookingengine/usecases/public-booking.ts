@@ -22,11 +22,16 @@
 //     pero la reserva nace sin unidad (REQ-HAC-05): se resuelve contra la UNIÓN de las unidades
 //     vendibles del tipo y se cobra el precio real de esa fila — el más barato si dos la ofrecen
 //     (nunca el del body). Ver `public-room-amenities.ts`.
-//   - `needsCrib` (#292): la cuna ES la amenidad personalizada `custom:cuna` de la habitación
-//     (`CRIB_AMENITY_KEY`). Sí/No; sólo cuenta si la composición tiene un bebé Y alguna unidad
-//     del tipo la publica. "Sí" fuerza esa key en `roomAmenities` (y se cobra SU precio); "No" la
-//     quita aunque el body la mande. `needsCrib`/`cribCount` (1/0) se persisten como espejo EXACTO
-//     de esa línea: `needsCrib === (roomAmenities tiene custom:cuna)`, decidido después de resolverla.
+//   - Cuna (#292, #341): la cuna ES la amenidad personalizada `custom:cuna` de la habitación
+//     (`CRIB_AMENITY_KEY`) y desde #341 se trata como una amenidad de habitación NORMAL: NO
+//     depende de que haya un bebé en la composición ni de una pregunta aparte. Se pide con la
+//     key cuna en `roomAmenities` (como cualquier `custom:*`) o, por compat con callers viejos,
+//     con `needsCrib:true`. Cualquiera de las dos fuerza la key canónica en las keys (y se cobra
+//     SU precio real, resuelto contra la unión del tipo como cualquier otra key). `needsCrib`/
+//     `cribCount` (1/0) se persisten como espejo EXACTO de la línea resuelta contra la unión de
+//     las unidades vendibles del tipo (REQ-HAC-05: no hay unidad asignada al nacer):
+//     `needsCrib === (roomAmenities tiene una línea cuna)`, decidido después de resolverla (los
+//     lee el PMS/housekeeping/correos).
 //   - `childAmenities` en el body se IGNORA (#292: el catálogo global `child_amenities` se dio de
 //     baja). `Reservations.childAmenities`/`childAmenitiesTotal` y `priceBreakdown.
 //     childAmenitiesTotal` se siguen escribiendo como `[]`/`0` para que los lectores de reservas
@@ -453,18 +458,17 @@ export async function createPublicBookingDirect(
   // Ocupación para PRECIO: adultos + niños que consumen plaza (el niño libre no cotiza).
   const pricingOccupancy = childComposition.chargeableOccupancy
 
-  // ─── Cuna (Tarea 22, simplificada 2026-09-09; por habitación desde #292) — gateo por bebé ──
-  // El composer del frontend ya oculta "¿Necesita cuna?" sin un bebé en la composición o si el
-  // tipo no publica `custom:cuna`, pero el servidor NUNCA confía en lo que mande el cliente
-  // (mismo criterio que cualquier otro campo de esta reserva): sin al menos un bebé clasificado
-  // (Tarea 21) se fuerza a "no pedida" sin importar el body. La segunda mitad del gate — ¿alguna
-  // unidad del TIPO ofrece `custom:cuna`? — se resuelve más abajo, DESPUÉS de
-  // `resolveRoomAmenityLines` contra la unión del tipo (`needsCrib` definitivo = quedó la línea).
-  // Simplificación (2026-09-09): "¿Necesita cuna?" es SOLO Sí/No — no existe cantidad de cunas
-  // configurable ("no preguntar si desea una, dos o más cunas"). `cribCount` queda como 1/0
+  // ─── Cuna (Tarea 22; por habitación desde #292; amenidad NORMAL desde #341) ────────────────
+  // #341 — la cuna YA NO depende de bebés: el widget la muestra en el checklist genérico de
+  // amenidades de la habitación y la manda como una key cuna más en `roomAmenities`. Se
+  // considera "pedida" si viene esa key (toda key que `isCribAmenityKey` reconozca) o, por
+  // compat con callers viejos, `needsCrib:true`. Ningún gate por composición. Lo único que la
+  // decide es si alguna unidad del TIPO la ofrece (REQ-HAC-05: la reserva nace sin unidad) — se
+  // resuelve más abajo, DESPUÉS de `resolveRoomAmenityLines` contra la unión del tipo
+  // (`needsCrib` definitivo = quedó la línea).
+  // Sigue siendo Sí/No — no existe cantidad de cunas configurable: `cribCount` queda como 1/0
   // espejo de `needsCrib`, no como un valor independiente que el cliente pueda variar.
-  const babiesCount = childComposition.babies
-  const cribRequested = babiesCount > 0 && rawNeedsCrib === true
+  const cribRequested = rawNeedsCrib === true || normalizeRoomAmenityKeys(rawRoomAmenities).some((k) => isCribAmenityKey(k))
 
   // ─── MR-03 (#268) — Régimen: resolver contra el catálogo del hotel, precio del server ────
   // persons = adultos efectivos + niños CON plaza (bebés y niños libres no pagan régimen), mismo
@@ -505,12 +509,13 @@ export async function createPublicBookingDirect(
 
   // REQ-01 (#290) — keys `custom:*` pedidas. Sin keys (ni cuna pedida), NADA de lo que sigue lee
   // `RoomAmenities` (cero cambio de comportamiento para un caller que no las manda).
-  // #292 — la cuna NO entra por el body: toda key que `isCribAmenityKey` reconozca (`custom:cuna`,
-  // `custom:crib`, `custom:cuna_para_bebe`…) se saca de las keys y se vuelve a poner — como la key
-  // canónica — sólo si la pidió el gate de bebé (`cribRequested`). Que quede o no en el snapshot
-  // lo decide `resolveRoomAmenityLines` contra la unión del tipo (acepta cualquier fila cuna de
-  // alguna unidad), y `needsCrib` se lee de AHÍ (más abajo): la línea de cuna existe si y sólo si
-  // `needsCrib`, nunca por una key suelta ni por un "sí" que ninguna unidad del tipo puede cumplir.
+  // #292/#341 — toda key cuna que `isCribAmenityKey` reconozca (`custom:cuna`, `custom:crib`,
+  // `custom:cuna_para_bebe`…) se saca de las keys y se vuelve a poner UNA sola vez como la key
+  // canónica cuando `cribRequested` (que ya la contempla): así una key alias del body y un
+  // `needsCrib:true` legacy nunca duplican la línea. Que quede o no en el snapshot lo decide
+  // `resolveRoomAmenityLines` contra la unión del tipo (acepta cualquier fila cuna de alguna
+  // unidad vendible), y `needsCrib` se lee de AHÍ (más abajo): la línea de cuna existe si y sólo
+  // si `needsCrib`, nunca por un pedido que ninguna unidad del tipo puede cumplir.
   const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities).filter((k) => !isCribAmenityKey(k))
   if (cribRequested) roomAmenityKeys.push(CRIB_AMENITY_KEY)
   const needsRoomAmenityCatalog = roomAmenityKeys.length > 0
@@ -580,11 +585,12 @@ export async function createPublicBookingDirect(
   }
   const roomAmenitiesSummary = roomAmenityLines.map((l) => `${l.name}=${l.total.toFixed(2)}`)
 
-  // #292 — `needsCrib` definitivo: true si y sólo si la línea `custom:cuna` quedó resuelta en el
-  // snapshot (`hasCribLine`); así `needsCrib === (roomAmenities tiene custom:cuna)` siempre, y
+  // #292/#341 — `needsCrib` definitivo: refleja la unión del TIPO (REQ-HAC-05: sin unidad
+  // asignada), no el body. Es true si y sólo si la línea cuna quedó resuelta en el snapshot
+  // (`hasCribLine`); así `needsCrib === (roomAmenities tiene una línea cuna)` siempre, y
   // `cribCount` es su espejo 1/0. Si se pidió y NINGUNA unidad del tipo la ofrece, se crea sin
   // cuna con un warn claro.
-  const needsCrib = cribRequested && hasCribLine(roomAmenityLines)
+  const needsCrib = hasCribLine(roomAmenityLines)
   const cribCount = needsCrib ? 1 : 0
   // Revisión #292 — si se pidió y NO se pudo cumplir, no alcanza con un warn en el log: queda
   // escrito en `notes` (lo lee el recepcionista), persistido en `cribUnavailable` y expuesto en la
@@ -857,9 +863,9 @@ export async function createPublicBookingDirect(
         // Tarea "Cobro % niños" — el % REALMENTE usado para cotizar esta reserva (o `null` si la
         // regla no aplicó), independiente de lo que diga `configuration` de acá en más.
         childrenRatePercentApplied,
-        // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación) — ya
-        // gateados arriba contra `childComposition.babies` y la oferta de `custom:cuna` del tipo;
-        // acá solo persisten como espejo de la línea de cuna en `roomAmenities`.
+        // Tarea 22 (Cuna; #292 por habitación; #341 amenidad normal, sin gate por bebé) — ya
+        // resueltos arriba contra la unidad asignada; acá solo persisten como espejo EXACTO de la
+        // línea de cuna en `roomAmenities` (los leen PMS, housekeeping y correos).
         needsCrib, cribCount,
         // Revisión #292 — cuna pedida que ninguna unidad del tipo ofrece (ver `cribUnavailable` arriba).
         cribUnavailable,

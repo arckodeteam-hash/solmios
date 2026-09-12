@@ -1,8 +1,8 @@
 // useBooking.room-amenities.test.ts — REQ-01 (#290): amenidades DE la habitación (cama extra…
 // configuradas por el hotel en cada habitación con nombre/precio/estado), vendidas en el motor
 // público POR TIPO y elegidas POR LÍNEA del carrito, SIN gateo por niños: aplica a cualquier
-// composición. Misma forma de setup (pinia + store), sin DOM. La cuna (`custom:cuna`, #292) es un
-// caso aparte del mismo mecanismo — ver useGuestComposer.crib.test.ts.
+// composición. Misma forma de setup (pinia + store), sin DOM. La cuna (`custom:cuna`, #292/#341)
+// es una amenidad más de este mismo mecanismo — ver useGuestComposer.crib.test.ts.
 //
 // El catálogo (nombres y precios) SIEMPRE viene del store (`store.roomAmenities`, cargado desde
 // `GET /public/hotels/:slug/room-amenities` → `byRoomType`) — acá se siembra a mano; en código de
