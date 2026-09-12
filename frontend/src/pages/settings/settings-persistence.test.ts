@@ -84,6 +84,18 @@ vi.mock('@/services/cancellationPolicies.service', () => ({
 vi.mock('@/services/Channel.service', () => ({
   ChannelService: { status: async () => null },
 }))
+// #297: la card "Datos de la habitación al huésped" lista plantillas de WhatsApp y ofrece
+// SÓLO las aprobadas por Meta.
+vi.mock('@/services/Whatsapp.service', () => ({
+  WhatsappService: {
+    list: async () => ({
+      data: [
+        { id: 'tpl1', name: 'Habitación lista', approvalStatus: 'approved' },
+        { id: 'tpl2', name: 'Borrador', approvalStatus: 'pending' },
+      ],
+    }),
+  },
+}))
 
 import Settings from './index.vue'
 
@@ -114,6 +126,9 @@ function automationBtn(w: VueWrapper) {
 }
 function inputValue(w: VueWrapper, field: string) {
   return (w.find(`[data-field="${field}"]`).element as HTMLInputElement).value
+}
+function roomInfoBtn(w: VueWrapper) {
+  return w.findAll('button').find((b) => ['Guardar aviso de habitación', 'Guardando…'].includes(b.text().trim()) && b.attributes('title') === undefined)
 }
 
 beforeEach(() => {
@@ -262,5 +277,82 @@ describe('#80 — saveAutomation: configuration(automation_config)', () => {
     expect(String(toastError.mock.calls[0]![0])).toContain('boom')
     expect(toastSuccess).not.toHaveBeenCalled()
     expect(automationBtn(w)!.text().trim()).toBe('Guardar automatización')
+  })
+})
+
+describe('#297 — room_info_config: aviso con los datos de la habitación asignada', () => {
+  const ROOM_INFO = { enabled: true, hoursBefore: 6, channel: 'both', whatsappTemplateId: 'tpl1' }
+
+  it('se hidrata desde configuration(room_info_config) y el select de plantilla ofrece sólo las aprobadas', async () => {
+    configGetImpl = async (key) => (key === 'room_info_config' ? { ...ROOM_INFO } : null)
+    const w = await mountOnHotelTab()
+
+    expect((w.find('#room-info-enabled').element as HTMLInputElement).checked).toBe(true)
+    expect((w.find('#room-info-hours').element as HTMLInputElement).value).toBe('6')
+    expect((w.find('#room-info-channel').element as HTMLSelectElement).value).toBe('both')
+    const tpl = w.find('#room-info-template')
+    expect(tpl.exists(), 'con canal ≠ email se muestra el select de plantilla').toBe(true)
+    expect((tpl.element as HTMLSelectElement).value).toBe('tpl1')
+    const optionValues = tpl.findAll('option').map((o) => o.attributes('value'))
+    expect(optionValues).toContain('tpl1')
+    expect(optionValues).not.toContain('tpl2')
+  })
+
+  it('con canal email el select de plantilla no se muestra', async () => {
+    configGetImpl = async (key) => (key === 'room_info_config' ? { ...ROOM_INFO, channel: 'email' } : null)
+    const w = await mountOnHotelTab()
+    expect(w.find('#room-info-template').exists()).toBe(false)
+  })
+
+  it('horas fuera de rango (300): toast.error y NO se llama ConfigService.set con room_info_config', async () => {
+    configGetImpl = async (key) => (key === 'room_info_config' ? { ...ROOM_INFO } : null)
+    const w = await mountOnHotelTab()
+    await w.find('#room-info-hours').setValue(300)
+
+    await roomInfoBtn(w)!.trigger('click')
+    await flushPromises()
+
+    expect(toastError).toHaveBeenCalledWith('Las horas deben ser un entero entre 1 y 168')
+    expect(configSet.mock.calls.some(([key]) => key === 'room_info_config')).toBe(false)
+    expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('canal WhatsApp sin plantilla: toast.error y NO se llama ConfigService.set', async () => {
+    configGetImpl = async (key) => (key === 'room_info_config' ? { ...ROOM_INFO, whatsappTemplateId: '' } : null)
+    const w = await mountOnHotelTab()
+
+    await roomInfoBtn(w)!.trigger('click')
+    await flushPromises()
+
+    expect(toastError).toHaveBeenCalledWith('Elegí una plantilla de WhatsApp aprobada')
+    expect(configSet.mock.calls.some(([key]) => key === 'room_info_config')).toBe(false)
+  })
+
+  it('guardar válido: ConfigService.set(room_info_config, {...}) y el toast de éxito sale SÓLO tras resolver', async () => {
+    configGetImpl = async (key) => (key === 'room_info_config' ? { ...ROOM_INFO } : null)
+    const d = deferred()
+    configSet.mockImplementation(() => d.promise as Promise<{}>)
+    const w = await mountOnHotelTab()
+
+    const btn = roomInfoBtn(w)
+    expect(btn, 'el botón "Guardar aviso de habitación" tiene que existir').toBeTruthy()
+    await btn!.trigger('click')
+    await flushPromises()
+
+    expect(configSet).toHaveBeenCalledTimes(1)
+    expect(configSet).toHaveBeenCalledWith('room_info_config', { enabled: true, hoursBefore: 6, channel: 'both', whatsappTemplateId: 'tpl1' })
+    expect(toastSuccess).not.toHaveBeenCalled()
+    const busy = roomInfoBtn(w)
+    expect(busy!.text().trim()).toBe('Guardando…')
+    expect(busy!.attributes('disabled')).toBeDefined()
+
+    d.resolve({})
+    await flushPromises()
+    await flushPromises()
+
+    expect(toastSuccess).toHaveBeenCalledTimes(1)
+    expect(toastSuccess).toHaveBeenCalledWith('Aviso de habitación guardado')
+    expect(toastError).not.toHaveBeenCalled()
+    expect(roomInfoBtn(w)!.text().trim()).toBe('Guardar aviso de habitación')
   })
 })
