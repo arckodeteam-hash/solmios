@@ -6,10 +6,15 @@
 //     (`custom:crib`) o "Berço" (`custom:berco`) no ofrecía la cuna ni la cobraba. Ahora la pide la
 //     key canónica y la resuelve cualquier fila que `isCribAmenityKey` reconozca; la línea
 //     persistida conserva la key REAL de la fila y `needsCrib` la sigue.
-//  [cribUnavailable] cuna pedida con bebé pero la unidad asignada no la ofrece → antes: reserva sin
+//  [cribUnavailable] cuna pedida pero la unidad asignada no la ofrece → antes: reserva sin
 //     cuna, sin nota, sólo `logger.warn`. Ahora: línea en `notes`, `cribUnavailable` persistido y
 //     expuesto en la respuesta pública (POST y GET) para que el widget avise al huésped. La
 //     asignación NO cambia.
+//
+// #341 — la cuna es una amenidad de habitación NORMAL: se pide con la key cuna (canónica o alias)
+// en `roomAmenities`, o con `needsCrib:true` por compat; NO hay gate por bebé. Una key alias en el
+// body se cobra igual que `custom:cuna`, y un "sí" sin bebé cuenta como pedido (y como
+// `cribUnavailable` si la unidad no la ofrece).
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { createPublicBookingDirect, CRIB_UNAVAILABLE_NOTE } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
@@ -84,12 +89,16 @@ describe('[alias] la cuna se reconoce por nombre/slug, no sólo por custom:cuna'
     expect(res.body.cribUnavailable).toBeUndefined()
   })
 
-  it('reserva directa: la key alias en el body con needsCrib:false se descarta igual que custom:cuna', async () => {
+  it('reserva directa (#341): la key alias en el body SIN needsCrib se cobra igual que custom:cuna (sin bebé)', async () => {
     const { orm, tables } = makeDb({ rooms: [room('r-crib', 'double', 100)], roomAmenities: [am('r-crib', 'custom:cuna_para_bebe', { name: 'Cuna para bebé', price: 9 })] })
-    const res = await direct(orm, { roomType: 'double', adults: 2, childrenAges: [1], needsCrib: false, roomAmenities: [{ key: 'custom:cuna_para_bebe' }] })
+    const res = await direct(orm, { roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:cuna_para_bebe' }] })
     expect(res.status).toBe(201)
-    expect(tables.Reservations[0].needsCrib).toBe(false)
-    expect(tables.Reservations[0].roomAmenities).toEqual([])
+    expect(tables.Reservations[0].needsCrib).toBe(true)
+    expect(tables.Reservations[0].cribCount).toBe(1)
+    expect(tables.Reservations[0].roomAmenities).toEqual([{ key: 'custom:cuna_para_bebe', name: 'Cuna para bebé', price: 9, quantity: 1, total: 9 }])
+    expect(tables.Reservations[0].roomAmenitiesTotal).toBe(9)
+    expect(res.body.totalBreakdown.total).toBe(209)
+    expect(tables.Reservations[0].cribUnavailable).toBe(false)
     // y con needsCrib:true la misma key no duplica la línea.
     const res2 = await direct(orm, { roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:cuna_para_bebe' }], checkIn: '2026-10-10', checkOut: '2026-10-11' })
     expect(res2.status).toBe(201)
@@ -126,13 +135,29 @@ describe('[cribUnavailable] cuna pedida que la unidad asignada no ofrece', () =>
     expect(res.body.cribUnavailable).toBe(true)
   })
 
-  it('reserva directa: sin bebé el "sí" no cuenta como pedido → sin nota ni marca', async () => {
+  it('reserva directa (#341): sin bebé el "sí" SÍ cuenta como pedido → si la unidad no la ofrece, nota y marca igual', async () => {
     const { orm, tables } = makeDb({ rooms: [room('r-suite', 'suite', 150)] })
     const res = await direct(orm, { roomType: 'suite', adults: 2, needsCrib: true })
     expect(res.status).toBe(201)
-    expect(tables.Reservations[0].cribUnavailable).toBe(false)
-    expect(tables.Reservations[0].notes).not.toContain(CRIB_UNAVAILABLE_NOTE)
-    expect(res.body.cribUnavailable).toBeUndefined()
+    expect(tables.Reservations[0].needsCrib).toBe(false)
+    expect(tables.Reservations[0].roomAmenities).toEqual([])
+    expect(tables.Reservations[0].cribUnavailable).toBe(true)
+    expect(tables.Reservations[0].notes).toContain(CRIB_UNAVAILABLE_NOTE)
+    expect(res.body.cribUnavailable).toBe(true)
+    // Lo mismo pidiéndola por key, sin bebé (la forma normal del widget desde #341).
+    const fresh = makeDb({ rooms: [room('r-suite', 'suite', 150)] })
+    const res2 = await direct(fresh.orm, { roomType: 'suite', adults: 2, roomAmenities: [{ key: CRIB_AMENITY_KEY }] })
+    expect(res2.status).toBe(201)
+    expect(fresh.tables.Reservations[0].needsCrib).toBe(false)
+    expect(fresh.tables.Reservations[0].cribUnavailable).toBe(true)
+    expect(res2.body.cribUnavailable).toBe(true)
+    // Sin pedido (ni needsCrib ni key) no hay nota ni marca.
+    const none = makeDb({ rooms: [room('r-suite', 'suite', 150)] })
+    const res3 = await direct(none.orm, { roomType: 'suite', adults: 2 })
+    expect(res3.status).toBe(201)
+    expect(none.tables.Reservations[0].cribUnavailable).toBe(false)
+    expect(none.tables.Reservations[0].notes).not.toContain(CRIB_UNAVAILABLE_NOTE)
+    expect(res3.body.cribUnavailable).toBeUndefined()
   })
 
   it('reserva directa: roomId explícito sin cuna → misma marca (el path sin resolución por tipo también avisa)', async () => {

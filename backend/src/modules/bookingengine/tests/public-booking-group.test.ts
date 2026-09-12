@@ -892,9 +892,11 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
 })
 
 // ─── Tarea 22 (Cuna, 2026-09-08) — #292: la cuna es la amenidad `custom:cuna` de la habitación ──
-// La cobertura del gate por tipo de cada línea (precio por unidad, tipos mixtos) vive en
-// `public-booking-crib.test.ts`; acá queda el contrato Sí/No + bebé POR LÍNEA.
-describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No), POR LÍNEA', () => {
+// #341: amenidad de habitación NORMAL — se pide por línea con la key cuna en `roomAmenities` (o
+// `needsCrib:true` por compat) y NO hay gate por bebé. La cobertura de la oferta por unidad
+// (precio por unidad, tipos mixtos) vive en `public-booking-crib.test.ts`; acá queda el contrato
+// Sí/No POR LÍNEA.
+describe('createPublicBookingGroup — Tarea 22: cuna (Sí/No, sin gate por bebé desde #341), POR LÍNEA', () => {
   // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
   const BABY_POLICY = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 } }
   function configRepo(row: unknown = BABY_POLICY) {
@@ -903,21 +905,24 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
   /** Fila `RoomAmenities` custom:cuna activa (gratis) para la room dada. */
   const cribOn = (roomId: string) => ({ id: `${roomId}-cuna`, roomId, amenityKey: 'custom:cuna', name: 'Cuna', price: 0, isActive: true })
 
-  it('solo la línea con bebé recibe cuna — la otra línea del mismo grupo queda en 0 aunque el body se lo pida', async () => {
+  it('#341: cada línea que la pide recibe cuna, con o sin bebé — la que no la pide queda en 0', async () => {
     const { orm, tables } = makeDb({
       rooms: [
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
         { id: 'r-b', hotelId: HOTEL_ID, type: 'standard', capacity: 6, basePrice: 100, status: 'available' },
+        { id: 'r-c', hotelId: HOTEL_ID, type: 'suite', capacity: 6, basePrice: 100, status: 'available' },
       ],
-      roomAmenities: [cribOn('r-a'), cribOn('r-b')],
+      roomAmenities: [cribOn('r-a'), cribOn('r-b'), cribOn('r-c')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
       rooms: [
-        // Línea A: bebé (edad 1) + pide cuna.
+        // Línea A: bebé (edad 1) + pide cuna (compat needsCrib).
         { roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true },
-        // Línea B: sin niños, pero el body igual manda needsCrib (cliente manipulado/bug) — se ignora.
-        { roomType: 'standard', adults: 2, quantity: 1, needsCrib: true },
+        // Línea B: sin niños, pide la cuna como amenidad por key (forma normal del widget).
+        { roomType: 'standard', adults: 2, quantity: 1, roomAmenities: [{ key: 'custom:cuna' }] },
+        // Línea C: no la pide.
+        { roomType: 'suite', adults: 2, quantity: 1 },
       ],
     }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
 
@@ -925,8 +930,12 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
     const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
     expect(byRoom['r-a'].needsCrib).toBe(true)
     expect(byRoom['r-a'].cribCount).toBe(1)
-    expect(byRoom['r-b'].needsCrib).toBe(false)
-    expect(byRoom['r-b'].cribCount).toBe(0)
+    expect(byRoom['r-b'].needsCrib).toBe(true)
+    expect(byRoom['r-b'].cribCount).toBe(1)
+    expect(byRoom['r-b'].roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 0, quantity: 1, total: 0 }])
+    expect(byRoom['r-c'].needsCrib).toBe(false)
+    expect(byRoom['r-c'].cribCount).toBe(0)
+    expect(byRoom['r-c'].roomAmenities).toEqual([])
   })
 
   it('tipo SIN custom:cuna: la línea no recibe cuna, aunque tenga bebé y lo pida', async () => {

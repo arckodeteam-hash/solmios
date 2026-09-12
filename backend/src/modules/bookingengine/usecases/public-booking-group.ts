@@ -75,20 +75,20 @@ export interface RoomLineInput {
    *  MR-10 (#275, Opción A): una línea con `children` plano y sin edades YA NO cotiza por adultos
    *  únicamente — se le sintetizan edades a `maxChildAge` y pasa por el mismo motor. */
   childrenAges?: number[]
-  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación) — a
-   *  diferencia de `upsells` (global al carrito, ver public-booking.ts), esto SÍ es por línea:
-   *  cada habitación del grupo pide su propia cuna para SU bebé, no la del grupo entero. Gateado
-   *  server-side contra los bebés de ESTA línea Y que cada unidad FINALMENTE asignada ofrezca
-   *  `custom:cuna` (`CRIB_AMENITY_KEY`), igual que el flujo de 1 habitación. "Sí" fuerza esa key
-   *  en `roomAmenities` de la línea (se prefieren unidades con cuna, precio real por unidad) y
-   *  `needsCrib` se persiste POR FILA como espejo exacto de su línea de cuna; "No" la quita
-   *  aunque venga en el body.
+  /** Tarea 22 (Cuna; #292 por habitación; #341 amenidad NORMAL) — a diferencia de `upsells`
+   *  (global al carrito, ver public-booking.ts), esto SÍ es por línea: cada habitación del grupo
+   *  pide su propia cuna. Desde #341 NO hay gate por bebé: la cuna es una amenidad de habitación
+   *  más y normalmente llega como key cuna en `roomAmenities` de la línea; `needsCrib:true` queda
+   *  por compat con callers viejos y equivale a mandar esa key. Lo único que la decide es que
+   *  cada unidad FINALMENTE asignada ofrezca una fila cuna (`CRIB_AMENITY_KEY` o alias), igual
+   *  que el flujo de 1 habitación: se prefieren unidades con cuna, precio real por unidad, y
+   *  `needsCrib` se persiste POR FILA como espejo exacto de su línea de cuna.
    *  (#292: `childAmenities` por línea ya no se lee — el catálogo global se dio de baja.) */
   needsCrib?: boolean
   /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
    *  por línea. Se prefieren las unidades del tipo que las ofrecen y cada unidad física elegida
-   *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). `custom:cuna`
-   *  se filtra acá (la gobierna `needsCrib`, ver arriba). */
+   *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). #341 — una key
+   *  cuna acá cuenta como pedido de cuna (se normaliza a la canónica más abajo, sin duplicar). */
   roomAmenities?: Array<{ key: string }>
   /** MR-03 (#268) — código del régimen de ESTA línea (cada habitación del grupo elige el suyo).
    *  Se resuelve contra `meal_plans` del hotel (precio del server) con las personas de la línea;
@@ -117,14 +117,14 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     const childrenAges = Array.isArray(r?.childrenAges)
       ? r.childrenAges.map((a: unknown) => Number(a)).filter((a: number) => Number.isFinite(a) && a >= 0)
       : []
-    // Tarea 22 — se normaliza acá igual que el resto; el gateo por bebé (¿esta línea tiene
-    // alguno?) Y por oferta de `custom:cuna` del tipo (#292) pasa más abajo, cuando ya se conoce
-    // la composición de CADA línea y sus unidades libres.
-    const needsCrib = r?.needsCrib === true
     // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
-    // #292 — la cuna (toda key que `isCribAmenityKey` reconozca) NO entra por acá: su única
-    // fuente de verdad es `needsCrib`.
-    const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities)
+    // #292/#341 — toda key cuna que `isCribAmenityKey` reconozca (`custom:cuna`, `custom:crib`,
+    // `custom:cuna_para_bebe`…) se saca de las keys y se refleja en `needsCrib` de la línea: más
+    // abajo vuelve UNA sola vez como la key canónica (una key alias del body y un `needsCrib:true`
+    // legacy nunca duplican la línea). Sin gate por bebé (#341): la cuna es una amenidad normal.
+    const allKeys = normalizeRoomAmenityKeys(r?.roomAmenities)
+    const needsCrib = r?.needsCrib === true || allKeys.some((key) => isCribAmenityKey(key))
+    const roomAmenities = allKeys
       .filter((key) => !isCribAmenityKey(key))
       .map((key) => ({ key }))
     // MR-03 (#268) — escalar por línea (mismo `max: 40` que el schema del flujo de 1 habitación);
@@ -261,9 +261,9 @@ export async function createPublicBookingGroup(
     roomType: string; adults: number; children: number; childrenAges: number[]; roomIds: string[]; perUnitPrice: number
     /** MR-10 (#275) — personas por unidad que cuentan para `per_person`/`per_person_per_night`. */
     upsellPersonsPerUnit: number
-    // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — por LÍNEA, no por grupo
-    // (a diferencia de los upsells genéricos de abajo): cada habitación pide lo suyo para su
-    // propio bebé. #292 — `needsCrib` acá es "al menos una unidad de la línea quedó con cuna"
+    // Tarea 22 (Cuna, Sí/No; #341 sin gate por bebé) — por LÍNEA, no por grupo (a diferencia de
+    // los upsells genéricos de abajo): cada habitación pide lo suyo, como cualquier amenidad de
+    // habitación. #292 — `needsCrib` acá es "al menos una unidad de la línea quedó con cuna"
     // (para las notas); lo que se PERSISTE por fila sale de `roomAmenitiesByRoom` de ESA unidad.
     needsCrib: boolean
     /** Revisión #292 — unidades de la línea que pidieron cuna y NO la ofrecen (persisten
@@ -415,14 +415,14 @@ export async function createPublicBookingGroup(
       }
     }
 
-    // ─── Cuna (Tarea 22, simplificada 2026-09-09; #292 por habitación) — POR LÍNEA ───────────
-    // Mismo criterio de defensa en profundidad que public-booking.ts: sin al menos un bebé en
-    // ESTA línea, se fuerza "no pedida" sin importar el body. La segunda mitad del gate — ¿la
-    // unidad FINALMENTE asignada ofrece `custom:cuna`? — se cierra DESPUÉS de
-    // `resolveRoomAmenityLines`, por unidad. Sí/No únicamente — `cribCount` es 1/0 espejo de
-    // `needsCrib`, nunca una cantidad elegible.
-    const lineBabies = composition.babies
-    const lineCribRequested = lineBabies > 0 && line.needsCrib === true
+    // ─── Cuna (Tarea 22; #292 por habitación; #341 amenidad NORMAL) — POR LÍNEA ─────────────
+    // Mismo criterio que public-booking.ts: la línea pide cuna si mandó `needsCrib:true` (compat)
+    // o una key cuna en sus `roomAmenities` (ya reflejada en `line.needsCrib` por
+    // `normalizeRoomLines`). Sin gate por bebé (#341). Lo único que la decide — ¿la unidad
+    // FINALMENTE asignada ofrece una fila cuna? — se cierra DESPUÉS de `resolveRoomAmenityLines`,
+    // por unidad. Sí/No únicamente — `cribCount` es 1/0 espejo de `needsCrib`, nunca una
+    // cantidad elegible.
+    const lineCribRequested = line.needsCrib === true
 
     // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas por
     // ESTA línea (orden estable, mismo criterio que public-booking.ts). Sin keys (ni cuna
@@ -714,9 +714,9 @@ export async function createPublicBookingGroup(
             // Tarea "Cobro % niños" — % REALMENTE usado para cotizar ESTA línea (auditoría, mismo
             // criterio que public-booking.ts).
             childrenRatePercentApplied: line.childrenRatePercentApplied,
-            // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación)
-            // — gateado por línea (bebé + pedida) y cerrado POR UNIDAD: `needsCrib` es true si
-            // y sólo si `roomAmenities` de ESTA fila trae `custom:cuna`; `cribCount` su espejo 1/0.
+            // Tarea 22 (Cuna; #292 por habitación; #341 amenidad normal, sin gate por bebé)
+            // — pedida por línea y cerrada POR UNIDAD: `needsCrib` es true si y sólo si
+            // `roomAmenities` de ESTA fila trae una línea cuna; `cribCount` su espejo 1/0.
             needsCrib: unitNeedsCrib, cribCount: unitNeedsCrib ? 1 : 0,
             // Revisión #292 — ESTA unidad pidió cuna y no la ofrece.
             cribUnavailable: line.cribUnavailableRoomIds.includes(roomId),
