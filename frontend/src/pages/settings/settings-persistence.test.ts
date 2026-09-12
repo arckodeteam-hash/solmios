@@ -6,8 +6,8 @@
 //      Página pública con su propio guardado.
 //   2. El toast de éxito ("Configuración guardada") sale SÓLO después de que el backend confirmó:
 //      mientras `patchHotel` no resolvió, el botón dice "Guardando..." y no hay toast.
-//   3. Si `patchHotel` o `saveAmenitiesHotel` rechazan, se ve `toast.error` con el detalle del error
-//      y NO hay `toast.success` (nada de "éxito visual" con un guardado que falló).
+//   3. Si `patchHotel` rechaza, se ve `toast.error` con el detalle del error y NO hay
+//      `toast.success` (nada de "éxito visual" con un guardado que falló).
 //   4. Lo mismo para `saveAutomation` (configuration('automation_config')).
 //   5. El form se hidrata desde `SettingsService.get()`: al recargar, los inputs muestran lo
 //      persistido en el backend (no un estado local).
@@ -18,7 +18,6 @@ import type { VueWrapper } from '@vue/test-utils'
 // `vi.mock(...)` se hoistea sobre estas líneas: los mocks se referencian desde arrows para que
 // existan al momento de la llamada (mismo patrón que settings-contact-moved.test.ts).
 const patchHotelMock = vi.fn(async (_patch: Record<string, unknown>) => ({}))
-const saveAmenitiesMock = vi.fn(async (_keys: string[]) => ({}))
 const configSet = vi.fn(async (_key: string, _value: unknown) => ({}))
 let configGetImpl: (key: string) => Promise<unknown>
 const toastError = vi.fn()
@@ -55,13 +54,9 @@ vi.mock('@/services/Settings.service', () => ({
     patchHotel: (patch: Record<string, unknown>) => patchHotelMock(patch),
   },
 }))
-vi.mock('@/services/Hotel.service', () => ({
-  HotelService: {
-    amenitiesCatalog: async () => ({}),
-    amenitiesHotel: async () => ({ data: [] }),
-    saveAmenitiesHotel: (keys: string[]) => saveAmenitiesMock(keys),
-  },
-}))
+// #291: la pantalla ya no consume HotelService (el catálogo de servicios se retiró de
+// Configuración Base); el mock queda vacío por si algún hijo lo importa.
+vi.mock('@/services/Hotel.service', () => ({ HotelService: {} }))
 vi.mock('@/services/Room.service', () => ({
   RoomService: { list: async () => ({ rooms: [], total: 0 }) },
 }))
@@ -124,7 +119,6 @@ function inputValue(w: VueWrapper, field: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   patchHotelMock.mockReset().mockImplementation(async () => ({}))
-  saveAmenitiesMock.mockReset().mockImplementation(async () => ({}))
   configSet.mockReset().mockImplementation(async () => ({}))
   configGetImpl = async () => null
 })
@@ -189,10 +183,9 @@ describe('#80 — saveAll: qué viaja y cuándo se confirma', () => {
     await guardarBtn(w)!.trigger('click')
     await flushPromises()
 
-    // El backend todavía no respondió: no hay éxito visual ni se guardaron amenities.
+    // El backend todavía no respondió: no hay éxito visual.
     expect(patchHotelMock).toHaveBeenCalledTimes(1)
     expect(toastSuccess).not.toHaveBeenCalled()
-    expect(saveAmenitiesMock).not.toHaveBeenCalled()
     const busy = w.findAll('button').find((b) => b.text().trim() === 'Guardando...')
     expect(busy, 'el botón del header tiene que mostrar "Guardando..."').toBeTruthy()
     expect(busy!.attributes('disabled')).toBeDefined()
@@ -201,7 +194,6 @@ describe('#80 — saveAll: qué viaja y cuándo se confirma', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(saveAmenitiesMock).toHaveBeenCalledTimes(1)
     expect(toastSuccess).toHaveBeenCalledTimes(1)
     expect(toastSuccess).toHaveBeenCalledWith('Configuración guardada')
     expect(toastError).not.toHaveBeenCalled()
@@ -223,19 +215,6 @@ describe('#80 — saveAll: qué viaja y cuándo se confirma', () => {
     expect(w.findAll('button').some((b) => b.text().trim() === 'Guardando...')).toBe(false)
   })
 
-  it('si saveAmenitiesHotel rechaza: toast.error con el detalle y SIN toast.success', async () => {
-    saveAmenitiesMock.mockImplementation(async () => { throw new Error('boom') })
-    const w = await mountOnHotelTab()
-
-    await guardarBtn(w)!.trigger('click')
-    await flushPromises()
-    await flushPromises()
-
-    expect(patchHotelMock).toHaveBeenCalledTimes(1)
-    expect(toastError).toHaveBeenCalledTimes(1)
-    expect(String(toastError.mock.calls[0]![0])).toContain('boom')
-    expect(toastSuccess).not.toHaveBeenCalled()
-  })
 })
 
 describe('#80 — saveAutomation: configuration(automation_config)', () => {
