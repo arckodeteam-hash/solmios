@@ -72,6 +72,8 @@ interface ReservationRow {
    *  habitaciones del mismo pedido comparten este id, apuntando a `Groups`. `undefined` en una
    *  reserva de 1 habitación (flujo normal, sin grupo). */
   groupId?: string
+  /** #276 (MR-11) — huésped titular: `settle()` resuelve nombre/email para el payload de pago. */
+  guestId?: string
 }
 
 interface HotelRow {
@@ -92,6 +94,9 @@ export interface SettleResult {
   provider?: string
   /** #266 — `type: 'expired'`: true si `checkout.session.expired` cerró la reserva (vencida sin pago). */
   expired?: boolean
+  /** #276 (MR-11) — huésped titular (vía `SettleDeps.guests`); `payments.description` lo nombra. */
+  guestName?: string
+  guestEmail?: string
 }
 
 /**
@@ -101,6 +106,14 @@ export interface SettleResult {
  * (pago registrado, deadline futura, ya cancelada, ...).
  */
 export type ExpirePendingFn = (reservationId: string, hotelId: string) => Promise<{ expired: boolean; reason?: string }>
+
+/**
+ * #276 (MR-11) — Repos que el asiento de un GRUPO necesita además de `Reservations`: `Groups`
+ * (marcar `confirmed` + `paidAmount`) y `Guests` (nombre/email del titular en el `SettleResult`).
+ * Ambos opcionales y best-effort: sin ellos el asiento es el de siempre. composition-root los
+ * cablea post-init con `setSettleDeps` (mismo patrón que `setExpirePending`).
+ */
+export type SettleDeps = { groups?: RepositoryAdapter<any>; guests?: RepositoryAdapter<any> }
 
 /**
  * #196 — URLs de retorno para un proveedor sin webhook: el proveedor manda al navegador a
@@ -233,9 +246,17 @@ export class StripeUseCase {
     private expirePending?: ExpirePendingFn,
   ) {}
 
+  /** #276 (MR-11) — Groups/Guests para el asiento de grupo (ver `SettleDeps`). */
+  private settleDeps?: SettleDeps
+
   /** #266 — Inyección post-init del cierre por vencimiento (ver `ExpirePendingFn`). */
   setExpirePending(fn: ExpirePendingFn): void {
     this.expirePending = fn
+  }
+
+  /** #276 — Inyección post-init de los repos del asiento de grupo (ver `SettleDeps`). */
+  setSettleDeps(d: SettleDeps): void {
+    this.settleDeps = d
   }
 
   async isConfigured(hotelId: string): Promise<boolean> {
@@ -428,17 +449,12 @@ export class StripeUseCase {
           const paid = outcome.amountMinor != null
             ? round2(Math.abs(Number(outcome.amountMinor)) / 100)
             : (Number(reservation.totalAmount) || 0)
-          const deposit = round2((Number(reservation.deposit) || 0) + paid)
-          await this.reservationsRepo.update(reservationId, {
-            status: 'confirmed',
-            depositStatus: 'paid',
-            paymentMethod: 'card',
-            deposit,
-            // Sin `reservation_addons` a la vista: el widget público cobra la estadía al confirmar,
-            // los extras se cargan después en recepción y ese camino ya sincroniza la columna.
-            pendingAmount: pendingBalance({ ...reservation, deposit }),
-          } as any)
-          this.logger.info(`Reserva ${reservationId} confirmada por pago (hotel ${hotelId})`)
+          // Sin `reservation_addons` a la vista: el widget público cobra la estadía al confirmar,
+          // los extras se cargan después en recepción y ese camino ya sincroniza la columna.
+          const paidPatch = (row: ReservationRow, share: number) => {
+            const deposit = round2((Number(row.deposit) || 0) + share)
+            return { status: 'confirmed', depositStatus: 'paid', paymentMethod: 'card', deposit, pendingAmount: pendingBalance({ ...row, deposit }) } as any
+          }
 
           // Tarea 10 (QA 2026-08-20/21) — reserva de GRUPO (varias habitaciones, 1 solo cobro):
           // la Checkout Session se abre sobre la reserva LÍDER por el total combinado
@@ -446,22 +462,43 @@ export class StripeUseCase {
           // solo la líder — si no, el huésped paga por 3 habitaciones y solo 1 queda `confirmed`,
           // las otras 2 se quedan `pending` para siempre. Cascada a las hermanas del mismo
           // `groupId` (filtrado también por `hotelId`, mismo criterio de ownership que arriba).
+          //
+          // #276 (MR-11) — el cobro se REPARTE proporcional al `totalAmount` de cada habitación
+          // (antes: todo el importe caía en el `deposit` de la líder y las hermanas quedaban con
+          // `pendingAmount: 0` sin depósito, así que el detalle de cada una mentía). La líder
+          // recibe `paid − Σ share(hermanas)`: el centavo del redondeo cae ahí y Σ deposit = paid
+          // exacto. Después, `Groups` queda `confirmed` con `paidAmount` (best-effort).
           if (reservation.groupId) {
-            const siblings = (await this.reservationsRepo.findMany({ hotelId, groupId: reservation.groupId })) as any[]
+            const siblings = (await this.reservationsRepo.findMany({ hotelId, groupId: reservation.groupId })) as ReservationRow[]
+            const sumTotal = siblings.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0)
+            let leaderShare = paid
             for (const sib of siblings) {
               if (sib.id === reservationId) continue
-              await this.reservationsRepo.update(sib.id, {
-                status: 'confirmed',
-                depositStatus: 'paid',
-                paymentMethod: 'card',
-                pendingAmount: 0,
-              } as any)
+              const share = sumTotal > 0 ? round2(paid * (Number(sib.totalAmount) || 0) / sumTotal) : 0
+              leaderShare = round2(leaderShare - share)
+              await this.reservationsRepo.update(sib.id, paidPatch(sib, share))
             }
+            await this.reservationsRepo.update(reservationId, paidPatch(reservation, leaderShare))
             this.logger.info(`Grupo ${reservation.groupId}: ${siblings.length} reserva(s) confirmada(s) por el mismo pago (hotel ${hotelId})`)
+            if (this.settleDeps?.groups) {
+              try {
+                await this.settleDeps.groups.update(reservation.groupId, { status: 'confirmed', paidAmount: paid })
+              } catch (err) {
+                this.logger.warn(`Grupo ${reservation.groupId}: no se pudo marcar confirmed/paidAmount (${(err as Error)?.message ?? err})`)
+              }
+            }
+          } else {
+            await this.reservationsRepo.update(reservationId, paidPatch(reservation, paid))
           }
+          this.logger.info(`Reserva ${reservationId} confirmada por pago (hotel ${hotelId})`)
         },
       )
       if (result.outcome === 'duplicate') return { type: 'already_processed', reservationId }
+      // #276 (MR-11) — huésped titular para nombrar el cobro en `payments.description`. Best-effort.
+      let guest: any = null
+      if (this.settleDeps?.guests && reservation.guestId) {
+        try { guest = await this.settleDeps.guests.findOne({ id: reservation.guestId }) } catch { guest = null }
+      }
       // B-1 (auditoría 2026-08-19): el payload del socket onBookingPaid era SOLO {id} — el
       // connector de payments necesitaba totalAmount/paymentRef/currency y su
       // postBookingPayment salía por early-return → el cobro del widget NUNCA se asentaba en
@@ -477,6 +514,8 @@ export class StripeUseCase {
         totalAmount: Number(reservation.totalAmount) || 0,
         checkIn: reservation.checkIn ?? null,
         provider,
+        guestName: guest?.name ?? undefined,
+        guestEmail: guest?.email ?? undefined,
       }
     }
 

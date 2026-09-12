@@ -300,6 +300,8 @@ describe('StripeUseCase — handleWebhook cascada a reservas de GRUPO (Tarea 10)
     expect(store.find((r) => r.id === 'res-2')!.status).toBe('confirmed')
     expect(store.find((r) => r.id === 'res-3')!.status).toBe('confirmed')
     expect(store.every((r) => r.depositStatus === 'paid' && r.paymentMethod === 'card' && r.pendingAmount === 0)).toBe(true)
+    // #276 — el cobro (400) se reparte proporcional al totalAmount: 200/100/100, no todo en la líder.
+    expect(store.map((r) => [r.id, r.deposit])).toEqual([['res-1', 200], ['res-2', 100], ['res-3', 100]])
     // 1 update por la líder + 1 por cada hermana = 3 (no se re-actualiza la líder dos veces).
     expect(updates).toHaveLength(3)
     expect(updates.map((u) => u.id).sort()).toEqual(['res-1', 'res-2', 'res-3'])
@@ -335,6 +337,90 @@ describe('StripeUseCase — handleWebhook cascada a reservas de GRUPO (Tarea 10)
 
     expect(second?.type).toBe('already_processed')
     expect(updates).toHaveLength(3) // sigue en 3 — el reintento no vuelve a cascadear
+  })
+})
+
+// #276 (MR-11) — Grupo consistente tras pagar: el cobro se reparte proporcional al totalAmount de
+// cada habitación (el centavo del redondeo cae en la líder, Σ deposit = pagado exacto), `Groups`
+// queda `confirmed` con `paidAmount`, y el result nombra al huésped titular (vía `setSettleDeps`).
+describe('StripeUseCase — settle() reparte el cobro del grupo y marca Groups confirmed (#276 MR-11)', () => {
+  function makeGroupsRepo(): { repo: RepositoryAdapter<any>; updates: Array<{ id: string; patch: any }> } {
+    const updates: Array<{ id: string; patch: any }> = []
+    const repo = {
+      findMany: async () => [], findById: async () => null, findOne: async () => null,
+      create: async (d: any) => d, delete: async () => true, count: async () => 0,
+      paginate: async () => ({ data: [], total: 0, limit: 20, offset: 0, pages: 1 }),
+      update: async (id: string, patch: any) => { updates.push({ id, patch }); return { id, ...patch } },
+    } as RepositoryAdapter<any>
+    return { repo, updates }
+  }
+  function makeGuestsRepo(guests: any[]): RepositoryAdapter<any> {
+    return {
+      findMany: async () => guests.slice(), findById: async () => null,
+      findOne: async (q: any) => guests.find((g) => g.id === q?.id) ?? null,
+      create: async (d: any) => d, update: async () => null, delete: async () => true, count: async () => guests.length,
+      paginate: async () => ({ data: guests.slice(), total: guests.length, limit: 20, offset: 0, pages: 1 }),
+    } as RepositoryAdapter<any>
+  }
+  const paidWebhook = (amountMinor: number, eventId: string) => makeMockGw({ outcome: {
+    eventId, providerRef: `cs_${eventId}`, status: 'paid', amountMinor, currency: 'usd', reference: 'res-1',
+  } })
+
+  it('grupo (100,100,200) pagado 472.00 → deposit 118/118/236, pendingAmount 0, Groups confirmed+paidAmount, huésped en el result', async () => {
+    const leader = { ...PENDING_RESERVATION, id: 'res-1', groupId: 'g1', guestId: 'gu1', totalAmount: 100 }
+    const sibA = { ...PENDING_RESERVATION, id: 'res-2', roomId: 'room-2', groupId: 'g1', totalAmount: 100 }
+    const sibB = { ...PENDING_RESERVATION, id: 'res-3', roomId: 'room-3', groupId: 'g1', totalAmount: 200 }
+    const { repo: reservationsRepo, store } = makeReservationsRepo([leader, sibA, sibB])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const groups = makeGroupsRepo()
+    const guests = makeGuestsRepo([{ id: 'gu1', name: 'Juan Pérez', email: 'juan@example.com' }])
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(paidWebhook(47200, 'evt_g1')), new PaymentEventStore(eventRepo, log))
+    stripe.setSettleDeps({ groups: groups.repo, guests })
+
+    const result = await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+
+    expect(result?.type).toBe('reservation_confirmed')
+    const byId = (id: string) => store.find((r) => r.id === id)!
+    expect(byId('res-1').deposit).toBe(118)
+    expect(byId('res-2').deposit).toBe(118)
+    expect(byId('res-3').deposit).toBe(236)
+    expect(store.reduce((acc, r) => acc + r.deposit, 0)).toBe(472)
+    expect(store.every((r) => r.status === 'confirmed' && r.depositStatus === 'paid' && r.paymentMethod === 'card' && r.pendingAmount === 0)).toBe(true)
+    expect(groups.updates).toEqual([{ id: 'g1', patch: { status: 'confirmed', paidAmount: 472 } }])
+    expect(result?.guestName).toBe('Juan Pérez')
+    expect(result?.guestEmail).toBe('juan@example.com')
+  })
+
+  it('redondeo: totales (33.33, 33.33, 33.34) pagado 100.00 → Σ deposit = 100 exacto y la líder absorbe el centavo', async () => {
+    const leader = { ...PENDING_RESERVATION, id: 'res-1', groupId: 'g2', totalAmount: 33.33 }
+    const sibA = { ...PENDING_RESERVATION, id: 'res-2', roomId: 'room-2', groupId: 'g2', totalAmount: 33.33 }
+    const sibB = { ...PENDING_RESERVATION, id: 'res-3', roomId: 'room-3', groupId: 'g2', totalAmount: 33.34 }
+    const { repo: reservationsRepo, store } = makeReservationsRepo([leader, sibA, sibB])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(paidWebhook(10000, 'evt_g2')), new PaymentEventStore(eventRepo, log))
+
+    await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+
+    const byId = (id: string) => store.find((r) => r.id === id)!
+    expect(byId('res-2').deposit).toBe(33.33)
+    expect(byId('res-3').deposit).toBe(33.34)
+    expect(byId('res-1').deposit).toBe(33.33) // 100 − 33.33 − 33.34
+    expect(store.reduce((acc, r) => acc + r.deposit, 0)).toBeCloseTo(100, 2)
+    expect(store.every((r) => r.pendingAmount === 0)).toBe(true)
+  })
+
+  it('sin setSettleDeps → el asiento del grupo sigue igual y el result no trae huésped', async () => {
+    const leader = { ...PENDING_RESERVATION, id: 'res-1', groupId: 'g3', guestId: 'gu1', totalAmount: 100 }
+    const sib = { ...PENDING_RESERVATION, id: 'res-2', roomId: 'room-2', groupId: 'g3', totalAmount: 100 }
+    const { repo: reservationsRepo, store } = makeReservationsRepo([leader, sib])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(paidWebhook(20000, 'evt_g3')), new PaymentEventStore(eventRepo, log))
+
+    const result = await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+
+    expect(result?.type).toBe('reservation_confirmed')
+    expect(result?.guestName).toBeUndefined()
+    expect(store.map((r) => r.deposit)).toEqual([100, 100])
   })
 })
 

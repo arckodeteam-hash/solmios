@@ -16,7 +16,7 @@ import { bookingPaidPayload } from './usecases/booking-paid-event'
 import { ConfigUseCase } from './usecases/config'
 import { AvailabilityUseCase } from './usecases/availability'
 import { AnalyticsUseCase } from './usecases/analytics'
-import { StripeUseCase, type ExpirePendingFn } from './usecases/stripe'
+import { StripeUseCase, type ExpirePendingFn, type SettleDeps } from './usecases/stripe'
 import {
   syncUpsellFromPackage as syncUpsellFromPackageUsecase,
   removeSyncedUpsell as removeSyncedUpsellUsecase,
@@ -75,16 +75,15 @@ export class BookingengineService {
       roomBlocksRepo, seasonAssignmentsRepo, roomRatesRepo, configurationRepo,
     )
     this.analytics = new AnalyticsUseCase(eventsRepo, trackingRepo)
-    // F0 0.15 — Stripe opera sobre Reservations (tabla operacional). Antes usaba `bookingRepo`
-    // (tabla huérfana `public_bookings`), que nunca recibía filas del widget — el cobro quedaba
-    // colgado de una reserva inexistente. Spec booking-unification D2/D3.
-    // Hardening go-live — Pasamos hotelsRepo para que StripeUseCase construya el successUrl
-    // real con slug + reservationId + accessToken (antes pasaba placeholders literales a Stripe).
+    // F0 0.15 — Stripe opera sobre Reservations (tabla operacional), no sobre `bookingRepo` (tabla
+    // huérfana `public_bookings`, spec booking-unification D2/D3). hotelsRepo: successUrl real con slug+id+accessToken.
     this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined, attempts)
   }
   async notifyBookingCreated(d: PublicBookingDTO) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
   /** #266 — Post-init (composition-root): `checkout.session.expired` vence la reserva con el mismo usecase del cron. Sin cablear = no-op. */
   setExpirePending(fn: ExpirePendingFn): void { this.stripe.setExpirePending(fn) }
+  /** #276 (MR-11) — Post-init: Groups/Guests para que el asiento del grupo marque `confirmed`+`paidAmount` y exponga al huésped. */
+  setSettleDeps(d: SettleDeps): void { this.stripe.setSettleDeps(d) }
   setSockets(s: Partial<BookingengineSockets>): void {
     const next = s as Record<string, any>
     const cur = this.sockets as Record<string, any>
