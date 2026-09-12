@@ -44,7 +44,7 @@ import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
 import { normalizeChildAmenityIds, resolveChildAmenityLines } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
-import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 86_400_000
@@ -254,7 +254,7 @@ export async function createPublicBookingGroup(
     logger?.warn('createPublicBookingGroup: childAmenities en rooms[] sin extraDeps.childAmenities cableado — se ignoran (no se puede validar ni cotizar)', { hotelId })
   }
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const hasAges = (line.childrenAges?.length ?? 0) > 0
     // FIX (mismo bug que public-booking.ts, encontrado en revisión Requerimiento 2, 2026-09-03):
     // la composición legacy tiene que contar `line.children` para que `fitsRoomCapacity` (de acá
@@ -270,6 +270,19 @@ export async function createPublicBookingGroup(
           babies: 0,
           chargeableOccupancy: line.adults + Math.max(0, line.children ?? 0),
         }
+    // REQ-03 (#235) — tope de niños que NO consumen plaza POR HABITACIÓN (`maxFreeChildrenPerRoom`,
+    // null = sin límite): se aplica a CADA línea por separado, con sus propias edades. Es regla
+    // del hotel, no de la unidad física (no toca `fitsRoomCapacity`), así que se corta acá antes
+    // de buscar unidades; el mensaje nombra la línea para que el huésped sepa cuál corregir.
+    if (hasAges && childPolicy) {
+      const freeLimitError = freeChildrenLimitError(childPolicy, composition)
+      if (freeLimitError) {
+        return {
+          status: 409,
+          body: { error: `Línea ${lineIndex + 1} ("${line.roomType}"): ${freeLimitError}`, roomType: line.roomType },
+        }
+      }
+    }
     // Ocupación para PRECIO/cierre por ocupación: chargeable (adultos + niños con plaza) si la
     // línea declaró edades, o `line.adults` tal cual para un caller legacy — mismo criterio que
     // `public-booking.ts`.

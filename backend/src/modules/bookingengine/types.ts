@@ -297,8 +297,10 @@ export interface PublicHotelInfoDTO {
    *  dominio). Ya se quedó afuera de sincro TRES veces al agregarle/renombrarle un campo a
    *  `ChildPolicy` (Tarea 21 `maxBabyAge`, Tarea "Cobro % niños" `childrenDiscountEnabled`+
    *  `childrenRatePercent`) sin actualizar acá: revisar este literal cada vez que `ChildPolicy`
-   *  cambie — el error de TS es "Property missing", fácil de pasar por alto en un diff grande. */
-  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number; maxBabyAge: number; childrenDiscountEnabled: boolean; childrenRatePercent: number; cribAvailable: boolean }
+   *  cambie — el error de TS es "Property missing", fácil de pasar por alto en un diff grande.
+   *  REQ-03 (#235): `maxFreeChildrenPerRoom` (null = sin límite) — tope de niños sin plaza por
+   *  habitación, para que el composer público lo aplique antes de mandar la reserva. */
+  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number; maxBabyAge: number; childrenDiscountEnabled: boolean; childrenRatePercent: number; cribAvailable: boolean; maxFreeChildrenPerRoom?: number | null }
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────

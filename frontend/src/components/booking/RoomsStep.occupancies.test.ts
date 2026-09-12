@@ -596,6 +596,58 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
   })
 
+  // REQ-03 (#235) — `maxFreeChildrenPerRoom` es hotel-wide y cuenta niños que NO consumen plaza,
+  // que por definición quedan afuera de `capacity`/`maxChildren`/la matriz: sin este motivo
+  // propio el botón quedaría apagado sin explicación. Todo es computed: cambiar la edad de un
+  // niño re-clasifica y re-evalúa solo.
+  describe('REQ-03 (#235) — máximo de niños que no consumen plaza por habitación', () => {
+    const FREE_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false, maxFreeChildrenPerRoom: 1 }
+
+    it('max 1 + 2 niños libres → "Agregar" apagado con el motivo; subir una edad a "con plaza" habilita', async () => {
+      const w = render(true, 'es', FREE_POLICY)
+      await bumpChildren(w, 2)
+      const selects = w.findAll('select')
+      await selects[0]!.setValue('1') // ≤ maxFreeAge=5 → libre
+      await selects[1]!.setValue('2') // ≤ maxFreeAge=5 → libre → 2 libres > max 1
+
+      expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('1') // los libres no consumen plaza
+      expect(w.get('[data-occupancy]').text()).toContain('Supera el máximo de 1 niño(s) que no consumen plaza por habitación')
+      expect(w.get('[data-occupancy]').text()).not.toContain('US$') // el motivo reemplaza al precio de la composición
+      expect((addRoomButton(w).element as HTMLButtonElement).disabled).toBe(true)
+
+      await selects[1]!.setValue('8') // > maxFreeAge=5 → con plaza → 1 libre ≤ max 1, occupancy 2 (disponible)
+      expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('2')
+      expect(w.text()).not.toContain('no consumen plaza')
+      expect(w.text()).toContain('300')
+      expect((addRoomButton(w).element as HTMLButtonElement).disabled).toBe(false)
+      w.unmount()
+    })
+
+    it('sin el campo en la política (hotel sin límite) → el mismo escenario habilita', async () => {
+      const { maxFreeChildrenPerRoom: _omit, ...withoutLimit } = FREE_POLICY
+      const w = render(true, 'es', withoutLimit)
+      await bumpChildren(w, 2)
+      const selects = w.findAll('select')
+      await selects[0]!.setValue('1')
+      await selects[1]!.setValue('2')
+
+      expect(w.text()).not.toContain('no consumen plaza')
+      expect(w.get('[data-occupancy]').text()).toContain('210')
+      expect((addRoomButton(w).element as HTMLButtonElement).disabled).toBe(false)
+      w.unmount()
+    })
+
+    it('max 1 + 1 niño libre → entra (frontera inclusive)', async () => {
+      const w = render(true, 'es', FREE_POLICY)
+      await bumpChildren(w, 1)
+      await w.get('select').setValue('3')
+
+      expect(w.text()).not.toContain('no consumen plaza')
+      expect((addRoomButton(w).element as HTMLButtonElement).disabled).toBe(false)
+      w.unmount()
+    })
+  })
+
   it('el precio del régimen con costo usa chargeCurrency, NUNCA displayCurrency (D10)', () => {
     const store = useBookingStore()
     store.init('hotel-demo')

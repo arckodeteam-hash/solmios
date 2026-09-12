@@ -12,11 +12,12 @@
 // `validators/schema.ts`) — esta validación es de CAPACIDAD, un eje distinto.
 //
 // Reutiliza EXACTAMENTE lo que ya usa el flujo público: `fitsRoomCapacity`/`effectiveRoomCapacity`
-// (capacidad por tipo, `room_type_capacity`) — cero reglas nuevas, cero copias.
+// (capacidad por tipo, `room_type_capacity`) — cero copias. REQ-03 (#235) sumó UNA regla más,
+// también compartida con el motor público: `freeChildrenLimitError` (tope de niños sin plaza).
 
 import { ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
-import { resolveChildPolicy, resolveAdminCapacityComposition, fitsRoomCapacity } from './child-composition'
+import { resolveChildPolicy, resolveAdminCapacityComposition, fitsRoomCapacity, freeChildrenLimitError } from './child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from './room-type-capacity'
 
 export interface ReservationCapacityParams {
@@ -48,6 +49,12 @@ export async function assertReservationFitsCapacity(
     resolveRoomTypeCapacityMap(configRepo, params.hotelId),
   ])
   const composition = resolveAdminCapacityComposition(params.adults, params.children, params.childrenAges, policy)
+  // REQ-03 (#235) — tope de niños que NO consumen plaza por habitación (`maxFreeChildrenPerRoom`,
+  // null = sin límite). Regla del HOTEL, no de la unidad: va ANTES de la capacidad física. Sin
+  // `childrenAges` la composición conservadora trae `freeChildren: 0` y el tope no aplica solo —
+  // un contador plano no tiene niños "libres" que contar (mismo criterio que el motor público).
+  const freeLimitError = freeChildrenLimitError(policy, composition)
+  if (freeLimitError) throw new ConflictError(freeLimitError)
   const capacity = effectiveRoomCapacity(roomTypeCapacityMap, {
     type: room.type, capacity: Number(room.capacity) || composition.chargeableOccupancy,
     maxAdults: room.maxAdults, maxChildren: room.maxChildren,

@@ -58,7 +58,7 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
-import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 
@@ -396,6 +396,14 @@ export async function createPublicBookingDirect(
         babies: 0,
         chargeableOccupancy: Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0),
       }
+  // REQ-03 (#235) — tope de niños que NO consumen plaza por habitación (`maxFreeChildrenPerRoom`,
+  // null = sin límite). Es una regla del HOTEL, no de la unidad física: se decide acá, ANTES de
+  // resolver habitación/capacidad, y solo con edades reales (`hasChildrenAges`) — un caller
+  // legacy con contador plano no tiene niños "libres" que contar. No toca `fitsRoomCapacity`.
+  if (hasChildrenAges && childPolicy) {
+    const freeLimitError = freeChildrenLimitError(childPolicy, childComposition)
+    if (freeLimitError) return { status: 409, body: { error: freeLimitError } }
+  }
   // Ocupación para CAPACIDAD (cuántas plazas físicas ocupa): adultos + niños con plaza + niños
   // sin plaza — un niño "libre" no cuenta para el precio pero sigue siendo una persona física en
   // el cuarto. Legacy (sin edades): adults+kids, igual que el `totalGuests` de siempre.

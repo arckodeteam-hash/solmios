@@ -51,6 +51,14 @@ export interface ChildPolicy {
    *  hay un bebé en la composición. Apagado por default — mismo criterio que el resto de esta
    *  política (nada cambia hasta que el hotel lo habilite a mano). */
   cribAvailable: boolean
+  /** REQ-03 (#235, 2026-09-12) — "Máximo de niños que no consumen plaza por habitación".
+   *  `null`/ausente = SIN LÍMITE (nunca un default numérico: el pedido prohíbe hardcodear 2 ni
+   *  ningún otro número — sin configurar, ningún hotel existente cambia de comportamiento). Entero
+   *  ≥ 0 cuando está configurado. Es hotel-wide (no por tipo de habitación) y se aplica a CADA
+   *  habitación de la reserva: cuenta los `freeChildren` (bebés incluidos) — los que NO consumen
+   *  plaza y por eso quedan afuera de `capacity`/`maxChildren` — y si superan este tope la
+   *  composición no entra en esa habitación (ver `freeChildrenLimitError`). */
+  maxFreeChildrenPerRoom?: number | null
 }
 
 /** Default para hoteles que todavía no configuraron su política — mismo comportamiento que
@@ -61,6 +69,7 @@ export interface ChildPolicy {
 export const DEFAULT_CHILD_POLICY: ChildPolicy = {
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
   childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  maxFreeChildrenPerRoom: null,
 }
 
 export interface ChildComposition {
@@ -160,6 +169,21 @@ export function fitsRoomCapacity(
   if (room.maxAdults != null && composition.effectiveAdults > room.maxAdults) return false
   if (room.maxChildren != null && composition.payingChildren > room.maxChildren) return false
   return true
+}
+
+/** REQ-03 (#235) — motivo por el que una composición supera el máximo de niños sin plaza del
+ *  hotel, o null si entra (o si el hotel no configuró límite). Independiente de la habitación: la
+ *  política es general del hotel y se aplica a CADA habitación. Separado de `fitsRoomCapacity` a
+ *  propósito: los `freeChildren` siguen sin contar para `capacity`/`maxChildren` — este es un tope
+ *  distinto, con su propio mensaje para que el huésped/Administración sepa qué ajustar. */
+export function freeChildrenLimitError(
+  policy: Pick<ChildPolicy, 'maxFreeChildrenPerRoom'>,
+  composition: Pick<ChildComposition, 'freeChildren'>,
+): string | null {
+  const max = policy.maxFreeChildrenPerRoom
+  if (max == null) return null
+  if (composition.freeChildren <= max) return null
+  return `Esta habitación admite hasta ${max} niño(s) que no consumen plaza; la reserva tiene ${composition.freeChildren}`
 }
 
 const MS_PER_DAY = 86_400_000
@@ -322,6 +346,11 @@ export async function resolveChildPolicy(
     // Tarea "Cobro % niños" — clampeado a [1, 100] acá (defensa en profundidad, además de la
     // validación del form): un valor corrupto/manual (0, negativo, >100, no numérico) nunca puede
     // dejar pasar un porcentaje sin sentido a la fórmula de precio.
+    const maxFreeChildrenPerRoom = Number(raw.maxFreeChildrenPerRoom)
+    // REQ-03 (#235) — `null`/ausente/basura → `null` = SIN LÍMITE (nunca un default numérico, el
+    // pedido lo prohíbe). Entero ≥ 0 vía `Math.floor` (defensa en profundidad, además de
+    // `assertChildPolicyFreeChildrenLimit` al guardar). `Number(null)` es 0, por eso se chequea
+    // el nulo ANTES de convertir (y `Number('')` también es 0: un string vacío es "sin límite").
     return {
       acceptChildren: raw.acceptChildren !== false,
       maxChildAge: Number.isFinite(maxChildAge) && maxChildAge >= 0 ? maxChildAge : DEFAULT_CHILD_POLICY.maxChildAge,
@@ -334,6 +363,10 @@ export async function resolveChildPolicy(
         ? Math.min(100, Math.max(1, Math.round(childrenRatePercent)))
         : DEFAULT_CHILD_POLICY.childrenRatePercent,
       cribAvailable: raw.cribAvailable === true,
+      maxFreeChildrenPerRoom: raw.maxFreeChildrenPerRoom != null && (raw.maxFreeChildrenPerRoom as unknown) !== ''
+        && Number.isFinite(maxFreeChildrenPerRoom) && maxFreeChildrenPerRoom >= 0
+        ? Math.floor(maxFreeChildrenPerRoom)
+        : null,
     }
   } catch {
     return DEFAULT_CHILD_POLICY

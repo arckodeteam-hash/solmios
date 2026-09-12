@@ -492,6 +492,50 @@ describe('createPublicBookingGroup — childrenAges por línea', () => {
 })
 
 // ─── Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños"), POR LÍNEA ────────
+describe('REQ-03 (#235) — máximo de niños sin plaza POR HABITACIÓN (por línea)', () => {
+  /** maxFreeAge=3: edades 1 y 2 son "libres"; max=1 por habitación. */
+  const POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxFreeChildrenPerRoom: 1 }
+  const configRepo = { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value: POLICY } : null) }
+  function db() {
+    return makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'deluxe', capacity: 4, basePrice: 150, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 4, basePrice: 100, status: 'available' },
+      ],
+    })
+  }
+
+  it('línea 1 con 1 libre + línea 2 con 2 libres → 409 que nombra la línea 2, CERO reservas', async () => {
+    const { orm, tables } = db()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1, childrenAges: [1] }, // línea 1: dentro del tope
+        { roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1, 2] }, // línea 2: 2 libres > max=1
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo } as any)
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('Línea 2')
+    expect(res.body.error).toContain('familiar')
+    expect(res.body.error).toContain('no consumen plaza')
+    expect(res.body.roomType).toBe('familiar')
+    expect(tables.Reservations).toHaveLength(0)
+  })
+
+  it('1 libre en ambas líneas → se crea (el tope es por habitación, no por reserva)', async () => {
+    const { orm, tables } = db()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1, childrenAges: [1] },
+        { roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1] },
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+  })
+})
+
 describe('createPublicBookingGroup — Tarea "Cobro % niños", POR LÍNEA', () => {
   function childPolicyRepo(value: unknown) {
     return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) }

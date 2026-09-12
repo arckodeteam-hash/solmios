@@ -525,9 +525,11 @@ const {
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
  *  maxAdults/maxChildren del tipo (la matriz no lo sabe, ver useGuestComposer.ts). `'capacity'`
  *  reusa el mismo texto que `unavailableLabel('over_capacity')` — mismo concepto, un solo string. */
-function maxLabel(reason: 'max_adults' | 'max_children' | 'capacity'): string {
+function maxLabel(reason: 'max_adults' | 'max_children' | 'max_free_children' | 'capacity'): string {
   if (reason === 'max_adults') return t('rooms.guests.maxAdultsExceeded')
   if (reason === 'max_children') return t('rooms.guests.maxChildrenExceeded')
+  // REQ-03 (#235) — tope hotel-wide de niños sin plaza por habitación.
+  if (reason === 'max_free_children') return t('rooms.guests.maxFreeChildrenExceeded', { max: store.childPolicy.maxFreeChildrenPerRoom ?? 0 })
   return unavailableLabel('over_capacity')
 }
 

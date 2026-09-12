@@ -130,3 +130,54 @@ describe('HotelesQueries.setConfig — childrenRatePercent (#95)', () => {
     expect(JSON.parse(repo.updates[0].patch.value).childrenRatePercent).toBe(75)
   })
 })
+
+// ─── REQ-03 (#235) — maxFreeChildrenPerRoom ───────────────────────────────────────────────────
+// Ausente/null = sin límite (válido). Si viene, entero ≥ 0. Se valida siempre, sin depender de
+// `childrenDiscountEnabled` — es otra regla.
+describe('HotelesQueries.setConfig — maxFreeChildrenPerRoom (REQ-03 #235)', () => {
+  it('-1, 1.5 y "x": rechaza con ValidationError antes de escribir', async () => {
+    for (const max of [-1, 1.5, 'x']) {
+      const repo = fakeRepo()
+      const queries = new HotelesQueries(repo.orm)
+      let thrown: any
+      try { await queries.setConfig({ clave: 'child_policy', valor: policy({ maxFreeChildrenPerRoom: max }) }, USER) }
+      catch (e) { thrown = e }
+      expect(thrown).toBeInstanceOf(ValidationError)
+      expect(thrown.message).toContain('entero mayor o igual a 0')
+      expect(repo.creates.length).toBe(0)
+      expect(repo.updates.length).toBe(0)
+    }
+  })
+
+  it('se valida aunque la regla de cobro % esté apagada (es otra regla)', async () => {
+    const repo = fakeRepo()
+    const queries = new HotelesQueries(repo.orm)
+    expect(queries.setConfig({ clave: 'child_policy', valor: policy({ childrenDiscountEnabled: false, maxFreeChildrenPerRoom: -1 }) }, USER))
+      .rejects.toBeInstanceOf(ValidationError)
+    expect(repo.creates.length).toBe(0)
+  })
+
+  it('valor como string JSON (cliente crudo): se valida igual', async () => {
+    const repo = fakeRepo()
+    const queries = new HotelesQueries(repo.orm)
+    expect(queries.setConfig({ clave: 'child_policy', valor: JSON.stringify(policy({ maxFreeChildrenPerRoom: 1.5 })) }, USER))
+      .rejects.toBeInstanceOf(ValidationError)
+    expect(repo.creates.length).toBe(0)
+  })
+
+  it('null, 0 y 2: persiste cada valor tal cual (null = sin límite, 0 es un tope válido)', async () => {
+    for (const max of [null, 0, 2]) {
+      const { repo, result } = await guardar(policy({ maxFreeChildrenPerRoom: max }))
+      expect(result.success).toBe(true)
+      expect(repo.creates.length).toBe(1)
+      expect(JSON.parse(repo.creates[0].value).maxFreeChildrenPerRoom).toBe(max)
+    }
+  })
+
+  it('ausente: persiste sin el campo (sin límite, nunca se inyecta un default numérico)', async () => {
+    const { repo, result } = await guardar(policy())
+    expect(result.success).toBe(true)
+    expect(repo.creates.length).toBe(1)
+    expect('maxFreeChildrenPerRoom' in JSON.parse(repo.creates[0].value)).toBe(false)
+  })
+})

@@ -121,6 +121,54 @@ describe('createPublicBookingDirect — childrenAges (composición del huésped)
   })
 })
 
+describe('REQ-03 (#235) — máximo de niños sin plaza por habitación', () => {
+  /** maxFreeAge=3: las edades 1 y 2 son "libres" (no consumen plaza) — es a ellas a las que
+   *  aplica `maxFreeChildrenPerRoom`. */
+  const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  function configRepo(value: unknown) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
+  }
+  function db() {
+    return makeDb({ rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' }] })
+  }
+
+  it('max=1 y 2 niños libres → 409 con motivo que nombra el máximo, sin crear la reserva', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1, 2] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('no consumen plaza')
+    expect(res.body.error).toContain('1')
+    expect(tables.Reservations).toHaveLength(0)
+  })
+
+  it('max=1 y 1 niño libre (capacidad ok) → se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+    expect(tables.Reservations[0].childrenAges).toEqual([1])
+  })
+
+  it('política sin el campo (sin límite) y 2 niños libres → se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo(BASE_POLICY)
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1, 2] }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+  })
+
+  it('caller legacy (children plano, sin childrenAges): el tope no aplica — se crea', async () => {
+    const { orm, tables } = db()
+    const cfg = configRepo({ ...BASE_POLICY, maxFreeChildrenPerRoom: 1 })
+    const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, children: 2 }, undefined, undefined, undefined, undefined, undefined, { config: cfg })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+    expect(tables.Reservations[0].children).toBe(2)
+  })
+})
+
 describe('createPublicBookingDirect — Requerimiento 2: capacidad por tipo (room_type_capacity)', () => {
   it('política del tipo reemplaza la capacidad de la habitación física', async () => {
     // La habitación física dice capacity=6 (sobra), pero el TIPO "double" está configurado a 2.
