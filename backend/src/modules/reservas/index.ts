@@ -48,7 +48,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
       actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
-      events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned'],
+      events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned', 'onRoomVacatedMidStay'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
       // La LECTURA va por el puerto `listMessageLogs` del connector reservas-marketing (STR-3).

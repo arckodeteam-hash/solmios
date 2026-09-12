@@ -166,6 +166,10 @@ export interface Reservation {
    *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
    *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** REQ-HAC-03/06 (#258/#261) — quién y cuándo asignó la unidad (`roomId`). null/ausente =
+   *  sin asignar. `roomId` sigue siendo '' cuando el backend manda null (ver `mapReservation`). */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
    *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
   needsCrib?: boolean
@@ -227,6 +231,9 @@ export interface ReservationApiRecord {
   cancellationFee?: number
   refundAmount?: number
   cancellationReason?: string
+  /** REQ-HAC-03 (#258) — auditoría de la asignación de unidad (users.id + ISO). null = sin asignar. */
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   cancelledAt?: string
   /** #272 (MR-07) — reembolso real al cancelar desde la web (ver `RefundStatus`). */
   refundStatus?: RefundStatus
@@ -655,11 +662,32 @@ export interface PaymentAttemptView {
   occurredAt: string
 }
 
+/**
+ * REQ-HAC-06 (#261) — fila de `GET /api/reservas/:id/assignable-rooms`: habitación libre esas
+ * noches. `typeMismatch` = no es del tipo vendido (sólo aparece con `allTypes`); `suggested` = la
+ * que el backend propone primero (misma tipología, limpia). Espejo de
+ * `backend/src/modules/reservas/usecases/assign-room.ts` `AssignableRoom`.
+ */
+export interface AssignableRoom {
+  id: string
+  number: string
+  floor?: number | string | null
+  status: string
+  cleaningStatus: 'clean' | 'dirty'
+  typeMismatch: boolean
+  suggested: boolean
+}
+
 export interface ReservationDetail {
   id: string
   hotelId: string
   guestId: string | null
   roomId: string
+  /** REQ-HAC-03 (#258) — tipo vendido (`rooms.type`); la unidad (`roomId`) puede venir null hasta
+   *  que recepción la asigne. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen quién y cuándo. */
+  roomType?: string
+  roomAssignedAt?: string | null
+  roomAssignedBy?: string | null
   checkIn: string
   checkOut: string
   status: string

@@ -11,6 +11,8 @@ interface DashboardState extends DashboardStats {
   reservations: number
   guests: number
   pendingInvoices: number
+  /** HAC-06 (#261): llegadas de hoy sin habitación asignada. Opcional: el backend viejo no lo manda. */
+  arrivalsUnassigned?: number
   trends?: {
     ocupacion: { value: number; direction: 'up' | 'down' | 'stable' }
     revenue: { value: number; direction: 'up' | 'down' | 'stable' }
