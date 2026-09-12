@@ -148,6 +148,9 @@ const messages = {
     // REQ-01 (#233) — amenidades para niños/bebés, checklist por habitación (catálogo del hotel).
     'rooms.guests.childAmenities': 'Amenidades para niños y bebés',
     'rooms.guests.childAmenityFree': 'Sin cargo',
+    // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…).
+    'rooms.guests.roomAmenities': 'Amenidades de la habitación',
+    'rooms.guests.roomAmenityFree': 'Gratis',
     'rooms.guests.addRoom': 'Agregar esta habitación',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adulto} other {adultos}}',
     'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {niño} other {niños}} ({ages} años)',
@@ -216,6 +219,7 @@ const messages = {
     'pay.room': 'Habitación',
     'pay.extras': 'Extras',
     'pay.childAmenities': 'Amenidades niños/bebés',
+    'pay.roomAmenities': 'Amenidades',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
     'pay.guest': 'Huésped',
@@ -412,6 +416,9 @@ const messages = {
     'rooms.guests.cribRequested': 'Crib',
     'rooms.guests.childAmenities': 'Amenities for children and babies',
     'rooms.guests.childAmenityFree': 'Free of charge',
+    // REQ-01 (#290)
+    'rooms.guests.roomAmenities': 'Room amenities',
+    'rooms.guests.roomAmenityFree': 'Free',
     'rooms.guests.addRoom': 'Add this room',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adult} other {adults}}',
     'rooms.guests.summary': '{adults} {adults, plural, one {adult} other {adults}} · {children} {children, plural, one {child} other {children}} (age {ages})',
@@ -471,6 +478,7 @@ const messages = {
     'pay.room': 'Room',
     'pay.extras': 'Extras',
     'pay.childAmenities': 'Children/baby amenities',
+    'pay.roomAmenities': 'Room amenities',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
     'pay.guest': 'Guest',
@@ -662,6 +670,9 @@ const messages = {
     'rooms.guests.cribRequested': 'Berço',
     'rooms.guests.childAmenities': 'Comodidades para crianças e bebês',
     'rooms.guests.childAmenityFree': 'Sem custo',
+    // REQ-01 (#290)
+    'rooms.guests.roomAmenities': 'Comodidades do quarto',
+    'rooms.guests.roomAmenityFree': 'Grátis',
     'rooms.guests.addRoom': 'Adicionar este quarto',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adulto} other {adultos}}',
     'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {criança} other {crianças}} ({ages} anos)',
@@ -721,6 +732,7 @@ const messages = {
     'pay.room': 'Quarto',
     'pay.extras': 'Extras',
     'pay.childAmenities': 'Comodidades crianças/bebês',
+    'pay.roomAmenities': 'Comodidades do quarto',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
     'pay.guest': 'Hóspede',

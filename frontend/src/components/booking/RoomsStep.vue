@@ -248,6 +248,41 @@
               </p>
             </div>
 
+            <!-- REQ-01 (#290, amenidades de la habitación) — checklist POR HABITACIÓN de las
+                 amenidades personalizadas (cuna, cama extra…) que el hotel configuró para ESTE tipo
+                 (`store.roomAmenitiesFor(rt.id)`, catálogo del backend con el precio "desde" del
+                 tipo). A diferencia de las infantiles NO depende de la composición: se ofrece a
+                 cualquier huésped apenas el tipo tenga catálogo. Lo elegido suma al total de la línea. -->
+            <div v-if="shouldOfferRoomAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="room-amenities">
+              <span class="block text-sm font-bold text-navy">{{ t('rooms.guests.roomAmenities') }}</span>
+              <label
+                v-for="a in store.roomAmenitiesFor(rt.id)"
+                :key="a.key"
+                :for="`room-amenity-${rt.id}-${a.key}`"
+                class="flex cursor-pointer items-center justify-between gap-3 text-sm text-navy"
+                data-testid="room-amenity-option"
+              >
+                <span class="flex items-center gap-2">
+                  <input
+                    :id="`room-amenity-${rt.id}-${a.key}`"
+                    :name="`room-amenity-${rt.id}-${a.key}`"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-slate-300 text-cyan"
+                    :value="a.key"
+                    :checked="isRoomAmenitySelected(rt, a.key)"
+                    @change="toggleRoomAmenity(rt, a.key)"
+                  />
+                  <span>{{ a.name }}</span>
+                </span>
+                <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="room-amenity-price">
+                  {{ Number(a.price) > 0 ? formatPrice(Number(a.price), store.displayCurrency) : t('rooms.guests.roomAmenityFree') }}
+                </span>
+              </label>
+              <p v-if="composedRoomAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="room-amenities-total">
+                + {{ formatPrice(composedRoomAmenitiesTotal(rt), store.displayCurrency) }}
+              </p>
+            </div>
+
             <div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
               <span :data-occupancy="composition(rt).chargeableOccupancy">
                 <template v-if="capacityBlockReason(rt)">
@@ -483,6 +518,8 @@ const {
   childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
   // REQ-01 (#233) — amenidades para niños/bebés por habitación.
   shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
+  // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…) por habitación.
+  shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
 } = useGuestComposer()
 
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
@@ -514,6 +551,9 @@ function cartLineGuestsLabel(line: CartLine): string {
   // REQ-01 (#233) — las amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot
   // de la línea), para que el huésped confirme qué quedó pedido en cada una.
   const amenities = (line.childAmenities ?? []).map((a) => a.name)
-  return amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
+  const withChildAmenities = amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
+  // REQ-01 (#290) — ídem con las amenidades de la habitación (snapshot de la línea).
+  const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
+  return roomAmenities.length > 0 ? `${withChildAmenities} · ${roomAmenities.join(', ')}` : withChildAmenities
 }
 </script>

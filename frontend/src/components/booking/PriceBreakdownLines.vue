@@ -22,6 +22,11 @@
         <span class="text-text-muted">{{ t('pay.childAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.childAmenitiesTotal) }}</span>
       </div>
+      <!-- REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…); opcional como el anterior. -->
+      <div v-if="(breakdown.roomAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="room-amenity-line">
+        <span class="text-text-muted">{{ t('pay.roomAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="font-bold text-navy tabular-nums">{{ format(breakdown.roomAmenitiesTotal) }}</span>
+      </div>
       <div v-if="breakdown.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-bold tabular-nums">−{{ format(breakdown.promoDiscount) }}</span>
@@ -52,9 +57,11 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Alojamiento = subtotal sin extras ni amenidades infantiles (el backend guarda `subtotal` con
- *  los dos adentro; `childAmenitiesTotal` es opcional — reservas previas a REQ-01 #233 no lo traen). */
+/** Alojamiento = subtotal sin extras, amenidades infantiles ni amenidades de la habitación (el
+ *  backend guarda `subtotal` con los tres adentro; `childAmenitiesTotal` y `roomAmenitiesTotal` son
+ *  opcionales — reservas previas a REQ-01 #233 / #290 no los traen). */
 const lodging = computed(() => Math.round((
   (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
+  - (props.breakdown?.roomAmenitiesTotal ?? 0)
 ) * 100) / 100)
 </script>
