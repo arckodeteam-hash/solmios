@@ -202,8 +202,7 @@ describe('reschedule — respeta el estado de la reserva', () => {
   })
 })
 
-// ─── Requerimiento 12 (Edad de referencia, 2026-09-03) — FIX encontrado en la auditoría ─────
-// `assertRoomAvailable` solo valida solape de FECHAS: antes de este fix, reagendar una reserva a
+// `assertRescheduleAvailable` solo valida disponibilidad (tipo + solape de la unidad): antes de este fix, reagendar una reserva a
 // una habitación donde la composición NO entra se aceptaba igual mientras no hubiera otra
 // reserva esas fechas — "deja de caber por el cambio de habitación" nunca se rechazaba.
 describe('reschedule — Requerimiento 12: revalida capacidad de la habitación DESTINO', () => {

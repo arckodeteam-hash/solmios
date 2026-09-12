@@ -126,7 +126,7 @@ describe('ReservasService', () => {
       const svc = new ReservasService(repo, log, silentCache, makeUserRepo(), fakeAuth, guestRepo, roomRepo, hotelRepo, makeQueries())
       await expect(svc.create({
         roomId: 'room1', hotelId: 'h1', checkIn: '2026-07-03', checkOut: '2026-07-06', totalAmount: 400
-      }, hotelAdmin)).rejects.toThrow('no disponible')
+      }, hotelAdmin)).rejects.toThrow('ya está ocupada') // 409 room_overlap (assertNoRoomConflict, REQ-HAC-02)
     })
 
     it('allows booking if existing is cancelled', async () => {

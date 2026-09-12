@@ -243,8 +243,10 @@ describe('createReservation — roomType (HAC-01)', () => {
   })
 
   it('el dto puede declarar roomType (prevalece) y sin roomRepo se persiste el declarado', async () => {
-    const withRoom: any = await create(memRepo([]), memRepo(ROOMS()), dto({ roomId: 'room-201', roomType: 'suite-vista' }))
-    expect(withRoom.roomType).toBe('suite-vista')
+    // REQ-HAC-02 (#257): el tipo declarado tiene que tener inventario (`availableOfType`); un tipo
+    // sin unidades es "agotado", así que se declara uno que existe pero no es el de la unidad.
+    const withRoom: any = await create(memRepo([]), memRepo(ROOMS()), dto({ roomId: 'room-201', roomType: 'double' }))
+    expect(withRoom.roomType).toBe('double')
     const noRepo: any = await create(memRepo([]), undefined, dto({ roomType: 'double' }))
     expect(noRepo.roomType).toBe('double')
   })

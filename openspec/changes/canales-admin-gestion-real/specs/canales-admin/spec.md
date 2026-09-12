@@ -127,6 +127,12 @@ cron sale una sola vez.
   del hotel con `reservations:view` (permisos de la fila `roles`), correo a `hotels.email` con
   `{platform_name}`, push si `pushtokens` está. Best-effort: un fallo del aviso no deshace la
   reserva ni impide el ack de la revisión.
+- (REQ-HAC-02, #257) La unidad que recibe la reserva OTA se elige con `availableOfType`
+  (`shared/usecases/type-availability.ts`): la primera unidad vendible del tipo que no esté ocupada
+  esas noches. Si el tipo no tiene ninguna libre, la reserva se crea igual (nunca se dropea un
+  booking OTA) sobre la primera unidad del tipo y `notes` lleva `⚠ OVERBOOKING: sin unidad libre de
+  <tipo> para esas fechas`. Sin `checkIn`/`checkOut` en el dto, o si la consulta falla, se conserva
+  el comportamiento anterior (primera unidad del tipo).
 
 **Given** una revisión nueva de Channex para un hotel con recepción y camarera
 **When** la ingesta crea la reserva

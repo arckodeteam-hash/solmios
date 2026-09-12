@@ -27,13 +27,11 @@ import { blockedRoomIds, isClosedForOccupancy, stayNights } from './stay-restric
 import { baseRatesOnly, buildSeasonByDate } from './rate-resolution'
 import { MAX_OCCUPANCY_ROWS } from './occupancy-matrix'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { stayOverlaps } from '../../../shared/usecases/type-availability'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity, type RoomTypeCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
 const CACHE_TTL_SECONDS = 60
-
-/** Reservas que ocupan la habitación. Una cancelada libera la fecha. */
-const BLOCKING_RESERVATION_STATUS = new Set(['confirmed', 'checked_in', 'pending', 'guaranteed'])
 
 export class AvailabilityUseCase {
   constructor(
@@ -146,6 +144,8 @@ export class AvailabilityUseCase {
    * aunque ninguna habitación concreta figure ocupada. Sin esto, soltar la unidad de una
    * `confirmed` la hacía desaparecer del inventario y el motor vendía de más. Una fila sin
    * `roomType` no tiene contra qué descontar y no cuenta (no hay unidad que mirar).
+   * El criterio de estado (qué reserva ocupa) es el de `shared/usecases/type-availability.ts`
+   * (REQ-HAC-02), el mismo que aplica el POST público al vender.
    */
   private unassignedByType(reservations: any[], checkIn: string, checkOut: string): Map<string, number> {
     const out = new Map<string, number>()
@@ -158,14 +158,10 @@ export class AvailabilityUseCase {
     return out
   }
 
-  /** Estado que ocupa + solape `[checkIn, checkOut)` — el día de salida no cuenta. */
+  /** Estado que ocupa + solape `[checkIn, checkOut)` — el día de salida no cuenta. Delegado en
+   *  `stayOverlaps` (REQ-HAC-02): un solo criterio de estado para consultar y para vender. */
   private overlapsStay(r: any, checkIn: string, checkOut: string): boolean {
-    const status = String(r.status ?? '').toLowerCase()
-    if (status && !BLOCKING_RESERVATION_STATUS.has(status)) return false
-    const from = String(r.checkIn ?? '').slice(0, 10)
-    const to = String(r.checkOut ?? '').slice(0, 10)
-    if (!from || !to) return false
-    return from < checkOut && to > checkIn
+    return stayOverlaps(r, checkIn, checkOut)
   }
 
   /**

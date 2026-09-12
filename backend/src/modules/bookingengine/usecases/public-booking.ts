@@ -50,16 +50,20 @@
 //   reserva (no en la cotización), para minimizar la ventana de carrera:
 //     - Si el body trae `roomId` Y resuelve a una fila real de `Rooms` → se usa esa habitación
 //       tal cual (compat con callers/integradores viejos que ya mandan un id real).
-//     - Si no, y trae `roomType` → se buscan las `Rooms` de `hotelId` con ese `type`, status
-//       disponible, sin solape con `Reservations` para el rango pedido, y se elige la de menor
-//       `basePrice` (criterio simple y determinístico — la más barata disponible).
-//     - El check de solape final (antes de crear la reserva) se mantiene como red de seguridad
-//       para el caso borde de que el tipo se agote justo entre la cotización y el submit → 409.
+//     - Si no, y trae `roomType` → REQ-HAC-02 (#257): la venta se decide por TIPO con
+//       `availableOfType` (`shared/usecases/type-availability.ts`): `rooms − booked` por noche,
+//       contando reservas del tipo asignadas O sin asignar (desde HAC-01 una `confirmed` puede
+//       vivir sin `roomId`). Si el tipo no tiene inventario → 409. Sólo después se elige la
+//       unidad física entre las vendibles del tipo sin reserva asignada ni bloqueo, con
+//       capacidad suficiente, la de menor `basePrice` (determinístico — la más barata).
+//     - La red de seguridad final (antes de crear la reserva) repite `availableOfType` para el
+//       caso borde de que el tipo se agote justo entre la cotización y el submit → 409.
 //     - Tipo inexistente en el hotel → 404. Tipo existente pero sin unidades libres → 409 (no
 //       404: el tipo SÍ existe, solo no hay disponibilidad para esas fechas).
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { availableOfType, countAvailableOfType, stayOverlaps, typeAvailabilityPortFromOrm, type TypeAvailabilityResult } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
@@ -181,6 +185,41 @@ export interface TotalBreakdown {
  * Error centinela para abortar cuando la habitación se vendió entre nuestro chequeo de solape y
  * el insert. Mismo mecanismo que el del promo: se atrapa afuera de la tx y devuelve 409.
  */
+/**
+ * REQ-HAC-02 — disponibilidad por TIPO para la unidad YA resuelta (red de seguridad final de
+ * `createPublicBookingDirect`). Es `countAvailableOfType` con las mismas lecturas acotadas de
+ * `availableOfType` más dos que la consulta por `roomType` sola no cubre:
+ *  - la unidad resuelta SIEMPRE forma parte del inventario del tipo aunque `Rooms {hotelId, type}`
+ *    no la devuelva (fila vieja sin `type`): sin eso el guard contaría "0 unidades" y rechazaría
+ *    una habitación que existe;
+ *  - las reservas ASIGNADAS a esa unidad se leen aparte (`Reservations {roomId}`): una reserva
+ *    asignada a la unidad con OTRO `roomType` (upgrade desde el panel) no sale en la consulta por
+ *    tipo y aun así la ocupa. Es la misma lectura que la tx repite con el lock tomado.
+ */
+async function availabilityForResolvedRoom(
+  orm: any,
+  hotelId: string,
+  room: any,
+  checkIn: string,
+  checkOut: string,
+): Promise<TypeAvailabilityResult> {
+  const type = String(room.type ?? '')
+  const port = typeAvailabilityPortFromOrm(orm)
+  const [rawRooms, byType, byRoom, blocks] = await Promise.all([
+    port.rooms.findMany({ hotelId, type }),
+    port.reservations.findMany({ hotelId, roomType: type }),
+    port.reservations.findMany({ roomId: room.id }),
+    port.blocks!.findMany({ hotelId }),
+  ])
+  const rooms = (rawRooms ?? []).some((r: any) => r && r.id === room.id) ? rawRooms : [{ ...room, type }, ...(rawRooms ?? [])]
+  const reservations = [...(byType ?? [])]
+  for (const r of byRoom ?? []) {
+    if (!r || reservations.includes(r) || (r.id && reservations.some((m: any) => m?.id === r.id))) continue
+    reservations.push(r)
+  }
+  return countAvailableOfType(type, rooms, reservations, blocks ?? [], checkIn, checkOut)
+}
+
 class RoomTakenConcurrentlyError extends Error {
   constructor() { super('room_taken_concurrently'); this.name = 'RoomTakenConcurrentlyError' }
 }
@@ -514,22 +553,24 @@ export async function createPublicBookingDirect(
       return { status: 404, body: { error: 'Tipo de habitación no encontrado' } }
     }
 
-    const availableOfType = roomsOfType.filter((r: any) => isRoomSellable(r.status))
-    const hotelReservations = (await orm.findMany('Reservations', { hotelId })) as any[]
-    const busyRoomIds = new Set(
-      hotelReservations
-        .filter((r: any) => r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn)
-        .map((r: any) => r.roomId),
-    )
+    // REQ-HAC-02 (#257) — la venta se decide por TIPO: `rooms − booked` por noche, contando las
+    // reservas del tipo asignadas O sin asignar (una `confirmed` sin `roomId` también consume
+    // una unidad). El solape por habitación ya no decide si se vende — queda sólo en
+    // `reservas/usecases/assign-room.ts`, al asignar.
+    const typeAvail = await availableOfType(typeAvailabilityPortFromOrm(orm), hotelId, roomType, checkIn, checkOut)
+    if (typeAvail.available < 1) {
+      return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
+    }
     // Criterio de selección entre las libres: menor `basePrice` primero (determinístico y
     // favorece al huésped — misma tarifa que se le cotizó en `public-rates.ts`, que también
     // usa el precio más bajo del type). Capacidad ANTES que precio: dentro del mismo tipo puede
     // haber unidades de capacidad distinta (`public-rates-occupancy-integrity.test.ts` cubre un
     // tipo "familiar" con unidades de capacidad 2 y 4 a la vez).
-    let freeOfType = availableOfType
-      // `room_blocks` descuenta unidades igual que una reserva: la habitación puede no tener
-      // reservas y aun así estar cerrada por mantenimiento para ese rango.
-      .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id))
+    let freeOfType = typeAvail.sellableRooms
+      // `busyRoomIds`: unidades con una reserva ASIGNADA que solapa (no se puede asignar la misma
+      // dos veces). `room_blocks` descuenta unidades igual que una reserva: la habitación puede
+      // no tener reservas y aun así estar cerrada por mantenimiento para ese rango.
+      .filter((r: any) => !typeAvail.busyRoomIds.has(r.id) && !blockedIds.has(r.id))
       .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuests), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), childComposition))
       .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))
     if (freeOfType.length === 0) {
@@ -594,13 +635,15 @@ export async function createPublicBookingDirect(
   // Iba `assertOwnership(room, { hotelId })` — dos objetos, `===` siempre false: toda reserva daba 403.
   if (auth) auth.assertOwnership(room.hotelId, hotelId)
 
-  // Red de seguridad final (ver cabecera): aunque ya filtramos por solape arriba en el path de
-  // `roomType`, repetimos el check acá para (a) el path de `roomId` real (que no lo hizo antes)
-  // y (b) cubrir la ventana de carrera entre la resolución de arriba y este punto.
-  const overlapping = (await orm.findMany('Reservations', { roomId: resolvedRoomId })) as any[]
-  const hasOverlap = overlapping.some((r: any) =>
-    r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn)
-  if (hasOverlap) return { status: 409, body: { error: 'Habitación no disponible en esas fechas' } }
+  // Red de seguridad final (ver cabecera): aunque el path de `roomType` ya decidió por tipo
+  // arriba, repetimos la cuenta por tipo acá para (a) el path de `roomId` real (que no lo hizo
+  // antes: la unidad pedida puede tener una reserva asignada encima, o el tipo puede estar
+  // agotado por reservas sin asignar) y (b) cubrir la ventana de carrera entre la resolución de
+  // arriba y este punto. REQ-HAC-02: mismo criterio de inventario que el resto del sistema.
+  const guard = await availabilityForResolvedRoom(orm, hotelId, room, checkIn, checkOut)
+  if (guard.busyRoomIds.has(resolvedRoomId) || guard.available < 1) {
+    return { status: 409, body: { error: 'Habitación no disponible en esas fechas' } }
+  }
 
   // Misma red de seguridad para los dos cierres del hotel. En el path de `roomType` ya están
   // filtrados arriba; acá cubren el path de `roomId` real (que no pasa por esa resolución).
@@ -839,10 +882,10 @@ export async function createPublicBookingDirect(
         await tx.updateMany('Rooms', { id: resolvedRoomId }, { updatedAt: new Date().toISOString() })
           .catch(() => 0)
       }
-      // Con el lock tomado, re-leer el solape: acá sí vemos lo que commiteó quien llegó primero.
+      // Con el lock tomado, re-leer el solape de la UNIDAD: acá sí vemos lo que commiteó quien
+      // llegó primero. Mismo criterio de estado que la disponibilidad por tipo (`stayOverlaps`).
       const freshOverlap = (await tx.findMany?.('Reservations', { roomId: resolvedRoomId }).catch(() => [])) ?? []
-      const takenNow = (freshOverlap as any[]).some((r: any) =>
-        r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn)
+      const takenNow = (freshOverlap as any[]).some((r: any) => stayOverlaps(r, checkIn, checkOut))
       if (takenNow) throw new RoomTakenConcurrentlyError()
 
       // MR-08 (#273) — un huésped = una ficha: se busca por email/teléfono normalizados y solo se

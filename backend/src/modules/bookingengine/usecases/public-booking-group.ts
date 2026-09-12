@@ -37,7 +37,7 @@
 import type { RepositoryAdapter } from 'arckode-framework'
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { readHotelTaxes, taxLinesOn, sumTaxLines } from './hotel-taxes'
-import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { countAvailableOfType, stayOverlaps } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
@@ -144,10 +144,6 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
 /** Booleano persistido (INTEGER 0/1 en la columna, `true`/`1`/`'1'` según el adapter). */
 const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
-function overlaps(r: any, checkIn: string, checkOut: string): boolean {
-  return r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn
-}
-
 /**
  * Crea una reserva pública de VARIAS habitaciones (mismo tipo ×N y/o tipos distintos) en una
  * sola operación atómica: todas las unidades se reservan, o ninguna. Mismo contrato de robustez
@@ -250,9 +246,6 @@ export async function createPublicBookingGroup(
     orm.findMany('Seasons', { hotelId }) as Promise<any[]>,
   ])
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
-  const busyRoomIds = new Set(
-    (hotelReservations ?? []).filter((r: any) => overlaps(r, checkIn, checkOut)).map((r: any) => r.roomId),
-  )
   const baseRates = baseRatesOnly(rawRates ?? [])
   const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
 
@@ -260,6 +253,10 @@ export async function createPublicBookingGroup(
   // `claimedIds` evita que 2 líneas del MISMO POST se lleven la misma unidad física (2 líneas
   // del mismo roomType con distinta ocupación, por ejemplo "Deluxe para 2 ×1 + Deluxe para 4 ×1").
   const claimedIds = new Set<string>()
+  // REQ-HAC-02 (#257) — unidades del TIPO (en minúsculas) ya reclamadas por líneas anteriores de
+  // este POST: la disponibilidad por tipo se lee de la DB una vez por línea y no ve lo que las
+  // líneas previas todavía no escribieron.
+  const claimedByType = new Map<string, number>()
   interface ResolvedLine {
     roomType: string; adults: number; children: number; childrenAges: number[]; roomIds: string[]; perUnitPrice: number
     /** MR-10 (#275) — personas por unidad que cuentan para `per_person`/`per_person_per_night`. */
@@ -375,13 +372,33 @@ export async function createPublicBookingGroup(
       return { status: 404, body: { error: `Tipo de habitación "${line.roomType}" no encontrado` } }
     }
 
+    // REQ-HAC-02 (#257) — la venta se decide por TIPO: `rooms − booked` por noche, contando las
+    // reservas del tipo asignadas O sin asignar (una `confirmed` sin `roomId` también consume una
+    // unidad), menos lo que ya reclamaron las líneas anteriores de este mismo POST. El solape por
+    // habitación ya no decide si se vende — queda sólo en `reservas/usecases/assign-room.ts`.
+    const typeKey = String(line.roomType).toLowerCase()
+    const typeAvail = countAvailableOfType(line.roomType, roomsOfType, hotelReservations ?? [], rawBlocks ?? [], checkIn, checkOut)
+    const typeFree = Math.max(0, typeAvail.available - (claimedByType.get(typeKey) ?? 0))
+    if (typeFree < line.quantity) {
+      return {
+        status: 409,
+        body: {
+          error: `Solo hay ${typeFree} habitación(es) de "${line.roomType}" disponibles para esas fechas (pediste ${line.quantity})`,
+          available: typeFree,
+          roomType: line.roomType,
+        },
+      }
+    }
+
     // Ocupación FÍSICA de la línea (para el mensaje de error y el fallback sin `maxAdults`/
     // `maxChildren`): adultos + niños con plaza + niños libres — mismo criterio que
     // `public-booking.ts`.
     const totalGuestsForLine = Math.max(1, composition.effectiveAdults + composition.payingChildren + composition.freeChildren)
-    let freeOfType = roomsOfType
-      .filter((r: any) => isRoomSellable(r.status))
-      .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
+    // Elección de la unidad física entre las vendibles del tipo: `busyRoomIds` son las que tienen
+    // una reserva ASIGNADA que solapa (no se asigna dos veces la misma), más bloqueos y las que
+    // ya reclamó otra línea de este POST.
+    let freeOfType = typeAvail.sellableRooms
+      .filter((r: any) => !typeAvail.busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
       // Requerimiento 2: unificado con el path de edades — la política de tipo (si el hotel la
       // configuró) reemplaza los campos de la habitación física, en ambas ramas por igual.
       .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuestsForLine), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), composition))
@@ -421,6 +438,7 @@ export async function createPublicBookingGroup(
     }
     const chosen = freeOfType.slice(0, line.quantity)
     for (const r of chosen) claimedIds.add(r.id)
+    claimedByType.set(typeKey, (claimedByType.get(typeKey) ?? 0) + line.quantity)
 
     // REQ-01 (#290) — cada unidad física elegida resuelve contra SUS propias filas (quantity 1,
     // total = price): dos unidades del mismo tipo pueden cobrar la misma key a precio distinto,
@@ -652,7 +670,7 @@ export async function createPublicBookingGroup(
             await tx.updateMany('Rooms', { id: roomId }, { updatedAt: new Date().toISOString() }).catch(() => 0)
           }
           const freshOverlap = (await tx.findMany?.('Reservations', { roomId }).catch(() => [])) ?? []
-          const takenNow = (freshOverlap as any[]).some((r: any) => overlaps(r, checkIn, checkOut))
+          const takenNow = (freshOverlap as any[]).some((r: any) => stayOverlaps(r, checkIn, checkOut))
           if (takenNow) throw new RoomTakenConcurrentlyError(line.roomType)
         }
       }

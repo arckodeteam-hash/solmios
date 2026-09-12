@@ -16,10 +16,10 @@
 // en el commit), NO se devuelve plata automáticamente.
 
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
-import { assertRoomAvailable } from './availability'
 import { updateReservation } from './crud'
 import { assignRoom, assertNoRoomConflict, type RoomAssignmentDeps } from './assign-room'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
+import { availableOfType } from '../../../shared/usecases/type-availability'
 import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, freeChildrenLimitError, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
@@ -135,6 +135,11 @@ export interface RescheduleDeps extends RepriceRepos {
   repo: any
   roomRepo: any
   /**
+   * RoomBlocks — los bloqueos también consumen inventario del tipo (REQ-HAC-02). Opcional como en
+   * crud.ts: sin repo no hay bloqueos que contar. Si falta, se usa el de `roomAssignment`.
+   */
+  blockRepo?: any
+  /**
    * Extras de la reserva. OBLIGATORIO (STR-2): el commit escribe un `totalAmount` nuevo, y
    * `reservations.pendingAmount` —la columna PERSISTIDA que lee el listado y el planning— quedaba
    * con el saldo del precio viejo tras un reagendado con reprice. Si fuera opcional, un caller que
@@ -240,8 +245,8 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
   // cual, sin niños que proyectar.
   const composition = composeFromPersistedReservation(existing, childPolicy ?? DEFAULT_CHILD_POLICY, checkIn)
 
-  // FIX: `assertRoomAvailable` (más abajo, en quoteReschedule/commitReschedule) solo valida
-  // solape de FECHAS, nunca capacidad — mover una reserva de 3 adultos + 2 niños a una habitación
+  // FIX: `assertRescheduleAvailable` (más abajo, en quoteReschedule/commitReschedule) solo valida
+  // disponibilidad (tipo + solape de la unidad), nunca capacidad — mover una reserva de 3 adultos + 2 niños a una habitación
   // `capacity:2` pasaba mientras no hubiera otra reserva esas fechas. Se revalida acá contra la
   // habitación DESTINO (la actual si no cambia de cuarto). Sin `configRepo` cableado, cae a
   // comparar solo `adults` — mismo criterio de degradación que el resto de esta cadena.
@@ -320,6 +325,39 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
   }
 }
 
+/**
+ * REQ-HAC-02 (#257) — disponibilidad del reagendado, en dos pasos y en este orden:
+ *  1. Por TIPO (fuente única `availableOfType`): las noches nuevas tienen que tener inventario del
+ *     tipo destino contando también las reservas confirmadas SIN unidad asignada; la propia
+ *     reserva no se cuenta (`excludeReservationId`). Se salta sin `roomRepo.findMany` (mocks/
+ *     callers viejos) o sin tipo resuelto. El tipo es el de la unidad DESTINO si se cambia de
+ *     habitación; si no, el vendido (`existing.roomType`) o el de la unidad actual.
+ *  2. Por UNIDAD (`assertNoRoomConflict`, assign-room.ts — único lugar del solape por habitación):
+ *     si el quote tiene `roomId`, esa unidad no puede estar tomada ni bloqueada esas noches.
+ */
+async function assertRescheduleAvailable(deps: RescheduleDeps, existing: any, quote: RescheduleQuote, id: string): Promise<void> {
+  const blockRepo = deps.blockRepo ?? deps.roomAssignment?.blockRepo
+  if (typeof deps.roomRepo?.findMany === 'function') {
+    let roomType: string | null = null
+    const roomChanged = Boolean(quote.roomId) && String(quote.roomId) !== String(existing.roomId ?? '')
+    if (!roomChanged && existing.roomType) roomType = String(existing.roomType)
+    else if (quote.roomId) {
+      const room = await deps.roomRepo.findById(quote.roomId)
+      roomType = room?.type ? String(room.type) : null
+    }
+    if (roomType) {
+      const avail = await availableOfType(
+        { rooms: deps.roomRepo, reservations: deps.repo, blocks: blockRepo },
+        existing.hotelId, roomType, quote.checkIn, quote.checkOut, { excludeReservationId: id },
+      )
+      if (avail.available < 1) {
+        throw new ConflictError('No hay habitaciones de este tipo disponibles para esas fechas', { reason: 'type_sold_out', roomType, available: 0 })
+      }
+    }
+  }
+  if (quote.roomId) await assertNoRoomConflict({ repo: deps.repo, blockRepo }, existing.hotelId, quote.roomId, quote.checkIn, quote.checkOut, id)
+}
+
 /** Dry-run: valida disponibilidad y calcula la diferencia. NO escribe nada. */
 export async function quoteReschedule(deps: RescheduleDeps, id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<RescheduleQuote & { available: boolean; reason: string }> {
   const existing = await deps.repo.findById(id)
@@ -328,7 +366,7 @@ export async function quoteReschedule(deps: RescheduleDeps, id: string, input: R
   let available = true
   let reason = ''
   try {
-    await assertRoomAvailable(deps.repo, quote.roomId, quote.checkIn, quote.checkOut, id)
+    await assertRescheduleAvailable(deps, existing, quote, id)
   } catch (e: any) {
     available = false
     reason = e.message
@@ -384,11 +422,13 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   //    ANTES del update y el dto NO lleva `roomId` (ya quedó persistido). `assignRoom` valida el
   //    solape con las fechas VIGENTES; si además se extiende la salida, se comprueba el rango
   //    NUEVO acá antes de mover nada, para no dejar la estadía a medio mover si la extensión choca.
+  // Antes de escribir nada: inventario del tipo (fuente única) + solape de la unidad destino con el
+  // rango NUEVO. `updateReservation` revalida la unidad, pero no cuenta las reservas sin asignar.
+  await assertRescheduleAvailable(deps, existing, quote, id)
   const cambiaHabitacion = Boolean(quote.roomId) && String(quote.roomId) !== String(existing.roomId ?? '')
   const mueveEstadia = cambiaHabitacion && existing.status === 'checked_in'
   if (mueveEstadia) {
     if (!deps.roomAssignment) throw new ConflictError('No se puede mover una estadía sin deps de asignación', { reason: 'use_assign_endpoint' })
-    await assertNoRoomConflict(deps.roomAssignment, existing.hotelId, quote.roomId, quote.checkIn, quote.checkOut, id)
     await assignRoom(deps.roomAssignment, id, { roomId: quote.roomId, allowTypeChange: true }, user)
   }
   const roomDto = cambiaHabitacion && !mueveEstadia ? { roomId: quote.roomId, allowTypeChange: true } : {}
