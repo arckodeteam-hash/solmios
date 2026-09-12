@@ -54,7 +54,7 @@
       </button>
     </div>
 
-    <!-- Tabs agrupados: administrativo vs. configuraciones e integraciones -->
+    <!-- Tabs agrupados (hoy un solo grupo, ver tabGroups) -->
     <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       <div v-for="group in tabGroups" :key="group.label" class="min-w-0 lg:shrink">
         <p class="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-text-muted">{{ group.label }}</p>
@@ -962,9 +962,14 @@ const loading = ref(true)
 type SettingsTab = { value: string; label: string }
 type SettingsTabGroup = { label: string; tabs: SettingsTab[] }
 
-// Dos grupos de configuración (feedback #139):
-// - Administrativo: identidad del hotel + políticas comerciales/fiscales.
-// - Configuraciones e integraciones: catálogos configurables + conexiones con terceros.
+// Un solo grupo de configuración: el segundo ("Configuraciones e integraciones", feedback
+// #139) se quedó sin pestañas y se retiró para no dejar un encabezado vacío:
+// - Página pública / Landing / Reputación externa / Tracking se mudaron a su propia sección
+//   del menú lateral (Página pública). Acá queda solo config operativa.
+// - El "Catálogo" global de servicios se retiró (#290/#291): los servicios de CADA
+//   habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones y
+//   los del HOTEL (piscina, gimnasio, los de la landing) en Página pública → General.
+// - "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
 const tabGroups: SettingsTabGroup[] = [
   {
     label: 'Config. administrativo',
@@ -977,17 +982,6 @@ const tabGroups: SettingsTabGroup[] = [
       { value: 'emergency', label: 'Emergencias' },
       // "RRHH" (días laborables) se mudó a RRHH → Asistencia → Horarios: es lo único que
       // configuraba y estaba a dos secciones de distancia de ahí.
-    ],
-  },
-  {
-    label: 'Configuraciones e integraciones',
-    tabs: [
-      // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
-      // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      // El "Catálogo" global de servicios se retiró (#290/#291): los servicios de CADA
-      // habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones y
-      // los del HOTEL (piscina, gimnasio, los de la landing) en Página pública → General.
-      // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },
 ]

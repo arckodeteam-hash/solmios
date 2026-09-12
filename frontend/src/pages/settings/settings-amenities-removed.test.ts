@@ -1,5 +1,5 @@
 // settings-amenities-removed.test.ts — issue #291 (REQ-02): el tab "Catálogo de amenities"
-// (ex "Amenities de habitación") se retiró de Configuración Base. Era el remanente del mecanismo
+// (ex sección de amenidades por habitación) se retiró de Configuración Base. Era el remanente del mecanismo
 // global que #290 reemplazó: las amenidades por habitación viven en Habitaciones (RoomAmenities)
 // y las de nivel hotel en Página pública → General (misma tabla hotel_amenities).
 //
@@ -111,6 +111,9 @@ describe('#291 — Configuración Base ya no tiene el tab "Catálogo de amenitie
     expect(w.find('[data-testid="amenities-config-hint"]').exists()).toBe(false)
     expect(w.findAll('input[type="checkbox"]').some((c) => c.attributes('value') !== undefined && /amenit/i.test(c.html()))).toBe(false)
     expect(w.text()).not.toMatch(/amenit/i)
+    // El grupo "Configuraciones e integraciones" sólo tenía ese tab: sin él no puede quedar
+    // un encabezado de grupo huérfano con una fila de pestañas vacía.
+    expect(w.text()).not.toContain('Configuraciones e integraciones')
   })
 
   it('al montar NO se piden el catálogo ni las amenities del hotel', async () => {
