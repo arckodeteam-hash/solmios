@@ -395,6 +395,39 @@ debajo del estado y no se oculta.
 - WHEN corre el backfill dos veces
 - THEN sólo la primera pasa a `web` en la primera corrida y la segunda corrida cambia 0 filas
 
+### Requirement: Facturas de la reserva en el detalle (REQ-FDR-01)
+
+El detalle extendido (`GET /api/reservations/:id`, `usecases/detail.ts`) MUST devolver
+`invoices: ReservationInvoiceView[]` — `{ id, number, type, status, amount, taxes,
+amountPaid, balance, currency, issuedAt, ncf }` — con las facturas de la reserva de la más
+reciente a la más vieja (`issueDate` desc, desempate `createdAt` desc). Es una PROYECCIÓN
+(`usecases/reservation-invoices.ts`): `number` ← `invoices.invoiceNumber`, `issuedAt` ←
+`invoices.issueDate`, `balance = amount − amountPaid` derivado; MUST NOT exponer la fila cruda
+del módulo `facturas` (`hotelId`, `reservationId`, `notes`, …). Las filas se leen por el
+puerto reserva→facturas ya cableado por `connectors/reservas-money.ts`
+(`ReservationMoneyPort.invoices` → `FacturasService.invoicesOfReservation`), SIEMPRE con el
+hotel de la reserva; `reservas` MUST NOT importar `modules/facturas`. Best-effort: si el
+puerto falla, `invoices: []` y el detalle se devuelve igual (200). El frontend espeja el
+tipo en `types/index.ts` (`ReservationInvoiceView`, `ReservationDetail.invoices?`).
+
+#### Scenario: Reserva con una factura
+
+- GIVEN una reserva con una factura `F-0001` de 500 con `amountPaid` 200
+- WHEN `GET /api/reservations/:id`
+- THEN `invoices[0].number` es `F-0001` y `invoices[0].balance` es 300
+
+#### Scenario: Más reciente primero
+
+- GIVEN dos facturas emitidas el 2026-08-01 y el 2026-09-05
+- WHEN se pide el detalle
+- THEN `invoices[0]` es la de septiembre
+
+#### Scenario: El puerto de facturas falla
+
+- GIVEN el puerto reserva→facturas lanza
+- WHEN se pide el detalle
+- THEN responde 200 con `invoices: []` y el resto del detalle intacto
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir
