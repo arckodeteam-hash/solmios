@@ -93,8 +93,10 @@ export interface CreateReservasDTO {
   guestEmail?: string
   guestName?: string
   guestPhone?: string
-  roomId: string
-  // REQ-HAC-01 (#258) — tipo vendido; si falta, el usecase lo rellena desde `rooms.type`.
+  // REQ-HAC-05 (#260) — la unidad es opcional: sin `roomId` la reserva nace por TIPO (`roomType`
+  // obligatorio, `roomId` se persiste null) y se asigna después (assign-room). Con `roomId`,
+  // `roomType` se rellena desde `rooms.type` si falta (REQ-HAC-01, #258).
+  roomId?: string | null
   roomType?: string
   hotelId: string
   checkIn: string

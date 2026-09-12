@@ -3,7 +3,7 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, RetryRefundSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, TypeAvailabilityQuerySchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, RetryRefundSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -87,20 +87,42 @@ export class ReservasController {
   // Ownership: `hotelId` sale del usuario (super_admin puede pasar el suyo en el body);
   // sin hotelId en el token se resuelve contra `users` (mismo fallback que crud.ts).
   async quote(req: HttpRequest) {
-    const body = { ...(req.body ?? {}) } as Record<string, any>
-    const user = req.user as any
-    if (user?.role === 'super_admin' && body.hotelId) {
-      // super_admin cotiza el hotel que pide — hotelId del body tal cual
-    } else if (user?.hotelId) {
-      body.hotelId = user.hotelId
-    } else {
-      const hotelId = await hotelIdOfUserLegacy(this.userRepo, user?.id)
-      if (!hotelId) return { status: 400, body: { error: 'Usuario sin hotel asignado' } }
-      body.hotelId = hotelId
-    }
-    const data = validateSchema(StayQuoteSchema, body)
-    const quote = await this.service.quoteStay({ ...(data as any), guests: Number((data as any).guests) || 2 })
+    const body = await this.withOwnedHotelId({ ...(req.body ?? {}) } as Record<string, any>, req.user as any)
+    if (!body) return { status: 400, body: { error: 'Usuario sin hotel asignado' } }
+    const data = validateSchema(StayQuoteSchema, body) as Record<string, any>
+    // REQ-HAC-05 (#260): `roomId` O `roomType` — regla cruzada que el DSL no expresa. 400 acá, antes
+    // de llegar al usecase (que igual la rechaza con 409 para los callers directos).
+    if (!data.roomId && !data.roomType) return { status: 400, body: { error: 'Indicá roomId o roomType' } }
+    const quote = await this.service.quoteStay({ ...(data as any), guests: Number(data.guests) || 2 })
     return { status: 200, body: quote }
+  }
+
+  // ── TYPE AVAILABILITY (REQ-HAC-05, #260): disponibilidad por tipo para el wizard ──
+  // GET /api/reservas/type-availability?checkIn=&checkOut=&excludeReservationId=&hotelId=
+  // Registrada ANTES de `/api/reservas/:id` (index.ts) — si no, `:id` capturaría el segmento.
+  // Mismo ownership que `quote`: el hotel sale del token (super_admin puede pedir otro).
+  // Respuesta: array de `{ roomType, rooms, booked, available, perNight:[{date,booked,available}],
+  // minBasePrice, capacity }`, una por tipo distinto del hotel, ordenada por `roomType`.
+  async typeAvailability(req: HttpRequest) {
+    const query = await this.withOwnedHotelId({ ...((req.query ?? {}) as Record<string, any>) }, req.user as any)
+    if (!query) return { status: 400, body: { error: 'Usuario sin hotel asignado' } }
+    const data = validateSchema(TypeAvailabilityQuerySchema, query) as Record<string, any>
+    const items = await this.service.listTypeAvailability({
+      hotelId: String(data.hotelId), checkIn: String(data.checkIn), checkOut: String(data.checkOut),
+      excludeReservationId: data.excludeReservationId ? String(data.excludeReservationId) : undefined,
+    })
+    return { status: 200, body: items }
+  }
+
+  /** Ownership de `quote`/`typeAvailability`: `hotelId` sale del usuario (super_admin puede pasar
+   *  el suyo); sin hotelId en el token se resuelve contra `users` (mismo fallback que crud.ts).
+   *  `null` = usuario sin hotel. */
+  private async withOwnedHotelId(input: Record<string, any>, user: any): Promise<Record<string, any> | null> {
+    if (user?.role === 'super_admin' && input.hotelId) return input // super_admin: hotelId tal cual
+    if (user?.hotelId) return { ...input, hotelId: user.hotelId }
+    const hotelId = await hotelIdOfUserLegacy(this.userRepo, user?.id)
+    if (!hotelId) return null
+    return { ...input, hotelId }
   }
 
   // ── CANCEL (F2 plan #627): aplica política de cancelación ──

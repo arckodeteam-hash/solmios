@@ -28,6 +28,7 @@ import { getExtendedDetail as getExtendedDetailUsecase, getAuditTrail as getAudi
 import { getBookingEngineDashboard as getBookingEngineDashboardUsecase } from './usecases/booking-engine'
 import { quoteReschedule as quoteRescheduleUsecase, commitReschedule as commitRescheduleUsecase, type RescheduleInput, type RescheduleChargePort } from './usecases/reschedule'
 import { quoteStay as quoteStayUsecase, type QuoteParams } from './usecases/quote'
+import { listTypeAvailability as listTypeAvailabilityUsecase, type TypeAvailabilityListParams, type TypeAvailabilityItem } from './usecases/type-availability-list'
 import type { ReservasQueries } from './usecases/reservas-queries'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { reservationChangedNotifier, type ReservationChangedNotifier } from './usecases/reservation-changed'
@@ -145,6 +146,8 @@ export class ReservasService {
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
   private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp, roomAssignment: this.roomAssignmentDeps() }) // #258: en estadía, el cambio de habitación delega en assignRoom (folio + estados)
   async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo, rateOverrideRepo: this.rateOverrideRepo }, params) }
+  /** REQ-HAC-05 (#260) — disponibilidad por tipo para el wizard. MISMO port que `createReservation` usa para `type_sold_out` (rooms + reservations + blocks). */
+  async listTypeAvailability(params: TypeAvailabilityListParams): Promise<TypeAvailabilityItem[]> { return listTypeAvailabilityUsecase({ rooms: this.roomRepo, reservations: this.repo, blocks: this.blockRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> { return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user) }
 

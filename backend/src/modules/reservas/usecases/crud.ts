@@ -13,7 +13,8 @@ import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
-import { availableOfType } from '../../../shared/usecases/type-availability'
+import { availableOfType, roomTypeProfileOf, type RoomTypeProfile } from '../../../shared/usecases/type-availability'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 import { findOrCreateGuest } from '../../../shared/usecases/find-or-create-guest'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
@@ -132,19 +133,32 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   if (dto.status && dto.status !== 'confirmed' && dto.status !== 'pending') {
     throw new ConflictError(`Estado inicial no permitido: ${dto.status} (usar confirmed o pending)`)
   }
+  // REQ-HAC-05 (#260): lo que se vende es el TIPO. La unidad es opcional — sin `roomId` la reserva
+  // nace por `roomType` (obligatorio) y se asigna después (assign-room.ts). Regla cruzada que el
+  // schema no expresa: una de las dos tiene que venir.
+  if (!dto.roomId && !dto.roomType) throw new ConflictError('Indicá roomId o roomType', { reason: 'room_or_type_required' })
   // IDOR: el cuarto y el huésped deben ser del MISMO hotel que la reserva. Sin esto, un hotel
   // ocupaba/cobraba cuartos de otro pasando un roomId ajeno (el hotelId ya se forzó arriba).
   // Se lee por `findOne({id})` — la pertenencia es lo que se está verificando, no un recurso
   // protegido que requiera assertOwnership del usuario sobre él.
+  //
+  // Sin `roomId`: el tipo tiene que existir en el hotel (`rooms {hotelId, type}` no vacío) y el
+  // perfil del tipo (capacidad MÁXIMA entre sus unidades vendibles, precio MÍNIMO — mismo criterio
+  // que el motor público) reemplaza a la unidad en la validación de capacidad y en el precio de
+  // fallback. Sin `roomRepo`/`findMany` (callers y mocks viejos) no se valida nada de esto.
   let room: any = null
-  if (roomRepo) {
+  let typeProfile: RoomTypeProfile | null = null
+  if (roomRepo && dto.roomId) {
     room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
+  } else if (roomRepo && typeof roomRepo.findMany === 'function') {
+    const units = ((await roomRepo.findMany({ hotelId: dto.hotelId, type: dto.roomType })) ?? []) as any[]
+    if (units.length === 0) throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
+    typeProfile = roomTypeProfileOf(String(dto.roomType), units.filter((r) => isRoomSellable(r?.status)))
   }
-  // REQ-HAC-01 (#258): lo que se vende es el TIPO. El alta del panel sigue exigiendo `roomId`, pero
-  // la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para que reasignar la
-  // unidad después (assign-room.ts) valide contra el tipo vendido y no contra la unidad elegida.
-  // Sin `roomRepo` (callers viejos) se persiste sólo si el dto lo trae.
+  // REQ-HAC-01 (#258): la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para
+  // que reasignar la unidad después (assign-room.ts) valide contra el tipo vendido y no contra la
+  // unidad elegida. Sin `roomRepo` (callers viejos) se persiste sólo si el dto lo trae.
   const roomType = dto.roomType || (room?.type ? String(room.type) : undefined)
   if (roomType) dto.roomType = roomType
   // Auditoría de integridad (cierre, 2026-09-04) — decisión de producto: el staff NO puede exceder
@@ -152,7 +166,8 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   // `room_type_capacity`) que el motor público y el reagendado — cero reglas nuevas. Reservas
   // legacy de panel sin `childrenAges` degradan a `resolveAdminCapacityComposition` (conservador:
   // cada niño declarado consume plaza, nunca se asume libre — ver ese archivo para el detalle).
-  await assertReservationFitsCapacity(configRepo, room, {
+  // Sin unidad, la "habitación" es el perfil del tipo (entra si entra en alguna de sus unidades).
+  await assertReservationFitsCapacity(configRepo, room ?? typeProfile, {
     hotelId: dto.hotelId, adults: Number(dto.adults) || 2, children: Number(dto.children) || 0, childrenAges: dto.childrenAges,
   })
   if (guestRepo && dto.guestId) {
@@ -186,8 +201,8 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   //     vendiendo una tercera. Se salta sin `roomRepo.findMany` (callers/mocks viejos, patrón
   //     "sin cablear" del repo) o sin tipo resuelto.
   //  2. Por UNIDAD (`assertNoRoomConflict`, assign-room.ts — el ÚNICO lugar del solape por
-  //     habitación): mientras el alta del panel siga exigiendo `roomId`, crear ES asignar, y la
-  //     unidad concreta no puede estar tomada ni bloqueada esas noches.
+  //     habitación): sólo si el alta trae `roomId` — ahí crear ES asignar, y la unidad concreta no
+  //     puede estar tomada ni bloqueada esas noches. Sin `roomId` (REQ-HAC-05) alcanza con el tipo.
   if (roomType && typeof roomRepo?.findMany === 'function') {
     const avail = await availableOfType({ rooms: roomRepo, reservations: repo, blocks: blockRepo }, dto.hotelId, roomType, dto.checkIn, dto.checkOut)
     if (avail.available < 1) {
@@ -203,25 +218,26 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   // autoritativo del server (antes validaba contra `dto.totalAmount`, que ya incluye
   // impuestos y descuento — semántica de minAmount distinta a la del widget público).
   // Sin repos de tarifas cableados no se recalcula (comportamiento histórico, como reprice.ts).
+  // REQ-HAC-05: la cadena de tarifas ya es por TIPO; sin unidad, el fallback `basePrice` es el
+  // MÍNIMO entre las unidades vendibles del tipo (`typeProfile.minBasePrice`), el mismo "desde"
+  // que cotiza `quoteStay({ roomType })` y que publica el motor público.
   let roomSubtotal: number | null = null
-  if (dto.priceFrom === 'rates' && pricing?.seasonAssignmentRepo && pricing.roomRateRepo && roomRepo) {
-    const room = await roomRepo.findOne({ id: dto.roomId })
-    if (room) {
-      const [assignments, rates, overrides, seasons] = await Promise.all([
-        pricing.seasonAssignmentRepo.findMany({ hotelId: dto.hotelId }),
-        pricing.roomRateRepo.findMany({ hotelId: dto.hotelId }),
-        // Tarifa por fecha: el mostrador tiene que cotizar el mismo número que se publicó a las OTAs.
-        pricing.rateOverrideRepo ? pricing.rateOverrideRepo.findMany({ hotelId: dto.hotelId }) : Promise.resolve([]),
-        pricing.seasonsRepo ? pricing.seasonsRepo.findMany({ hotelId: dto.hotelId }) : Promise.resolve([]),
-      ])
-      const nightDates = eachDayExclusive(dto.checkIn, dto.checkOut)
-      roomSubtotal = sumStayPrice(
-        nightDates, baseRatesOnly((rates ?? []) as any[]), String(room.type ?? ''),
-        buildSeasonByDate((assignments ?? []) as any[], (seasons ?? []) as any[], nightDates),
-        guestsOfReservation(dto), Number(room.basePrice) || 0,
-        (overrides ?? []) as any[],
-      )
-    }
+  if (dto.priceFrom === 'rates' && pricing?.seasonAssignmentRepo && pricing.roomRateRepo && roomType && (room || typeProfile)) {
+    const fallbackPrice = room ? (Number(room.basePrice) || 0) : typeProfile!.minBasePrice
+    const [assignments, rates, overrides, seasons] = await Promise.all([
+      pricing.seasonAssignmentRepo.findMany({ hotelId: dto.hotelId }),
+      pricing.roomRateRepo.findMany({ hotelId: dto.hotelId }),
+      // Tarifa por fecha: el mostrador tiene que cotizar el mismo número que se publicó a las OTAs.
+      pricing.rateOverrideRepo ? pricing.rateOverrideRepo.findMany({ hotelId: dto.hotelId }) : Promise.resolve([]),
+      pricing.seasonsRepo ? pricing.seasonsRepo.findMany({ hotelId: dto.hotelId }) : Promise.resolve([]),
+    ])
+    const nightDates = eachDayExclusive(dto.checkIn, dto.checkOut)
+    roomSubtotal = sumStayPrice(
+      nightDates, baseRatesOnly((rates ?? []) as any[]), roomType,
+      buildSeasonByDate((assignments ?? []) as any[], (seasons ?? []) as any[], nightDates),
+      guestsOfReservation(dto), fallbackPrice,
+      (overrides ?? []) as any[],
+    )
   }
 
   // ─── Promo: descuento AUTORITATIVO del server + consumo atómico (PC-1/PC-2) ──────────
@@ -272,7 +288,10 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     await promoCodes.consumeUse(dto.hotelId, dto.promoCode)
   }
   // MR-08 (#273): los datos del huésped viven en Guests, no en la fila de Reservations.
-  const { guestEmail: _guestEmail, guestName: _guestName, guestPhone: _guestPhone, ...row } = dto
+  // REQ-HAC-05: sin unidad se persiste `roomId: null` EXPLÍCITO (no `undefined`): es el valor que
+  // leen `availableOfType`/assign-room/planning para "sin asignar", y un mock/ORM que omita la
+  // clave dejaría la fila ambigua.
+  const { guestEmail: _guestEmail, guestName: _guestName, guestPhone: _guestPhone, ...row } = { ...dto, roomId: dto.roomId || null }
   let item: ReservasDTO
   try {
     item = await repo.create(row as any)
@@ -520,7 +539,9 @@ export async function deleteReservation(
     throw e
   }
   if (!deleted) throw new NotFoundError('Reserva no encontrada')
-  await safeEmit(logger, 'onReservasDeleted', sockets.onReservasDeleted, id, { hotelId: String(existing.hotelId), roomId: existing.roomId ?? null })
+  // REQ-HAC-05 (#260): `roomType` viaja también — una reserva SIN unidad libera inventario del
+  // TIPO y el channel manager (connectors/reservas-canales → pushAvailabilityByType) lo necesita.
+  await safeEmit(logger, 'onReservasDeleted', sockets.onReservasDeleted, id, { hotelId: String(existing.hotelId), roomId: existing.roomId ?? null, roomType: existing.roomType ?? null })
   // Invalidación versionada (de la rama, consistente con create/update). Se MANTIENE `return
   // existing`: el service lo necesita para el audit log del borrado (SC-05).
   await invalidateReservasCaches(cache, existing.hotelId)
