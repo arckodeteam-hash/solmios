@@ -3,6 +3,7 @@
 > Actualizado **2026-09-12** contra la doc oficial de Channex (leída ese día), el código en `main` (PR #296 mergeado y en prod) y el **estado real de producción** consultado por API ese día (§7).
 > Este archivo es el **guion de trabajo**: qué comprobar, dónde tocarlo en el PMS, dónde mirarlo en Channex y con qué evidencia.
 > **Cada punto que pide Channex, resuelto y con el texto para el formulario: `CHANNEX-CERTIFICACION-RESPUESTAS.md`.**
+> **Guion de la screenshare — qué pantalla abro, qué hago y qué muestro para probar cada test: `CHANNEX-CERTIFICACION-SCREENSHARE.md`.**
 > Los otros tres documentos siguen valiendo para lo suyo: `CHANNEX-CERTIFICACION.md` (estado y contexto), `CHANNEX-CERTIFICACION-EVIDENCIA.md` (task ids de la última corrida), `CHANNEX-CERTIFICACION-GAPS.md` **§8** (respuestas del cuestionario — el resto de ese archivo es histórico y contradice al código).
 
 ---
