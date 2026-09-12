@@ -34,6 +34,7 @@ import { getPublicMealPlans } from './usecases/public-meal-plans'
 // service, catálogo abierto por hotel con nombre + precio).
 import * as childAmenitiesCrud from './usecases/child-amenities-crud'
 import { getPublicChildAmenities } from './usecases/public-child-amenities'
+import { getPublicRoomAmenities } from './usecases/public-room-amenities'
 import { getPublicBookingBySlug, createPublicBookingDirect } from './usecases/public-booking'
 // Tarea 10 (QA 2026-08-20/21) — varias habitaciones (mismo tipo ×N y/o tipos distintos) en 1 sola
 // reserva. Handler aparte, reusa los mismos deps (auth/service/logger) que el de 1 habitación.
@@ -388,6 +389,9 @@ export class BookingengineController {
       // REQ-01 (#233) — amenidades para niños/bebés elegidas para ESTA habitación (array de
       // {id}); mismo motivo que upsells. El usecase las valida contra las activas del hotel.
       ...(Array.isArray(rawBody.childAmenities) ? { childAmenities: rawBody.childAmenities } : {}),
+      // REQ-01 (#290) — amenidades personalizadas de la habitación (array de {key}); mismo
+      // motivo. El usecase las valida contra las filas `RoomAmenities` de la unidad asignada.
+      ...(Array.isArray(rawBody.roomAmenities) ? { roomAmenities: rawBody.roomAmenities } : {}),
     } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
 
     // successUrl/cancelUrl: el widget (F2) las va a mandar en el body. Si no llegan, derivamos
@@ -595,6 +599,18 @@ export class BookingengineController {
     }
     return getPublicChildAmenities(
       { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo },
+      String(req.params?.slug || ''),
+    )
+  }
+
+  /** GET /api/public/hotels/:slug/room-amenities — amenidades personalizadas por tipo (REQ-01 #290). */
+  async publicRoomAmenities(req: HttpRequest) {
+    this.logger.info('GET /api/public/hotels/:slug/room-amenities', { slug: req.params.slug })
+    if (!this.hotelsRepo || !this.orm) {
+      return { status: 500, body: { error: 'room-amenities deps no cableados' } }
+    }
+    return getPublicRoomAmenities(
+      { hotels: this.hotelsRepo, orm: this.orm },
       String(req.params?.slug || ''),
     )
   }

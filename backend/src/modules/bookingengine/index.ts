@@ -263,6 +263,13 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.publicChildAmenities(req)
       })
+      // REQ-01 (#290) — Amenidades PERSONALIZADAS por tipo de habitación (unión de las custom
+      // activas de sus rooms vendibles, precio mínimo). Rate-limit 60/60s (read-only). Sin auth.
+      router.get('/api/public/hotels/:slug/room-amenities', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-room-amenities:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.publicRoomAmenities(req)
+      })
       // F3 3.15 — Comparativo de tarifas directo vs OTA (StayAPI). Devuelve el badge "ahorrás
       // $X reservando directo" SOLO si directo es más barato. Si no, `{showComparison:false}`
       // (no promociona OTAs más baratas). Rate-limit 30/60s (read-only pero llama API externa
