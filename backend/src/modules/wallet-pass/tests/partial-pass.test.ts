@@ -220,11 +220,37 @@ describe('wallet-pass/usecases/partial-pass — #262 pase parcial', () => {
     expect(rows[0].emailSentAt).toBeTruthy()
   })
 
-  it('fila parcial sin emailSentAt (envío a medias) → reintenta sobre la misma fila', async () => {
+  it('fila parcial sin emailSentAt (corrida en vuelo o caída) → no reenvía: sin claim atómico sería doble correo', async () => {
     const rows: WalletPassDTO[] = [{ id: 'wp-0', hotelId: 'h1', reservationId: 'r1', appleUrl: null, googleUrl: null, lockCode: '', generatedAt: '2026-01-01T00:00:00.000Z', emailSentAt: null } as any]
     const enqueue = mock(async () => 'q-1')
     const deps = makeDeps({ walletPassRepo: makeWalletRepo(rows), emailService: { enqueue } as any })
-    expect(await sendPartialPassNow(deps, 'r1')).toBe(true)
+    expect(await sendPartialPassNow(deps, 'r1')).toBe(false)
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].emailSentAt).toBeNull()
+  })
+
+  it('dos corridas solapadas sobre una fila parcial en vuelo → un solo correo', async () => {
+    const rows: WalletPassDTO[] = []
+    const base = makeWalletRepo(rows)
+    const repo = {
+      ...base,
+      create: async (data: any) => {
+        if (rows.some((r) => r.reservationId === data.reservationId)) throw new Error('UNIQUE constraint failed: wallet_passes.reservationId')
+        return base.create(data)
+      },
+    } as RepositoryAdapter<WalletPassDTO>
+    // El enqueue de la primera tarda: la segunda corrida arranca con la fila ya creada y sin emailSentAt.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const enqueue = mock(async () => { await gate; return 'q-1' })
+    const deps = makeDeps({ walletPassRepo: repo, emailService: { enqueue } as any })
+    const first = sendPartialPassNow(deps, 'r1')
+    await new Promise((r) => setTimeout(r, 5))
+    const second = await sendPartialPassNow(deps, 'r1')
+    release()
+    expect(await first).toBe(true)
+    expect(second).toBe(false)
     expect(enqueue).toHaveBeenCalledTimes(1)
     expect(rows).toHaveLength(1)
     expect(rows[0].emailSentAt).toBeTruthy()
