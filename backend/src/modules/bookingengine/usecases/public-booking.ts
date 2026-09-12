@@ -72,10 +72,35 @@ import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
-import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
+import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
+import { MEAL_PLAN_LABELS } from '../../../shared/usecases/meal-plan-labels'
+import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput, type BookingEngineMealPlanInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
 const MS_PER_DAY = 86_400_000
+
+/** MR-03 (#268) — etiqueta ES del régimen para `notes` (vistazo rápido del recepcionista). Se
+ *  reusa desde public-booking-group.ts. Un código desconocido cae al código crudo. */
+export const MEAL_PLAN_LABEL: Record<string, string> = MEAL_PLAN_LABELS.es
+
+/** MR-03 (#268) — la línea de régimen resuelta como input de `buildBookingEngineAddons` (fila
+ *  `reservation_addons` kind `meal_plan`, #269). `units` = unidades físicas con ese régimen
+ *  (1 en el flujo individual; `quantity` de la línea en el grupo). */
+export function mealPlanAddonInput(line: MealPlanLine, units = 1): BookingEngineMealPlanInput {
+  return {
+    label: MEAL_PLAN_LABEL[line.code] ?? line.code,
+    unitPrice: line.unitPrice,
+    persons: line.persons,
+    nights: line.nights,
+    units,
+  }
+}
+
+/** MR-03 (#268) — texto de `notes` para una línea de régimen resuelta (nunca `room_only`). */
+export function mealPlanNote(line: MealPlanLine): string {
+  const label = MEAL_PLAN_LABEL[line.code] ?? line.code
+  return `Régimen: ${label}${line.total > 0 ? ` (${line.persons} pers × ${line.nights} noches = ${line.total.toFixed(2)})` : ' (incluido)'}`
+}
 
 export interface UpsellItem {
   id: string
@@ -92,6 +117,11 @@ export interface PublicBookingExtraDeps {
   promoCodes?: RepositoryAdapter<any>
   /** Repo de `upsells` para validar ids + computar upsellsTotal. */
   upsells?: RepositoryAdapter<any>
+  /** MR-03 (#268) — Repo de `MealPlans` (tabla `meal_plans`) para resolver el `mealPlan` del body
+   *  contra el catálogo activo del hotel + computar `mealPlanTotal`. Sin repo cableado un
+   *  `mealPlan` distinto de `room_only` se RECHAZA (`meal_plan_unavailable`): no se puede
+   *  validar y cambia el precio que el huésped vio. */
+  mealPlans?: RepositoryAdapter<any>
   /** Repo de `Configuration` para leer la tasa de impuesto del hotel (configuration('taxes')). */
   config?: RepositoryAdapter<any>
   /** FIX 2026-07-31 — Repo de `BookingConfig` (booking_config). Defensa en profundidad: si
@@ -109,7 +139,7 @@ export interface PublicBookingExtraDeps {
  * Todos los importes en `hotels.currency` (multi-moneda es display only — el cobro es en base).
  */
 export interface TotalBreakdown {
-  /** room.basePrice × nights + upsellsTotal + roomAmenitiesTotal (antes de promo e impuestos). */
+  /** room.basePrice × nights + upsellsTotal + roomAmenitiesTotal + mealPlanTotal (antes de promo e impuestos). */
   subtotal: number
   /** Descuento del promo (0 si no hay promo). Siempre >= 0. */
   promoDiscount: number
@@ -129,6 +159,9 @@ export interface TotalBreakdown {
    *  habitación asignada (`RoomAmenities` custom), INCLUIDA la cuna (`custom:cuna`, #292) cuando
    *  `needsCrib`. 0 si no se pidió ninguna. Ya incluido en `subtotal`. */
   roomAmenitiesTotal: number
+  /** MR-03 (#268) — régimen: unitPrice × (adultos + niños con plaza) × noches (0 si `room_only`
+   *  o `included`). En un grupo, Σ de las líneas (cada una × su quantity). Ya incluido en `subtotal`. */
+  mealPlanTotal: number
   /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). Es la suma de `taxBreakdown`. */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. `taxes` es su suma exacta. */
@@ -262,6 +295,9 @@ export async function createPublicBookingDirect(
     // resuelven contra las filas `RoomAmenities` de la unidad asignada (precio del server).
     // (#292: `childAmenities` en el body ya no se lee — el catálogo global se dio de baja.)
     roomAmenities: rawRoomAmenities,
+    // MR-03 (#268) — código del régimen elegido para ESTA habitación. Se resuelve contra
+    // `meal_plans` del hotel (precio del server) después de conocer la composición y las noches.
+    mealPlan: rawMealPlan,
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09) — Sí/No únicamente; solo tiene efecto
     // si la composición tiene al menos un bebé (Tarea 21) Y el tipo ofrece `custom:cuna` (#292);
     // ver el gateo más abajo, cuando ya se conocen las unidades libres del tipo.
@@ -410,6 +446,27 @@ export async function createPublicBookingDirect(
   // espejo de `needsCrib`, no como un valor independiente que el cliente pueda variar.
   const babiesCount = childComposition.babies
   const cribRequested = babiesCount > 0 && rawNeedsCrib === true
+
+  // ─── MR-03 (#268) — Régimen: resolver contra el catálogo del hotel, precio del server ────
+  // persons = adultos efectivos + niños CON plaza (bebés y niños libres no pagan régimen), mismo
+  // criterio que el precio de la habitación. Va ANTES de la promo (su subtotal lo incluye) y
+  // ANTES de tocar la DB. Sin repo cableado no se puede validar → se rechaza (no se ignora en
+  // silencio como las amenidades: el huésped eligió el régimen y vio su precio).
+  const mealPlanCode = typeof rawMealPlan === 'string' ? rawMealPlan.trim().slice(0, 40) : ''
+  const mealPlanPersons = childComposition.effectiveAdults + childComposition.payingChildren
+  let mealPlanLine: MealPlanLine | null = null
+  if (mealPlanCode && mealPlanCode !== ROOM_ONLY_CODE) {
+    if (!extraDeps?.mealPlans) {
+      logger?.warn('createPublicBookingDirect: mealPlan en el body sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId, mealPlan: mealPlanCode })
+      return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: mealPlanCode } }
+    }
+    const resolved = resolveMealPlanLine(
+      ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? [], mealPlanCode, hotelId, mealPlanPersons, nights,
+    )
+    if (!resolved.ok) return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: mealPlanCode } }
+    mealPlanLine = resolved.line
+  }
+  const mealPlanTotal = mealPlanLine?.total ?? 0
 
   // Requerimiento 2 (2026-09-03) — capacidad/maxAdults/maxChildren por TIPO de habitación,
   // configurable en Configuración (`room_type_capacity`). Se resuelve SIEMPRE (no solo cuando hay
@@ -662,7 +719,7 @@ export async function createPublicBookingDirect(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal + roomAmenitiesTotal
+    const subtotal = roomSubtotal + upsellsTotal + roomAmenitiesTotal + mealPlanTotal
     const result = await validatePromoCode(
       { promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal,
     )
@@ -685,13 +742,13 @@ export async function createPublicBookingDirect(
   }
 
   // ─── F2 2.5 — Cálculo del total con impuestos ──────────────────────────────────────
-  // Orden: subtotal (room + upsells + amenidades habitación) - promoDiscount = base imponible; taxes sobre base;
+  // Orden: subtotal (room + upsells + amenidades habitación + régimen) - promoDiscount = base imponible; taxes sobre base;
   // total = base + taxes. Mismo fallback que folios/facturas: configuration('taxes') y si
   // está vacío, hotels.taxRate.
   // Tarea 24 (#88): impuesto por impuesto (nombre, %, importe), con el MISMO lector y la MISMA
   // cuenta que `/rates` y que el widget: cada línea redondeada aparte, `taxes` = suma de líneas.
   // Así lo que el huésped ve fila por fila antes de pagar es exactamente lo que cobra Stripe.
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + roomAmenitiesTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + roomAmenitiesTotal + mealPlanTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -708,6 +765,7 @@ export async function createPublicBookingDirect(
     // #292 — siempre 0 (ver `TotalBreakdown.childAmenitiesTotal`).
     childAmenitiesTotal: 0,
     roomAmenitiesTotal: round2(roomAmenitiesTotal),
+    mealPlanTotal: round2(mealPlanTotal),
     taxes,
     taxBreakdown,
     total: totalAmount,
@@ -730,6 +788,8 @@ export async function createPublicBookingDirect(
   // REQ-01 (#290) — vistazo rápido de las amenidades personalizadas de la habitación (snapshot
   // en `roomAmenities`), igual que los upsells. La cuna (#292) aparece acá con su precio.
   if (roomAmenitiesSummary.length > 0) notesParts.push(`Amenidades habitación: ${roomAmenitiesSummary.join(', ')}`)
+  // MR-03 (#268) — el snapshot vive en `mealPlan*` (columnas propias); acá el vistazo rápido.
+  if (mealPlanLine) notesParts.push(mealPlanNote(mealPlanLine))
   // Tarea 22 — el detalle estructurado vive en needsCrib/cribCount (columnas propias, ver
   // reservas/model.ts), pero también queda acá para que el recepcionista lo vea de un vistazo en
   // las notas, igual que el resto de los extras de esta reserva. Sí/No únicamente (2026-09-09) —
@@ -793,6 +853,10 @@ export async function createPublicBookingDirect(
       // reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
       reservation = await tx.create('Reservations', {
         id: crypto.randomUUID(), hotelId, roomId: resolvedRoomId, guestId: guest.id,
+        // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta para que
+        // reasignar/soltar la unidad después (assign-room.ts) valide contra él y la
+        // disponibilidad la siga contando sin unidad. Antes sólo el panel (crud.ts) lo escribía.
+        roomType: room?.type ? String(room.type) : undefined,
         checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
         adults: childComposition.effectiveAdults,
         children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),
@@ -820,6 +884,15 @@ export async function createPublicBookingDirect(
         // habitación ASIGNADA (validadas arriba contra sus filas `RoomAmenities`) + su total.
         roomAmenities: roomAmenityLines,
         roomAmenitiesTotal: round2(roomAmenitiesTotal),
+        // MR-03 (#268) — snapshot congelado del régimen (precio releído del catálogo arriba) +
+        // su total, ya dentro de `totalAmount`. `regime` lleva el mismo código para que el
+        // modal/listado del panel (campo manual preexistente) lo muestren sin cambios.
+        mealPlan: mealPlanLine?.code ?? ROOM_ONLY_CODE,
+        mealPlanPriceMode: mealPlanLine?.priceMode ?? null,
+        mealPlanUnitPrice: mealPlanLine?.unitPrice ?? 0,
+        mealPlanTotal: round2(mealPlanTotal),
+        mealPlanPersons: mealPlanLine?.persons ?? null,
+        regime: mealPlanLine?.code ?? ROOM_ONLY_CODE,
         totalAmount, deposit: 0,
         // Tarea 24 (#88): el desglose que el huésped vio y aceptó se guarda con la reserva, para
         // que la confirmación (y cualquier pantalla posterior) muestre lo mismo que el paso de
@@ -853,9 +926,11 @@ export async function createPublicBookingDirect(
       // #269 — Cada extra pagado online queda como fila `ReservationAddons` (source
       // booking_engine, fuera del total cobrable: su importe YA está en `totalAmount`). Misma tx
       // que la reserva: o se crean todas o ninguna. `notes`/`priceBreakdown` no cambian.
+      // MR-03 (#268) — el régimen también: sin su fila el folio nacía sin lo que Stripe cobró.
       const addonRows = buildBookingEngineAddons({
         reservationId: reservation.id, hotelId, taxRate: totalTaxRateOf(hotelTaxes),
         upsells: upsellLines, roomAmenities: roomAmenityLines,
+        mealPlans: mealPlanLine ? [mealPlanAddonInput(mealPlanLine)] : [],
       })
       for (const row of addonRows) await tx.create('ReservationAddons', row)
 

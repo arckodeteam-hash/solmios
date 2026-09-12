@@ -18,15 +18,19 @@ import { ConfigService } from '@/services/Platform.service'
 import { ApiError } from '@/services/http'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
+import { TeamService, type TeamMember } from '@/services/Team.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import { paymentStateBadge } from '@/utils/payment-state'
+import { effectiveMealPlan, mealPlanLabel } from '@/utils/meal-plans'
+import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
 import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
@@ -48,6 +52,8 @@ const { can } = usePermissions()
 const MS_PER_DAY = 86_400_000
 
 const detail = ref<ReservationDetail | null>(null)
+/** #272 — instante de la última lectura del detalle; contra él se mide si un `pending` ya es viejo. */
+const refundCheckedAt = ref(Date.now())
 const loading = ref(true)
 const saving = ref(false)
 const showCancel = ref(false)
@@ -152,6 +158,64 @@ const doorLock = () => operateDoor('lock')
 async function onRoomLockChanged() {
   await load()
   if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+}
+
+// ── Habitación asignada (REQ-HAC-06, #261) ──
+// La reserva vendió un TIPO (`d.roomType`); la unidad (`d.room`) la elige recepción con
+// RoomAssignModal. `roomAssignedAt`/`roomAssignedBy` (users.id) dicen cuándo y quién: el nombre
+// se resuelve contra el equipo del hotel (GET /usuarios), cargado una sola vez y sólo si hace falta.
+const showRoomAssign = ref(false)
+const teamMembers = ref<TeamMember[] | null>(null)
+let teamLoading: Promise<void> | null = null
+
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return '—'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
+
+/** Asignar / Cambiar: sólo con permiso de edición y con la reserva viva (el backend rechaza
+ *  cambiar la unidad de un check-out, una cancelada o un no-show). */
+const canAssignRoom = computed(() => {
+  const st = d.value?.status
+  return !!d.value && can('reservations', 'edit') && st !== 'cancelled' && st !== 'no_show' && st !== 'checked_out'
+})
+
+function ensureTeamLoaded(): Promise<void> {
+  if (teamMembers.value) return Promise.resolve()
+  if (!teamLoading) {
+    teamLoading = TeamService.list()
+      .then((r) => { teamMembers.value = r?.data ?? [] })
+      .catch(() => { teamMembers.value = [] })
+      .finally(() => { teamLoading = null })
+  }
+  return teamLoading
+}
+
+const assignedByName = computed(() => {
+  const id = d.value?.roomAssignedBy
+  if (!id) return '—'
+  const m = teamMembers.value?.find((u) => u.id === id)
+  if (m) return m.name || m.email || '—'
+  return `${String(id).slice(0, 8)}…`
+})
+
+// Carga lazy: sólo cuando el detalle trae `roomAssignedBy` (reservas asignadas antes de HAC-03
+// no lo tienen y no hace falta pedir el equipo).
+// (`detail`, no `d`: este watch es inmediato y `d` se declara más abajo.)
+watch(() => detail.value?.roomAssignedBy, (id) => { if (id) void ensureTeamLoaded() }, { immediate: true })
+
+/** Asignación persistida por RoomAssignModal (ya mostró el toast): se recarga el detalle
+ *  (habitación, fecha/quién, cerradura de la nueva unidad) y se avisa al listado. */
+async function onRoomAssigned() {
+  showRoomAssign.value = false
+  await load({ silent: true })
+  if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
+  emit('changed')
 }
 
 async function loadRoomLockDevice(roomId?: string | null) {
@@ -319,6 +383,7 @@ async function load(opts?: { silent?: boolean }) {
   try {
     const d = await ReservationService.getById(props.reservationId)
     detail.value = d
+    refundCheckedAt.value = Date.now() // #272 — el umbral del reintento se mide contra el detalle recién leído
     autoSend.value = d?.autoSendEnabled ?? true
     conditions.value = { gdpr: !!d?.gdprAccepted, marketing: !!d?.marketingAccepted, terms: !!d?.termsAccepted }
     // COR-7 — En un refresco SILENCIOSO el operador puede estar tipeando en "Otros cobros":
@@ -413,6 +478,32 @@ const pricePerNight = computed(() => {
   return n > 0 ? Math.round(((d.value?.totalAmount ?? 0) / n) * 100) / 100 : d.value?.room?.basePrice ?? 0
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
+// MR-03 (#268) — régimen. `regime` es el campo editable del panel y MANDA; `mealPlan` es el
+// snapshot (código + precio unitario + total + personas) que persiste el motor web al reservar y
+// solo cubre cuando `regime` no vino (`effectiveMealPlan`, regla única de las tres vistas).
+// El detalle "(N pers × noches · importe)" describe el SNAPSHOT: se muestra solo si el régimen
+// visible sigue siendo el reservado en la web (si recepción lo cambió, el importe congelado ya
+// no explica lo que se ve). Las personas vienen persistidas (`mealPlanPersons`): derivarlas de
+// total ÷ (unitario × noches) con las fechas actuales inventa un número al reagendar — sin el
+// campo (reserva anterior a la columna) no se muestran.
+const mealPlanCode = computed(() => effectiveMealPlan(d.value))
+const mealPlanTotal = computed(() => d.value?.mealPlanTotal ?? 0)
+const mealPlanDetail = computed(() => {
+  if (!d.value?.mealPlan || d.value.mealPlan !== mealPlanCode.value) return ''
+  // Con espacio inicial: el compilador de Vue condensa el blanco entre `</span>` y `{{ }}`.
+  if (d.value.mealPlanPriceMode === 'included') return ' (incluido)'
+  const total = mealPlanTotal.value
+  if (total <= 0) return ''
+  const persons = d.value.mealPlanPersons ?? null
+  const n = nights.value
+  const personsPart = persons && persons > 0 && n > 0 ? `${persons} pers × ${n} noche${n === 1 ? '' : 's'} · ` : ''
+  return ` (${personsPart}${money(total)})`
+})
+// Una reserva de varias habitaciones (`groupId`) persiste el régimen unitario en CADA fila, pero
+// su `totalAmount` es SOLO la habitación: el régimen se cobró con el total del grupo (Stripe
+// sobre la líder). En una reserva suelta sí está dentro de `totalAmount`. La fila no afirma ni
+// una cosa ni la otra: muestra el importe y, en grupo, dónde se cobró.
+const mealPlanChargedInGroup = computed(() => !!d.value?.groupId)
 const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
 
 // ── #269 Extras pagados online ──────────────────────────────────────────
@@ -617,10 +708,8 @@ function srcDot(s?: string): string {
   const m: Record<string, string> = { direct: 'bg-teal', booking: 'bg-cyan', expedia: 'bg-gold', airbnb: 'bg-coral', google: 'bg-blue-400', whatsapp: 'bg-emerald-400', agoda: 'bg-purple-400', trip: 'bg-pink-400' }
   return m[s || ''] || 'bg-white/70'
 }
-function regimeLabel(r?: string): string {
-  const m: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
-  return m[r || ''] || (r || '—')
-}
+/** MR-03 (#268) — etiqueta única en `utils/meal-plans.ts` (antes un mapa local por vista). */
+function regimeLabel(r?: string | null): string { return mealPlanLabel(r) }
 function payMethodLabel(p?: string | null): string {
   const m: Record<string, string> = { transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago', deposit: 'Depósito' }
   return m[p || ''] || (p || 'No especificado')
@@ -702,6 +791,41 @@ function waLink(phone?: string | null, body?: string | null): string | null {
 // POST /reservas/:id/cancel, que aplica la política del hotel (penalidad/reembolso), guarda el
 // motivo y libera el depósito retenido. Con `update({status:'cancelled'})` nada de eso pasaba —
 // y el backend ahora lo rechaza con 409, así que este camino tampoco existe ya del lado servidor.
+// #272 (MR-07) — el reembolso web se dispara al cancelar; si Stripe falló queda `failed` y el
+// hotel lo reintenta desde acá. 'done'/'none' no ofrecen el botón: no hay nada que reintentar.
+// Un `pending` FRESCO (< 10 min) está en curso y tampoco; uno VIEJO quedó huérfano y el backend
+// acepta reintentarlo (`utils/refund-state.ts`, espejo del umbral del servidor). `refundCheckedAt`
+// se fija al cargar el detalle: el computed no puede depender de `Date.now()` a secas.
+const canRetryRefund = computed(() => isRefundRetryable(d.value, refundCheckedAt.value) && can('reservations', 'edit'))
+const retryRefundTitle = computed(() => d.value?.refundStatus === 'pending'
+  ? 'El reembolso quedó en proceso hace más de 10 minutos sin resolverse: vuelve a intentarlo con el mismo monto'
+  : 'El reembolso en la pasarela falló: vuelve a intentarlo con el mismo monto')
+function refundStateBadge(status?: string | null): { label: string; cls: string } | null {
+  const m: Record<string, { label: string; cls: string }> = {
+    done: { label: 'Reembolsado', cls: 'bg-teal/10 text-teal' },
+    pending: { label: 'Reembolso en proceso', cls: 'bg-amber-100 text-amber-800' },
+    failed: { label: 'Reembolso fallido', cls: 'bg-coral/10 text-coral' },
+  }
+  return m[status || ''] ?? null
+}
+const refundBadge = computed(() => d.value?.status === 'cancelled' ? refundStateBadge(d.value?.refundStatus) : null)
+
+async function retryRefund() {
+  if (!d.value) return
+  saving.value = true
+  try {
+    const res = await ReservationService.retryRefund(d.value.id)
+    if (res.refundStatus === 'done') toast.success('Reembolso procesado')
+    else toast.warning('El reembolso sigue sin completarse', 'La pasarela no lo aceptó: revisá el pago en Stripe')
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo reintentar el reembolso')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function setStatus(status: 'confirmed') {
   if (!d.value) return
   saving.value = true
@@ -1164,6 +1288,13 @@ function facturar() {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
+        <!-- #272 (MR-07) — el reembolso web quedó `failed` en Stripe (o `pending` huérfano hace más
+             de 10 min): se reintenta desde acá (POST /reservas/:id/retry-refund). Con 'done' o un
+             'pending' fresco el botón no existe. -->
+        <button v-if="canRetryRefund" data-testid="retry-refund" @click="retryRefund" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-amber-500 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50" :title="retryRefundTitle">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+          {{ saving ? 'Reintentando…' : 'Reintentar reembolso' }}
+        </button>
         <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
           Cargos
@@ -1286,12 +1417,36 @@ function facturar() {
                 <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
               </summary>
               <div class="px-4 pb-4 pt-1 space-y-3 text-sm">
-                <div v-if="d.room">
-                  <div class="font-bold text-navy">Habitación {{ d.room.number }} <span class="text-text-muted font-normal">{{ d.room.name || d.room.type }}</span></div>
-                  <div class="text-xs text-text-muted">Asignada: ({{ fmtDate(d.checkIn) }})</div>
+                <!-- REQ-HAC-06 (#261) — tipo vendido + unidad asignada (o "Sin asignar") con
+                     quién/cuándo la asignó. Asignar / Cambiar abren RoomAssignModal. -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 space-y-0.5">
+                    <div class="text-xs"><span class="text-text-muted">Tipo:</span> <span class="font-bold text-navy" data-testid="room-type-label">{{ typeLabel(d.roomType || d.room?.type) }}</span></div>
+                    <div v-if="d.room" class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span> <span class="font-bold text-navy" data-testid="room-number">{{ d.room.number }}</span>
+                      <span v-if="d.room.name" class="text-text-muted text-xs ml-1">{{ d.room.name }}</span>
+                      <span v-if="d.roomAssignedAt" data-testid="room-assigned-meta" class="block text-[11px] text-text-muted">(asignada el {{ fmtDateTime(d.roomAssignedAt) }} por {{ assignedByName }})</span>
+                    </div>
+                    <div v-else class="text-sm">
+                      <span class="text-text-muted text-xs">Habitación:</span>
+                      <span data-testid="room-unassigned" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                        <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"></span>Sin asignar
+                      </span>
+                    </div>
+                  </div>
+                  <template v-if="canAssignRoom">
+                    <button v-if="!d.room" type="button" data-testid="assign-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 bg-navy text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-navy-light disabled:opacity-50">
+                      Asignar habitación
+                    </button>
+                    <button v-else type="button" data-testid="change-room-btn" @click="showRoomAssign = true" :disabled="saving"
+                      class="shrink-0 px-3 py-1.5 max-sm:min-h-11 border border-border text-navy rounded-lg text-xs font-bold cursor-pointer hover:bg-surface disabled:opacity-50">
+                      Cambiar
+                    </button>
+                  </template>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
-                  <div><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(d.regime) }}</span></div>
+                  <div data-testid="reservation-meal-plan"><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(mealPlanCode) }}</span><span v-if="mealPlanDetail" class="text-text-muted">{{ mealPlanDetail }}</span></div>
                   <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span>
                     <!-- Requerimiento 13 — desglose por niño (declarada/efectiva/balde) del backend
                          (`childrenAgesDetail`): reemplaza la nota genérica "alguna cuenta como
@@ -1354,6 +1509,10 @@ function facturar() {
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
+                <!-- MR-03 (#268) — importe del régimen reservado en la web (snapshot `mealPlan`, lo que se
+                     cobró — por eso lleva SU código y no el editable). En grupo se cobró con el total del
+                     grupo, no con el importe de esta fila. -->
+                <div v-if="mealPlanTotal > 0" data-testid="reservation-meal-plan-total" class="flex justify-between pl-2 text-xs"><span class="text-text-muted">Régimen · {{ regimeLabel(d.mealPlan) }}<span v-if="mealPlanChargedInGroup" data-testid="reservation-meal-plan-group-note"> · cobrado con el total del grupo (reserva principal)</span></span><span class="font-bold text-text-secondary">{{ money(mealPlanTotal) }}</span></div>
                 <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold text-navy">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">
@@ -1367,6 +1526,15 @@ function facturar() {
                   <span v-else class="font-bold text-navy">{{ money(otherCharges) }}</span>
                 </div>
                 <div class="flex justify-between border-t border-border/50 pt-1.5"><span class="font-bold text-text-secondary">Pendiente de cobro</span><span class="font-black" :class="pending > 0 ? 'text-coral' : 'text-teal'">{{ money(pending) }}</span></div>
+                <!-- #272 (MR-07) — reserva cancelada desde la web: monto a devolver y estado REAL del
+                     reembolso en la pasarela (no se infiere: lo persiste el backend). -->
+                <div v-if="refundBadge" class="flex justify-between items-center gap-2" data-testid="refund-row">
+                  <span class="text-text-muted">Reembolso</span>
+                  <span class="flex items-center gap-2">
+                    <span v-if="Number(d.refundAmount) > 0" class="font-bold text-navy">{{ money(Number(d.refundAmount)) }}</span>
+                    <span data-testid="refund-state-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="refundBadge.cls">{{ refundBadge.label }}</span>
+                  </span>
+                </div>
                 <div v-if="credit > 0" data-testid="reservation-credit" class="flex justify-between"><span class="font-bold text-teal">A favor del huésped</span><span class="font-black text-teal">{{ money(credit) }}</span></div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
                 <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link
@@ -2121,6 +2289,10 @@ function facturar() {
        cambiar algo (código generado / cerradura asignada). -->
   <RoomLockModal v-if="showRoomLockManager && d" :room-id="d.roomId ?? null" :room-number="String(d.room?.number ?? '')"
     :reservation-id="d.id" @close="showRoomLockManager = false" @changed="onRoomLockChanged" />
+
+  <!-- REQ-HAC-06 (#261) — asignar / cambiar la unidad concreta de la reserva (apilado como Anular). -->
+  <RoomAssignModal v-if="d" :open="showRoomAssign" :reservation-id="d.id" :room-type="d.roomType || d.room?.type || null"
+    :current-room-id="d.roomId || null" @close="showRoomAssign = false" @assigned="onRoomAssigned" />
 
   <!-- Loading -->
   <Teleport to="body">

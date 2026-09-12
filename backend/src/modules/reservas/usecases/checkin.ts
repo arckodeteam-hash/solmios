@@ -35,9 +35,22 @@ export async function checkinValidation(repo: any, id: string, user: any, auth?:
   // assertOwnership recibe (dueño, solicitante, rol, rolAdmin) — todos strings. Pasarle objetos
   // hace que la comparación `===` nunca dé true y lanza Forbidden SIEMPRE: el check-in quedaba muerto.
   if (auth) auth.assertOwnership(r.hotelId, hotelId, user.role, 'super_admin')
+  assertRoomAssigned(r)
   if (r.status === 'checked_in') throw new ConflictError('La reserva ya tiene check-in')
   if (!['confirmed', 'pending'].includes(r.status)) throw new ConflictError(`No se puede hacer check-in de una reserva ${r.status}`)
   return { reservation: r, hotelId: r.hotelId }
+}
+
+/**
+ * HAC-01 (#258): la reserva nace con `roomId = null` y la unidad se elige en recepción. Sin
+ * habitación NO hay check-in: el folio nacería sin `roomId`, el cargo de la noche se postearía
+ * con `Rooms` vacío y el check-out reventaría en `connectors/reservas-housekeeping.ts`
+ * (`habitaciones.update(null)`). Mismo formato de 409 que `assign-room.ts`: `details.reason`
+ * le dice al panel que lo que falta es asignar, no que el estado esté mal.
+ */
+export function assertRoomAssigned(r: { roomId?: string | null }): void {
+  if (r.roomId) return
+  throw new ConflictError('La reserva no tiene habitación asignada: asigne una antes del check-in', { reason: 'no_room_assigned' })
 }
 
 export async function checkoutValidation(repo: any, id: string, user: any, auth?: any): Promise<any> {
@@ -80,6 +93,9 @@ export async function executeCheckin(r: any, user: any, deps: {
   // reclama la reserva más abajo. Leerlo dentro de la transacción sería tarde — si el objeto
   // que nos pasaron es compartido, para entonces ya podría haberlo mutado el check-in rival.
   const expectedStatus = r.status
+  // Defensa en profundidad: `checkinValidation` ya lo rechazó, pero este usecase también lo
+  // llaman harnesses/callers que no pasan por ahí. Va ANTES del try: adentro se volvería un 500.
+  assertRoomAssigned(r)
   let guestId = r.guestId
   let folioId = ''
   let extrasCharge = 0

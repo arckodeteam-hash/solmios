@@ -6,6 +6,7 @@ import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { ReservasService } from '../service'
 import { ReservasQueries } from '../usecases/reservas-queries'
+import { reservasListCacheKey } from '../usecases/cache'
 import type { ReservasDTO } from '../types'
 
 const log = silentLogger()
@@ -261,6 +262,25 @@ describe('ReservasService', () => {
       const repo = makeRepo({ findById: async () => res })
       const svc = new ReservasService(repo, log, silentCache, makeUserRepo(), fakeAuth, guestRepo, roomRepo, hotelRepo, makeQueries())
       await expect(svc.delete('r1', hotelAdmin)).rejects.toThrow('No autorizado')
+    })
+  })
+
+  // #272 (revisión) — setRefundState escribe `refundStatus` por fuera de `update()` y no bumpeaba la
+  // versión del listado: /panel/reservas mostraba "en proceso"/"fallido" viejo hasta CACHE_TTL (300 s).
+  describe('setRefundState', () => {
+    it('bumpea la versión de la caché del listado del hotel (y la global) tras escribir', async () => {
+      const store = new Map<string, unknown>()
+      const cache: CacheAdapter = { get: async (k) => (store.get(k) as any) ?? null, set: async (k, v) => { store.set(k, v) }, delete: async () => {}, flush: async () => {} }
+      const repo = makeRepo({ update: async (id, data) => ({ id, hotelId: 'h1', ...data } as ReservasDTO) })
+      const svc = new ReservasService(repo, log, cache, makeUserRepo(), fakeAuth, guestRepo, roomRepo, hotelRepo, makeQueries())
+      const key0 = await reservasListCacheKey(cache, 'h1', { filters: {}, page: 1, limit: 20 })
+      const all0 = await reservasListCacheKey(cache, 'all', { filters: {}, page: 1, limit: 20 })
+
+      const row = await svc.setRefundState('r1', { refundStatus: 'done', refundedAt: '2026-09-12T10:00:00.000Z', refundPaymentId: 'pay-1' })
+
+      expect(row?.refundStatus).toBe('done')
+      expect(await reservasListCacheKey(cache, 'h1', { filters: {}, page: 1, limit: 20 })).not.toBe(key0)
+      expect(await reservasListCacheKey(cache, 'all', { filters: {}, page: 1, limit: 20 })).not.toBe(all0)
     })
   })
 })

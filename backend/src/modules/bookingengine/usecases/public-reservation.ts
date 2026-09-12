@@ -32,6 +32,10 @@
 //     · si en el futuro se migra el stored a un hash, no cambia el contract.
 //
 // Forma funcional (sin clase) — mismo estilo que `public-booking.ts` y `public-hotel-info.ts`.
+//
+// #272 — Expone además el estado del reembolso (refundStatus/refundedAt/refundAmount/
+// cancellationFee/cancelledAt) y, si la reserva es parte de un grupo (token compartido), las
+// habitaciones hermanas en `group.rooms` (allow-list mínima: id, roomType, adults, children, status).
 
 import crypto from 'node:crypto'
 import { paymentAmountsOf } from '../../../shared/utils/payment-status'
@@ -43,6 +47,28 @@ const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as c
 /** #270 — el MISMO 404 (misma referencia) para cualquier otro endpoint público por id+token
  *  (recibo PDF): anti-enumeración exige un body idéntico entre endpoints, no solo dentro de uno. */
 export const PUBLIC_RESERVATION_NOT_FOUND = NOT_FOUND
+
+/** #272 — Hermanas del grupo para la página pública. Best-effort: cualquier fallo → null. */
+async function publicGroupOf(orm: any, reservation: any): Promise<null | { id: string; rooms: any[] }> {
+  if (!reservation.groupId) return null
+  try {
+    const siblings = (await orm.findMany('Reservations', { hotelId: reservation.hotelId, groupId: reservation.groupId })) as any[]
+    if (!Array.isArray(siblings) || !siblings.length) return null
+    const rooms = await Promise.all(siblings.map(async (r) => {
+      let roomType = ''
+      try {
+        const room = (r.roomId ? (await orm.findMany('Rooms', { id: r.roomId })) as any[] : [])[0]
+        roomType = String(room?.type ?? '')
+      } catch {
+        // roomType = '' — mostrar la habitación sin tipo es mejor que no listarla.
+      }
+      return { id: r.id, roomType, adults: r.adults, children: r.children, status: r.status }
+    }))
+    return { id: String(reservation.groupId), rooms }
+  } catch {
+    return null
+  }
+}
 
 function hotelSecret(hotelId: string): string {
   const base = process.env.BOOKING_TOKEN_SECRET || 'dev-fallback-booking-secret'
@@ -142,6 +168,7 @@ export async function getPublicReservation(
     // addons = [] — chargeableTotal degrada a totalAmount + otherCharges, sin extras.
   }
   const amounts = paymentAmountsOf(chargeableTotal(reservation, addons as any[]), paid)
+  const group = await publicGroupOf(orm, reservation)
 
   // #271 MR-06 — plazo de aprobación del hotel (`booking_config.approvalDeadlineHours`). Best-effort:
   // sin fila, columna vieja en null o consulta fallida → default 24. Siempre un número, nunca null:
@@ -187,6 +214,12 @@ export async function getPublicReservation(
         // Ausente/default en reservas de antes de esta feature.
         needsCrib: reservation.needsCrib ?? false,
         cribCount: reservation.cribCount ?? 0,
+        // MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado), no un dato
+        // interno del hotel. `null`/0 en reservas anteriores a esta feature o sin régimen.
+        mealPlan: reservation.mealPlan ?? null,
+        mealPlanPriceMode: reservation.mealPlanPriceMode ?? null,
+        mealPlanUnitPrice: reservation.mealPlanUnitPrice ?? 0,
+        mealPlanTotal: reservation.mealPlanTotal ?? 0,
         totalAmount: reservation.totalAmount,
         // Tarea 24 (#88): el desglose que vio en el paso de pago (subtotal, extras, promo, cada
         // impuesto con nombre/%/importe, total). Es SUYO — lo aceptó él. `null` en reservas
@@ -214,6 +247,17 @@ export async function getPublicReservation(
         // `cancellationReason` es texto libre (el panel guarda lo que tipea el empleado): al
         // público sale SOLO el código de sistema 'payment_timeout'; cualquier otro motivo → null.
         cancellationReason: reservation.cancellationReason === 'payment_timeout' ? 'payment_timeout' : null,
+        // #272 — SU cancelación y SU reembolso: lo que retuvo la política, lo que se le devuelve
+        // y en qué estado está ('none' | 'pending' | 'done' | 'failed', lo escribe el connector
+        // de refunds). La pantalla pública lo usa para decir "5-10 días hábiles" o "el hotel lo
+        // está gestionando" en vez de un genérico. Es SU dinero (mismo criterio que
+        // `amountPaid`/`pendingAmount`): siempre número (0 si no hay nada que devolver), también
+        // en el rechazo del hotel (#271 MR-06, que reembolsa el 100% de lo cobrado).
+        cancellationFee: reservation.cancellationFee ?? 0,
+        refundAmount: Number(reservation.refundAmount ?? 0),
+        refundStatus: reservation.refundStatus ?? 'none',
+        refundedAt: reservation.refundedAt ?? null,
+        cancelledAt: reservation.cancelledAt ?? null,
         // #271 (MR-06) — cuántas horas se da el hotel para revisar SU reserva pendiente: es la
         // promesa que la pantalla de confirmación le hace al huésped ("el hotel revisará su reserva
         // en las próximas N h"), no un dato interno. Siempre número (default 24).
@@ -223,12 +267,11 @@ export async function getPublicReservation(
         // así que en esta rama sí es suyo. Fuera de `approvalStatus === 'rejected'` → null: la
         // regla de arriba (solo el código 'payment_timeout') sigue intacta para el resto.
         rejectionReason: rejected ? (reservation.cancellationReason ?? null) : null,
-        // #271 (MR-06) — cuánto le devolvió el hotel al rechazar (reembolso 100% de lo cobrado).
-        // Es SU dinero: mismo criterio que `amountPaid`/`pendingAmount`. Solo en rechazo; si no → null.
-        refundAmount: rejected ? Number(reservation.refundAmount ?? 0) : null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: amounts.status,
+      // #272 — grupo (token compartido): las N habitaciones, para listarlas y cancelarlas juntas.
+      group,
     },
   }
 }

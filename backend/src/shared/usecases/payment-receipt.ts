@@ -15,8 +15,9 @@
 
 import { escapeHtml } from '../../services/notification-renderer'
 import { round2 } from '../utils/money'
+import { hasMealPlan, mealPlanLabel } from './meal-plan-labels'
 
-export type ReceiptLineKind = 'room' | 'upsell' | 'child_amenity' | 'room_amenity' | 'discount' | 'tax' | 'total'
+export type ReceiptLineKind = 'room' | 'meal_plan' | 'upsell' | 'child_amenity' | 'room_amenity' | 'discount' | 'tax' | 'total'
 
 export interface ReceiptLine {
   kind: ReceiptLineKind
@@ -89,12 +90,21 @@ export interface ReceiptReservationLike {
     upsells?: Array<{ id?: string; name?: string; kind?: string; unitPrice?: number; quantity?: number; nights?: number; persons?: number; total?: number }>
     childAmenitiesTotal?: number
     roomAmenitiesTotal?: number
+    /** MR-03 (#268) — Σ del régimen de todas las filas, ya dentro de `subtotal`. */
+    mealPlanTotal?: number
     taxes?: number
     taxBreakdown?: Array<{ name?: string; rate?: number; amount?: number }>
     total?: number
   } | null
   childAmenities?: Array<{ id?: string; key?: string; name?: string; price?: number; quantity?: number; total?: number }> | null
   roomAmenities?: Array<{ id?: string; key?: string; name?: string; price?: number; quantity?: number; total?: number }> | null
+  /** MR-03 (#268) — snapshot del régimen de ESTA fila (código, precio por persona y noche, personas, total). */
+  mealPlan?: string | null
+  mealPlanUnitPrice?: number | null
+  mealPlanTotal?: number | null
+  mealPlanPersons?: number | null
+  checkIn?: string | null
+  checkOut?: string | null
 }
 
 export interface ReceiptRoomLike { id: string; number?: string | null; name?: string | null; type?: string | null }
@@ -148,10 +158,38 @@ function amenityLines(
     })
 }
 
+function nightsOf(row: ReceiptReservationLike): number {
+  const a = new Date(String(row.checkIn ?? '')).getTime()
+  const b = new Date(String(row.checkOut ?? '')).getTime()
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 1
+  return Math.max(1, Math.round((b - a) / 86_400_000))
+}
+
+/**
+ * MR-03 (#268) — línea del régimen de UNA fila: "Régimen · Desayuno · 2 personas × 3 noches",
+ * cantidad = personas × noches (cuadra con el unitario, mismo criterio que los upsells) e importe
+ * `mealPlanTotal`. `included` (total 0) sale como "(incluido)" sin importe. Sin régimen, nada.
+ */
+function mealPlanLineOf(row: ReceiptReservationLike): ReceiptLine[] {
+  if (!hasMealPlan(row.mealPlan)) return []
+  const label = mealPlanLabel(row.mealPlan, 'es')
+  const amount = round2(num(row.mealPlanTotal))
+  if (amount <= 0) return [{ kind: 'meal_plan', description: `Régimen · ${label} (incluido)`, amount: 0 }]
+  const persons = Math.max(1, Math.floor(num(row.mealPlanPersons) || 1))
+  const nights = nightsOf(row)
+  return [{
+    kind: 'meal_plan',
+    description: `Régimen · ${label} · ${persons} persona${persons === 1 ? '' : 's'} × ${nights} noche${nights === 1 ? '' : 's'}`,
+    quantity: persons * nights,
+    unitPrice: num(row.mealPlanUnitPrice),
+    amount,
+  }]
+}
+
 /**
  * Arma las líneas del recibo a partir del snapshot que el huésped vio y pagó (`priceBreakdown`).
  *
- * - Alojamiento: `subtotal − upsellsTotal − childAmenitiesTotal − roomAmenitiesTotal` (1 habitación),
+ * - Alojamiento: `subtotal − upsellsTotal − childAmenitiesTotal − roomAmenitiesTotal − mealPlanTotal` (1 habitación),
  *   o UNA línea por habitación del grupo con el `totalAmount` de cada fila hermana (la líder es la
  *   única con `priceBreakdown`; las hermanas llevan su importe de alojamiento en `totalAmount`).
  * - Cada upsell "nombre × cantidad", cada amenidad infantil y cada amenidad de habitación (en grupo,
@@ -175,13 +213,19 @@ export function buildReceiptLines(
       lines.push({ kind: 'room', description: `Alojamiento · ${roomLabel(room)}`, amount: round2(num(row.totalAmount)) })
     }
   } else if (pb) {
-    const accommodation = num(pb.subtotal) - num(pb.upsellsTotal) - num(pb.childAmenitiesTotal) - num(pb.roomAmenitiesTotal)
+    const accommodation = num(pb.subtotal) - num(pb.upsellsTotal) - num(pb.childAmenitiesTotal) - num(pb.roomAmenitiesTotal) - num(pb.mealPlanTotal)
     const room = reservation.roomId ? roomById.get(String(reservation.roomId)) : undefined
     lines.push({ kind: 'room', description: `Alojamiento · ${roomLabel(room)}`, amount: round2(Math.max(0, accommodation)) })
   } else {
     const room = reservation.roomId ? roomById.get(String(reservation.roomId)) : undefined
     lines.push({ kind: 'room', description: `Alojamiento · ${roomLabel(room)}`, amount: round2(num(reservation.totalAmount)) })
   }
+
+  // MR-03 (#268) — el régimen vive por fila (en grupo, cada hermana el suyo): sale antes de los
+  // extras, en el orden de las habitaciones. En grupo el `totalAmount` de cada hermana es sólo
+  // alojamiento, así que no hay que restarlo de nada.
+  const mealPlanSources = group ?? [reservation]
+  for (const row of mealPlanSources) lines.push(...mealPlanLineOf(row))
 
   for (const u of pb?.upsells ?? []) {
     if (!u || typeof u !== 'object') continue
@@ -256,7 +300,7 @@ function ratePct(rate: unknown): string {
 /** HTML A4 imprimible del recibo. Puro: quien lo llama decide si lo manda a puppeteer o al correo. */
 export function renderReceiptHtml(data: ReceiptData): string {
   const { hotel, guest, stay, payment, currency } = data
-  const items = data.lines.filter((l) => l.kind === 'room' || l.kind === 'upsell' || l.kind === 'child_amenity' || l.kind === 'room_amenity')
+  const items = data.lines.filter((l) => l.kind === 'room' || l.kind === 'meal_plan' || l.kind === 'upsell' || l.kind === 'child_amenity' || l.kind === 'room_amenity')
   const discounts = data.lines.filter((l) => l.kind === 'discount')
   const taxes = data.lines.filter((l) => l.kind === 'tax')
   const totalLine = data.lines.find((l) => l.kind === 'total')

@@ -131,6 +131,9 @@ export class BookingengineController {
     /** PG-7.5 — Registry de pasarelas para `GET /api/pay/go/:provider/:hotelId` (form hospedado
      *  de CardNet). Al final, mismo motivo que el resto de los deps nuevos. */
     private readonly gatewayRegistry?: PaymentGatewayRegistry,
+    /** #272 — `Groups`: la cancelación pública de un grupo marca `groups.status='cancelled'`.
+     *  Al final, mismo motivo que el resto de los deps nuevos. Opcional, best-effort. */
+    private readonly groupsRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -355,6 +358,11 @@ export class BookingengineController {
         // políticas custom reembolsaba el 100% pese a anunciar 100% de penalidad.
         hotelsRepo: this.hotelsRepo,
         logger: this.logger,
+        // #272 — cascada al grupo + inventario por habitación (Channex).
+        groupsRepo: this.groupsRepo,
+        pushAvailability: this.pushAvailability,
+        // #272 — la cascada del grupo se escribe en UNA transacción (todo o nada de verdad).
+        orm: this.orm,
         // El evento onBookingCancelled está declarado en sockets.ts pero el service no lo
         // expone (gate <200 líneas). Accedemos al socket del service en runtime (ya está
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el
@@ -420,7 +428,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, mealPlans: this.mealPlanRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -433,12 +441,17 @@ export class BookingengineController {
     // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el
     // listado de Administración podía tardar hasta 5 min (CACHE_TTL) en mostrar el alta.
     // Best-effort: un fallo acá no puede tumbar una reserva que YA se creó con éxito.
+    // #267: el payload lleva huésped y si hubo pasarela (`hasCheckout`) para que los connectors
+    // no relean la reserva; `paid: false` siempre — el cobro, si lo hay, avisa por `onBookingPaid`.
     if (result.status === 201 && result.body?.reservation) {
       const r = result.body.reservation
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
         checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -468,7 +481,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, mealPlans: this.mealPlanRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -479,10 +492,14 @@ export class BookingengineController {
     )
     // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
     // directo a Reservations, sin pasar por el CRUD de `reservas`.
+    // #267: el payload lleva huésped y si hubo pasarela para que los connectors no relean la reserva.
     if (result.status === 201 && Array.isArray(result.body?.reservations) && result.body.reservations[0]) {
       const r = result.body.reservations[0]
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública grupal) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -500,7 +517,11 @@ export class BookingengineController {
     if (!this.hotelsRepo || !this.configRepo) {
       return { status: 500, body: { error: 'rates deps no cableados' } }
     }
-    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; currency?: string }
+    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; children?: string; currency?: string }
+    // MR-03 #268 — `children` = niños CON plaza para cotizar el régimen (entero ≥ 0, default 0).
+    // No toca disponibilidad/ocupación: eso sigue por `guests`.
+    const childrenRaw = query.children ? Number(query.children) : 0
+    const children = Number.isFinite(childrenRaw) && childrenRaw > 0 ? Math.floor(childrenRaw) : 0
     return getPublicRates(
       {
         hotels: this.hotelsRepo, availability: this.service, config: this.configRepo,
@@ -512,6 +533,8 @@ export class BookingengineController {
         // otro para las mismas fechas en cualquier hotel con temporadas cargadas.
         seasonAssignments: this.seasonAssignmentsRepo, roomRates: this.roomRatesRepo,
         rateOverrides: this.rateOverridesRepo, seasons: this.seasonsCatalogRepo,
+        // MR-03 (#268) — regímenes activos con `totalForStay` para el widget.
+        mealPlans: this.mealPlanRepo,
       },
       String(req.params?.slug || ''),
       {
@@ -519,6 +542,7 @@ export class BookingengineController {
         checkOut: String(query.checkOut || ''),
         rooms: query.rooms ? Number(query.rooms) : undefined,
         guests: query.guests ? Number(query.guests) : undefined,
+        children,
         currency: query.currency,
       },
     )

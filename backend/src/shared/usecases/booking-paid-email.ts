@@ -35,6 +35,8 @@ import { hotelCancellationTypeOf } from './cancellation-math'
 import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-schedule'
 import { DEFAULT_PLATFORM_IDENTITY, resolvePlatformIdentity } from '../utils/platform-identity'
 import { confirmationFragments } from './confirmation-email-variables'
+import { reservationGroupRows } from './reservation-group-rows'
+import { ROOM_ONLY, hasMealPlan, mealPlanLabel } from './meal-plan-labels'
 
 export interface BookingPaidEmailDeps {
   emailSender: EmailSender
@@ -66,11 +68,6 @@ const PAYMENT_LABELS: Record<string, Record<NotificationLanguage, string>> = {
 
 const YES_NO: Record<NotificationLanguage, [string, string]> = {
   es: ['Sí', 'No'], en: ['Yes', 'No'], pt: ['Sim', 'Não'],
-}
-
-// La reserva no persiste régimen todavía: si algún día lo trae, se muestra; si no, "sólo alojamiento".
-const ROOM_ONLY: Record<NotificationLanguage, string> = {
-  es: 'Sólo alojamiento', en: 'Room only', pt: 'Somente hospedagem',
 }
 
 const OCCUPANCY: Record<NotificationLanguage, [string, string]> = {
@@ -128,6 +125,36 @@ function upsellLine(line: UpsellPricedLike, currency: string, language: Notifica
     : line.kind === 'per_night' ? `× ${nights} ${units.nights}` : `× ${qty}`
   const total = line.total ?? Number(line.unitPrice ?? 0) * qty * nights * (persons ?? 1)
   return `${escapeHtml(String(line.name ?? ''))} ${factor} = ${moneyOf(total, currency)}`
+}
+
+const MEAL_PLAN_WORD: Record<NotificationLanguage, { regime: string; included: string }> = {
+  es: { regime: 'Régimen', included: 'incluido' },
+  en: { regime: 'Meal plan', included: 'included' },
+  pt: { regime: 'Regime', included: 'incluído' },
+}
+
+/**
+ * MR-03 (#268) — régimen de UNA fila (`mealPlan*`, snapshot congelado al reservar), como línea
+ * de `extras_lines`: "Régimen: Desayuno × 2 personas × 3 noches = 60.00 USD" (por persona y
+ * noche) o "Régimen: Desayuno (incluido)" (`included`, sin cargo aparte). '' sin régimen.
+ */
+function mealPlanLine(row: any, currency: string, language: NotificationLanguage): string {
+  if (!hasMealPlan(row?.mealPlan)) return ''
+  const words = MEAL_PLAN_WORD[language]
+  const units = UPSELL_UNITS[language]
+  const label = escapeHtml(mealPlanLabel(row.mealPlan, language))
+  const total = Number(row.mealPlanTotal ?? 0) || 0
+  if (total <= 0) return `${words.regime}: ${label} (${words.included})`
+  const persons = Math.max(1, Number(row.mealPlanPersons ?? 1) || 1)
+  const nights = Math.max(1, nightsBetween(row.checkIn, row.checkOut))
+  return `${words.regime}: ${label} × ${persons} ${units.persons} × ${nights} ${units.nights} = ${moneyOf(total, currency)}`
+}
+
+function nightsBetween(checkIn: unknown, checkOut: unknown): number {
+  const a = new Date(String(checkIn ?? '')).getTime()
+  const b = new Date(String(checkOut ?? '')).getTime()
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 1
+  return Math.max(1, Math.round((b - a) / 86_400_000))
 }
 
 /** "ITBIS · 18% · 52.20 USD". `rate` es SIEMPRE porcentaje (hotel-taxes.ts: amount = base × rate / 100). */
@@ -197,34 +224,6 @@ async function notifyHotelOfFailure(
 }
 
 /**
- * Filas sobre las que se calcula la plata del correo: la reserva sola, o ella más sus
- * hermanas no canceladas si pertenece a un grupo. Best-effort: si la consulta falla, se
- * usa sólo la reserva. La líder siempre está (Map por id).
- */
-async function groupRows(
-  reservationsRepo: RepositoryAdapter<any>,
-  reservation: any,
-  logger: Logger,
-): Promise<any[]> {
-  if (!reservation.groupId) return [reservation]
-  const byId = new Map<string, any>([[String(reservation.id), reservation]])
-  try {
-    const siblings = await reservationsRepo.findMany({
-      hotelId: reservation.hotelId, groupId: reservation.groupId,
-    })
-    for (const s of siblings ?? []) {
-      if (!s || s.status === 'cancelled') continue
-      byId.set(String(s.id), s)
-    }
-  } catch (e) {
-    logger.warn('booking-paid-email: no se pudieron cargar las hermanas del grupo', {
-      reservationId: reservation.id, groupId: reservation.groupId, error: (e as Error).message,
-    })
-  }
-  return [...byId.values()]
-}
-
-/**
  * Encola el correo de confirmación de pago de una reserva del motor público.
  * No-op silencioso si la reserva no existe o el huésped no dejó email.
  */
@@ -258,7 +257,7 @@ export async function sendBookingPaidEmail(
     // #276 MR-11: en una reserva de GRUPO el cobro queda repartido entre las hermanas
     // (`settle()` prorratea el `deposit`), así que el total/pagado de la líder sola no es lo
     // que el huésped pagó. El mail habla del pedido entero: sumamos las hermanas vivas.
-    const rows = await groupRows(reservationsRepo, reservation, logger)
+    const rows = await reservationGroupRows(reservationsRepo, reservation, logger, 'booking-paid-email')
     const total = rows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0)
     const paid = rows.reduce((acc, r) => acc + Number(r.deposit ?? 0), 0)
     const pending = Math.max(0, Number((total - paid).toFixed(2)))
@@ -300,6 +299,12 @@ export async function sendBookingPaidEmail(
     const children = Number(reservation.children ?? 0) || childrenAges.length
     const promoCode = String(reservation.promoCode ?? '').trim()
     const promoDiscount = money(breakdown.promoDiscount, currency)
+    // MR-03 (#268) — el régimen vive por FILA (cada habitación del grupo elige el suyo): una línea
+    // por fila con régimen, en el mismo orden que `rooms_lines`; `meal_plan` resume las etiquetas
+    // distintas (o "sólo alojamiento" si ninguna fila lo trae).
+    const mealPlanRows: any[] = siblings.length ? siblings : [reservation]
+    const mealPlanLines = mealPlanRows.map(r => mealPlanLine(r, currency, language)).filter(Boolean)
+    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => mealPlanLabel(r.mealPlan, language)))]
 
     await emailSender.enqueueNotification({
       to,
@@ -325,12 +330,12 @@ export async function sendBookingPaidEmail(
         children: String(children),
         children_ages: childrenAges.map(a => String(a)).join(', '),
         crib: reservation.needsCrib ? yes : no,
-        meal_plan: String(reservation.mealPlan ?? '').trim() || ROOM_ONLY[language],
+        meal_plan: mealPlanLabels.length ? mealPlanLabels.join(', ') : ROOM_ONLY[language],
         estimated_arrival: String(reservation.estimatedArrival ?? '').trim() || '—',
         special_requests: String(reservation.specialRequests ?? '').trim() || '—',
         rooms_lines: roomsLines,
         rooms_count: String(siblings.length || 1),
-        extras_lines: linesHtml(upsellLines.map(l => upsellLine(l, currency, language))),
+        extras_lines: linesHtml([...mealPlanLines, ...upsellLines.map(l => upsellLine(l, currency, language))]),
         child_amenities_lines: linesHtml(childAmenities.map(l => pricedLine(l, currency))),
         room_amenities_lines: linesHtml(roomAmenities.map(l => pricedLine(l, currency))),
         promo_code: promoCode,

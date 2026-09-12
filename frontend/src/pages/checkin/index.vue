@@ -158,7 +158,7 @@
                   <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
                 </span>
               </div>
-              <div class="text-[10px] text-text-muted">Hab {{ a.roomNumber }} · {{ a.channelLabel }}</div>
+              <div class="text-[10px] text-text-muted">Hab {{ a.roomNumber }} · {{ a.channelLabel }}<template v-if="a.mealPlanLabel"> · <span data-testid="arrival-meal-plan" class="font-bold text-purple" :title="mealPlanTitle(a)">{{ a.mealPlanLabel }}</span></template></div>
               <div class="text-[10px] text-text-muted">{{ a.checkIn }} → {{ a.checkOut }} · {{ a.nights }}n · ${{ a.totalAmount }}</div>
             </div>
             <button v-if="!a.checkedIn" data-testid="checkin-arrival-button" @click.stop="openCheckinModal(a)" :disabled="processing"
@@ -197,7 +197,7 @@
             <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black shrink-0" :class="g.channelColor">{{ g.initials }}</div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-bold text-navy truncate">{{ g.guestName }}</div>
-              <div class="text-[10px] text-text-muted">Hab {{ g.roomNumber }} · {{ g.channelLabel }}</div>
+              <div class="text-[10px] text-text-muted">Hab {{ g.roomNumber }} · {{ g.channelLabel }}<template v-if="g.mealPlanLabel"> · <span class="font-bold text-purple">{{ g.mealPlanLabel }}</span></template></div>
               <div class="text-[10px] text-text-muted">Sale: {{ g.checkOut }} · {{ daysUntil(g.checkOut) }}d restantes</div>
             </div>
             <button @click.stop="openCheckoutModal(g)" :disabled="processing" data-testid="checkout-button"
@@ -578,6 +578,7 @@ import { ref, computed, onMounted } from 'vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import { useRouter } from 'vue-router'
 import { useCountUp } from '@/composables/useCountUp'
+import { effectiveMealPlan, hasMealPlan, mealPlanLabel as mealPlanLabelOf } from '@/utils/meal-plans'
 import { OperationsService } from '@/services/Operations.service'
 import { RoomService } from '@/services/Room.service'
 import { ReservationService } from '@/services/Reservation.service'
@@ -650,6 +651,12 @@ const todayStr = today.toISOString().split('T')[0]
 const todayFormatted = today.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })
 
 const channelLabels: Record<string, string> = { direct: 'Direct', booking: 'Booking.com', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google' }
+/** MR-03 (#268) — tooltip del régimen: importe reservado en la web y, en grupo, dónde se cobró
+ *  (NO dice "incluido en el total": en una reserva de grupo no lo está). */
+function mealPlanTitle(g: CheckinGuest): string {
+  if (!(g.mealPlanTotal > 0)) return 'Régimen sin cargo aparte'
+  return `Régimen: $${g.mealPlanTotal}${g.groupId ? ' · cobrado con el total del grupo (reserva principal)' : ''}`
+}
 const channelColors: Record<string, string> = { direct: 'bg-teal/10 text-teal', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue/10 text-blue' }
 
 const ROOM_ICONS: Record<string, string> = {
@@ -834,6 +841,11 @@ const departures = computed(() =>
 function mapGuest(r: Record<string, unknown>): CheckinGuest {
   const ch = ((r.channel as string) || 'direct').toLowerCase()
   const nights = Math.ceil((new Date(r.checkOut as string).getTime() - new Date(r.checkIn as string).getTime()) / 86400000)
+  // MR-03 (#268) — régimen: `regime` (editable en el panel) manda; `mealPlan` (snapshot web)
+  // cubre si no vino. Solo alojamiento no se anuncia: recepción necesita saber cuándo hay
+  // desayuno/pensión. Etiquetas y regla en `utils/meal-plans.ts`.
+  const mealPlanCode = effectiveMealPlan({ regime: r.regime as string | null, mealPlan: r.mealPlan as string | null })
+  const mealPlanLabel = hasMealPlan(mealPlanCode) ? mealPlanLabelOf(mealPlanCode) : null
   return {
     id: r.id as string,
     guestName: (r.guestName as string) || 'Guest',
@@ -854,6 +866,9 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
     checkedIn: r.status === 'checked_in',
     checkedOut: r.status === 'checked_out',
     notes: (r.notes as string) || null,
+    mealPlanLabel,
+    mealPlanTotal: Number(r.mealPlanTotal) || 0,
+    groupId: (r.groupId as string | null) || null,
   }
 }
 

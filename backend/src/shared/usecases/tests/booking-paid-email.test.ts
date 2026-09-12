@@ -342,6 +342,40 @@ describe('recibo completo (#270)', () => {
     for (const n of ['101', '102', '201', '301']) expect(v.rooms_lines).not.toContain(n)
   })
 
+  it('(d) régimen (MR-03 #268): línea "Régimen" en extras_lines con personas × noches y meal_plan con la etiqueta del idioma', async () => {
+    // Desayuno a 10/persona/noche × 2 personas × 1 noche (12→13) = 20, ya dentro de subtotal/total.
+    const reserva = {
+      ...RESERVA_270, totalAmount: 426.2, deposit: 426.2,
+      mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanPersons: 2, mealPlanTotal: 20,
+      priceBreakdown: { ...RESERVA_270.priceBreakdown, subtotal: 320, mealPlanTotal: 20, total: 426.2 },
+    }
+    const h = harness({ reserva })
+    expect(await h.run()).toBe(true)
+    const v = h.sent[0].variables
+    expect(v.meal_plan).toBe('Desayuno')
+    expect(v.extras_lines).toContain('<li>Régimen: Desayuno × 2 personas × 1 noches = 20.00 USD</li>')
+    // El régimen va ANTES de los extras del carrito.
+    expect(v.extras_lines.indexOf('Régimen')).toBeLessThan(v.extras_lines.indexOf('Desayuno × 2 = 20.00 USD'))
+    expect(v.subtotal).toBe('320.00 USD')
+    expect(v.total_amount).toBe('426.20 USD')
+
+    // `included` (sin cargo aparte) → etiqueta "(incluido)" sin importe; `room_only` → "sólo alojamiento" y sin línea.
+    const inc = harness({ reserva: { ...reserva, mealPlan: 'half_board', mealPlanPriceMode: 'included', mealPlanUnitPrice: 0, mealPlanTotal: 0 } })
+    await inc.run()
+    expect(inc.sent[0].variables.meal_plan).toBe('Media pensión')
+    expect(inc.sent[0].variables.extras_lines).toContain('<li>Régimen: Media pensión (incluido)</li>')
+    const none = harness({ reserva: { ...reserva, mealPlan: 'room_only', mealPlanTotal: 0 } })
+    await none.run()
+    expect(none.sent[0].variables.meal_plan).toBe('Sólo alojamiento')
+    expect(none.sent[0].variables.extras_lines).not.toContain('Régimen')
+
+    // Idioma del huésped: etiqueta y unidades en inglés.
+    const en = harness({ reserva, guest: { ...GUEST, language: 'en' } })
+    await en.run()
+    expect(en.sent[0].variables.meal_plan).toBe('Breakfast')
+    expect(en.sent[0].variables.extras_lines).toContain('Meal plan: Breakfast × 2 persons × 1 nights = 20.00 USD')
+  })
+
   it('(c) si el envío falla avisa al hotel con una notificación system y devuelve false', async () => {
     const h = harness({ enqueue: async () => { throw new Error('smtp down') } })
     expect(await h.run()).toBe(false)

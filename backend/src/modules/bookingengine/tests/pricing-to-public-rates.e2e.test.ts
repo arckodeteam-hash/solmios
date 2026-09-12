@@ -30,6 +30,7 @@ import { silentLogger } from 'arckode-framework/testing'
 import { PricingService } from '../../pricing/service'
 import { PricingQueries } from '../../pricing/usecases/pricing-queries'
 import { getPublicRates } from '../usecases/public-rates'
+import { createPublicBookingDirect } from '../usecases/public-booking'
 import { AvailabilityUseCase } from '../usecases/availability'
 
 const log = silentLogger()
@@ -62,6 +63,13 @@ function makeDb() {
     delete: async (table: string, id: string) => {
       tables[table] = t(table).filter((r) => r.id !== id)
     },
+    updateMany: async (table: string, filter: any, patch: any) => {
+      const rows = t(table).filter((r) => matches(r, filter))
+      for (const r of rows) Object.assign(r, patch)
+      return rows.length
+    },
+    // `createPublicBookingDirect` escribe dentro de `orm.transaction` — misma tabla, sin aislamiento.
+    transaction: async (cb: (tx: any) => Promise<any>) => cb(orm),
   }
   return { orm, tables }
 }
@@ -146,5 +154,135 @@ describe('E2E — pricing genera/guarda → el motor público cobra exactamente 
     // `available:false` (no había fila que cubra occupancy=4) o con un precio pensado para la
     // habitación de 2, no para la búsqueda real de 4 personas.
     expect(row4).toMatchObject({ available: true, price: 120 })
+  })
+})
+
+// ─── MR-03 #268 — régimen (meal plan) en GET /rates ─────────────────────────────────────────
+// Mismo ORM en memoria compartido: lo que el hotelero guarda en `MealPlans` (PUT /meal-plans)
+// es lo que el motor público cotiza en `mealPlans[]`, con el total ya resuelto para
+// `(guests + children) × nights`, y lo que `POST /booking` termina cobrando para la MISMA
+// composición (`effectiveAdults + payingChildren`) sobre el MISMO catálogo.
+describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con totalForStay', () => {
+  const HOTEL_ID = 'h-mp'
+  const SLUG = 'meal-plans-test'
+
+  function seed() {
+    const { orm, tables } = makeDb()
+    tables.Hotels = [{ id: HOTEL_ID, slug: SLUG, onlineBookingStatus: 'active', currency: 'USD', taxRate: 0 }]
+    tables.Rooms = [
+      { id: 'r1', hotelId: HOTEL_ID, type: 'standard', capacity: 3, basePrice: 100, status: 'available' },
+    ]
+    // child_policy: maxBabyAge default 0 → edad 0 = bebé, 1..3 = libre (sin plaza), 4..12 = niño
+    // CON plaza (paga régimen). Misma política que `public-booking-meal-plans.test.ts`.
+    tables.Configuration = [
+      { id: 'cfg-cp', hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 } },
+    ]
+    tables.MealPlans = [
+      { id: 'mp-b', hotelId: HOTEL_ID, code: 'breakfast', active: true, priceMode: 'per_person_per_night', price: 10 },
+      { id: 'mp-hb', hotelId: HOTEL_ID, code: 'half_board', active: true, priceMode: 'included', price: 0 },
+      { id: 'mp-ai', hotelId: HOTEL_ID, code: 'all_inclusive', active: false, priceMode: 'per_person_per_night', price: 50 },
+      // Régimen de OTRO hotel: no puede filtrarse en la respuesta de este.
+      { id: 'mp-other', hotelId: 'h-otro', code: 'all_inclusive', active: true, priceMode: 'per_person_per_night', price: 99 },
+    ]
+    const availability = new AvailabilityUseCase(
+      noCache, repoOf(orm, 'Rooms'), repoOf(orm, 'Reservations'), repoOf(orm, 'Hotels'),
+      repoOf(orm, 'RoomBlocks'), repoOf(orm, 'SeasonAssignments'), repoOf(orm, 'RoomRates'),
+    )
+    const baseDeps = {
+      hotels: repoOf(orm, 'Hotels'),
+      availability: { checkAvailability: (q: any) => availability.check(q) },
+      config: repoOf(orm, 'Configuration'),
+    }
+    return { orm, baseDeps }
+  }
+
+  // 2 huéspedes × 3 noches.
+  const query = { checkIn: '2026-09-10', checkOut: '2026-09-13', guests: 2 }
+
+  it('lista solo los activos del hotel, en orden, con totalForStay = price × guests × nights', async () => {
+    const { orm, baseDeps } = seed()
+    const res = await getPublicRates({ ...baseDeps, mealPlans: repoOf(orm, 'MealPlans') }, SLUG, query)
+
+    expect(res.status).toBe(200)
+    expect(res.body.nights).toBe(3)
+    expect(res.body.mealPlans).toHaveLength(2)
+    expect(res.body.mealPlans.map((m: any) => m.code)).toEqual(['breakfast', 'half_board'])
+
+    const breakfast = res.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', priceMode: 'per_person_per_night', price: 10, persons: 2, nights: 3 })
+    expect(breakfast.perNight).toBe(20)        // 10 × 2 huéspedes
+    expect(breakfast.totalForStay).toBe(60)    // 10 × 2 × 3 noches
+
+    const halfBoard = res.body.mealPlans[1]
+    expect(halfBoard).toMatchObject({ code: 'half_board', priceMode: 'included', perNight: 0, totalForStay: 0 })
+
+    // Inactivo → no aparece (ni el de otro hotel).
+    expect(res.body.mealPlans.some((m: any) => m.code === 'all_inclusive')).toBe(false)
+  })
+
+  it('sin dep mealPlans (callers viejos) el body trae mealPlans: []', async () => {
+    const { baseDeps } = seed()
+    const res = await getPublicRates(baseDeps, SLUG, query)
+
+    expect(res.status).toBe(200)
+    expect(res.body.mealPlans).toEqual([])
+  })
+
+  // ─── Coherencia GET /rates ↔ POST /booking (hallazgo de revisión #268) ──────────────────
+  // `/rates` cotiza el régimen para `guests + children` (niños con plaza) y ecoa `persons`;
+  // `POST /booking` cobra `effectiveAdults + payingChildren` releyendo el MISMO catálogo. Para la
+  // misma composición los dos lados tienen que dar el mismo número — si no, el widget muestra un
+  // total y el huésped paga otro.
+  const BOOKING_BODY = {
+    hotelId: HOTEL_ID,
+    guestName: 'Ana Pérez',
+    guestEmail: 'ana@example.com',
+    guestPhone: '+18095550000',
+    checkIn: query.checkIn,
+    checkOut: query.checkOut,
+    roomType: 'standard',
+    mealPlan: 'breakfast',
+  }
+  const NO_STRIPE = [undefined, undefined, undefined, undefined, undefined] as const
+
+  it('2 adultos + 1 niño CON plaza: /rates (guests=2&children=1) totalForStay 90 === POST mealPlanTotal 90', async () => {
+    const { orm, baseDeps } = seed()
+    const mealPlans = repoOf(orm, 'MealPlans')
+
+    const rates = await getPublicRates({ ...baseDeps, mealPlans }, SLUG, { ...query, guests: 2, children: 1 })
+    expect(rates.status).toBe(200)
+    const breakfast = rates.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', persons: 3, nights: 3, perNight: 30, totalForStay: 90 })
+
+    // Edad 8 → niño con plaza según la child_policy sembrada; paga régimen.
+    const booking = await createPublicBookingDirect(
+      orm,
+      { ...BOOKING_BODY, adults: 2, childrenAges: [8] },
+      ...NO_STRIPE,
+      { config: repoOf(orm, 'Configuration'), mealPlans },
+    )
+    expect(booking.status).toBe(201)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(90)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(breakfast.totalForStay)
+  })
+
+  it('2 adultos sin niños: /rates (guests=2) totalForStay 60 === POST mealPlanTotal 60', async () => {
+    const { orm, baseDeps } = seed()
+    const mealPlans = repoOf(orm, 'MealPlans')
+
+    const rates = await getPublicRates({ ...baseDeps, mealPlans }, SLUG, { ...query, guests: 2 })
+    expect(rates.status).toBe(200)
+    const breakfast = rates.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', persons: 2, nights: 3, totalForStay: 60 })
+
+    const booking = await createPublicBookingDirect(
+      orm,
+      { ...BOOKING_BODY, adults: 2 },
+      ...NO_STRIPE,
+      { config: repoOf(orm, 'Configuration'), mealPlans },
+    )
+    expect(booking.status).toBe(201)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(60)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(breakfast.totalForStay)
   })
 })

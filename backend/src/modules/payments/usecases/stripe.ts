@@ -65,13 +65,14 @@ export class StripeUseCase {
     throw new ValidationError('La pasarela pidió un paso adicional que todavía no está soportado')
   }
 
-  async refund(params: { hotelId: string; paymentId: string; amount?: number }): Promise<{ id: string; status: string }> {
+  async refund(params: { hotelId: string; paymentId: string; amount?: number; idempotencyKey?: string }): Promise<{ id: string; status: string }> {
     const gw = await this.gatewayOf(params.hotelId)
     if (!isRefundable(gw)) {
       // Azul Payment Page, por ejemplo, no soporta reembolsos: mejor decirlo que fallar raro.
       throw new ValidationError(`La pasarela ${gw.provider} no soporta reembolsos`)
     }
-    const r = await gw.refund(params.paymentId, params.amount ? Math.round(params.amount * 100) : undefined)
+    // #272: la clave de idempotencia viaja tal cual a la pasarela (ver RefundableGateway.refund).
+    const r = await gw.refund(params.paymentId, params.amount ? Math.round(params.amount * 100) : undefined, params.idempotencyKey)
     return { id: r.refundId, status: r.status }
   }
 

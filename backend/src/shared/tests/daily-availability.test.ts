@@ -122,3 +122,50 @@ describe('buildAvailabilityRanges', () => {
     expect(ranges![0]!.availability).toBe(2)
   })
 })
+
+// HAC-02 (#257/#258): una reserva activa SIN unidad (`roomId` null, vende sólo `roomType`)
+// consume UNA del tipo. Antes el filtro era `typeRoomIds.has(r.roomId)` y soltar la unidad de
+// una `confirmed` la sacaba del push a Channex (+1 en la OTA con la reserva vendida).
+describe('buildAvailabilityRanges — reservas sin unidad (HAC-02)', () => {
+  const rooms = [{ id: 'a', type: 'Suite' }, { id: 'b', type: 'suite' }, { id: 'c', type: 'standard' }]
+  const today = new Date().toISOString().slice(0, 10)
+  const tomorrow = addDays(today, 1)
+
+  it('confirmed sin roomId de tipo suite baja la disponibilidad de suite en 1 en sus fechas', () => {
+    const ranges = buildAvailabilityRanges('suite', rooms, [
+      { roomId: null, roomType: 'suite', status: 'confirmed', checkIn: today, checkOut: tomorrow },
+    ], [])!
+    expect(ranges[0]!.dateFrom).toBe(today)
+    expect(ranges[0]!.dateTo).toBe(today)
+    expect(ranges[0]!.availability).toBe(1)
+    expect(ranges[1]!.availability).toBe(2)
+  })
+
+  it('matchea el tipo case-insensitive y NO descuenta de otro tipo', () => {
+    const res = [{ roomId: null, roomType: 'SUITE', status: 'confirmed', checkIn: today, checkOut: tomorrow }]
+    expect(buildAvailabilityRanges('suite', rooms, res, [])![0]!.availability).toBe(1)
+    expect(buildAvailabilityRanges('standard', rooms, res, [])![0]!.availability).toBe(1)
+  })
+
+  it('sin unidad y cerrada (cancelled/no_show/checked_out) no consume, ni con el criterio laxo de canales', () => {
+    for (const status of ['cancelled', 'no_show', 'checked_out']) {
+      const ranges = buildAvailabilityRanges('suite', rooms, [
+        { roomId: null, roomType: 'suite', status, checkIn: today, checkOut: tomorrow },
+      ], [])!
+      expect(ranges[0]!.availability).toBe(2)
+    }
+  })
+
+  it('sin unidad y sin roomType no hay contra qué descontar: no cuenta', () => {
+    const ranges = buildAvailabilityRanges('suite', rooms, [
+      { roomId: null, roomType: null, status: 'confirmed', checkIn: today, checkOut: tomorrow },
+    ], [])!
+    expect(ranges[0]!.availability).toBe(2)
+  })
+
+  it('con unidad manda la física: roomType distinto al de la habitación no descuenta dos veces', () => {
+    const res = [{ roomId: 'c', roomType: 'suite', status: 'confirmed', checkIn: today, checkOut: tomorrow }]
+    expect(buildAvailabilityRanges('suite', rooms, res, [])![0]!.availability).toBe(2)
+    expect(buildAvailabilityRanges('standard', rooms, res, [])![0]!.availability).toBe(0)
+  })
+})

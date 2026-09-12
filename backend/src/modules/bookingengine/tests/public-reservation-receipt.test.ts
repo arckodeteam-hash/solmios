@@ -305,6 +305,39 @@ describe('buildReceiptLines / renderReceiptHtml (puros)', () => {
     expect(lines.filter((l) => l.kind === 'tax').map((l) => l.rate)).toEqual([18, 10])
   })
 
+  it('régimen (MR-03 #268): línea "Régimen" con personas × noches, restada del alojamiento; en grupo una por hermana', () => {
+    // Desayuno 10/pers/noche × 2 personas × 2 noches (10→12) = 40, dentro de subtotal (330 + 40).
+    const withMeal = baseReservation({
+      mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanPersons: 2, mealPlanTotal: 40,
+      priceBreakdown: { ...BREAKDOWN, subtotal: 370, mealPlanTotal: 40 },
+    })
+    const lines = buildReceiptLines(withMeal)
+    expect(lines.map((l) => [l.kind, l.amount]).slice(0, 3)).toEqual([['room', 250], ['meal_plan', 40], ['upsell', 50]])
+    expect(lines.find((l) => l.kind === 'meal_plan')).toEqual({
+      kind: 'meal_plan', description: 'Régimen · Desayuno · 2 personas × 2 noches', quantity: 4, unitPrice: 10, amount: 40,
+    })
+    // `included` → sin importe; `room_only` → sin línea y el alojamiento no cambia.
+    expect(buildReceiptLines(baseReservation({ mealPlan: 'all_inclusive', mealPlanPriceMode: 'included', mealPlanTotal: 0 })).find((l) => l.kind === 'meal_plan'))
+      .toEqual({ kind: 'meal_plan', description: 'Régimen · Todo incluido (incluido)', amount: 0 })
+    expect(buildReceiptLines(baseReservation({ mealPlan: 'room_only' })).map((l) => l.kind)).not.toContain('meal_plan')
+
+    // Grupo: el régimen es por fila (cada hermana el suyo); las que no lo tienen no suman línea.
+    const group = [
+      baseReservation({ groupId: 'g1', roomId: 'r1', totalAmount: 100, mealPlan: 'breakfast', mealPlanUnitPrice: 10, mealPlanPersons: 2, mealPlanTotal: 40 }),
+      baseReservation({ id: 's2', groupId: 'g1', roomId: 'r2', totalAmount: 100, priceBreakdown: null, mealPlan: 'room_only', mealPlanTotal: 0 }),
+      baseReservation({ id: 's3', groupId: 'g1', roomId: 'r3', totalAmount: 100, priceBreakdown: null, mealPlan: 'half_board', mealPlanUnitPrice: 15, mealPlanPersons: 1, mealPlanTotal: 30 }),
+    ]
+    const kinds = buildReceiptLines(group[0], group, []).map((l) => [l.kind, l.amount])
+    expect(kinds.slice(0, 5)).toEqual([['room', 100], ['room', 100], ['room', 100], ['meal_plan', 40], ['meal_plan', 30]])
+    const html = renderReceiptHtml({
+      locator: 'ABC', issuedAt: '2026-09-12T00:00:00.000Z', currency: 'USD', hotel: { name: 'H' }, guest: { name: 'G' },
+      stay: { checkIn: '2026-10-10', checkOut: '2026-10-12', nights: 2, adults: 2, children: 0, needsCrib: false, rooms: 1 },
+      lines, payment: { method: 'Tarjeta', reference: 'cs_1' },
+    })
+    expect(html).toContain('Régimen · Desayuno · 2 personas × 2 noches')
+    expect(html).toContain('<td class="qty">4</td>')
+  })
+
   it('sin priceBreakdown (reserva vieja) → alojamiento = totalAmount, sin impuestos', () => {
     const lines = buildReceiptLines({ roomId: 'r1', totalAmount: 120, priceBreakdown: null })
     expect(lines.map((l) => [l.kind, l.amount])).toEqual([['room', 120], ['total', 120]])

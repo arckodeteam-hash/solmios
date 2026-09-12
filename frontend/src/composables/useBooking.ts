@@ -39,9 +39,12 @@ import { computed, ref } from 'vue'
 import { BookingService } from '@/services/Booking.service'
 import { ApiError } from '@/services/http'
 import type {
+  CartLineMealPlan,
   CreateBookingResponse,
   CancelReservationResponse,
   CancellationSummary,
+  MealPlanCode,
+  MealPlanPriceMode,
   PromoValidationResult,
   PromoValidationReason,
   PublicMealPlan,
@@ -197,6 +200,37 @@ export interface RoomAmenityLine {
   total: number
 }
 
+/** MR-03 (#268) — el régimen de una línea del carrito, resuelto para el resumen/pago (espejo de
+ *  `RoomAmenityLine`, pero UNA fila por línea, no por ítem). Solo líneas con régimen ≠
+ *  `room_only`; las `included` van con `total` 0 para que el desglose diga "incluido". `total` =
+ *  `mealPlan.total × quantity`. */
+export interface MealPlanLine {
+  lineKey: string
+  roomName: string
+  code: MealPlanCode
+  priceMode: MealPlanPriceMode
+  persons: number
+  nights: number
+  quantity: number
+  unitPrice: number
+  total: number
+}
+
+/** MR-03 (#268) — los 3 códigos fijos del catálogo, en el orden que muestra la UI (mismo criterio
+ *  que el backend, `public-meal-plans.ts` CODE_ORDER). "Solo alojamiento" no es un código del
+ *  catálogo: es la base implícita. */
+export const MEAL_PLAN_CODES: readonly MealPlanCode[] = ['breakfast', 'half_board', 'all_inclusive']
+
+/** MR-03 (#268) — importe de un régimen para UNA habitación: la MISMA fórmula que el backend
+ *  (`public-meal-plan-lines.ts:resolveMealPlanLine`): `price × persons × nights` si se cobra por
+ *  persona y noche, 0 si viene incluido en la tarifa. `persons` = adultos + niños con plaza (los
+ *  niños libres no pagan régimen). Compartida con `useGuestComposer.ts` para que la tarjeta y el
+ *  carrito nunca muestren dos números distintos. */
+export function computeMealPlanTotal(priceMode: MealPlanPriceMode | null, price: number, persons: number, nights: number): number {
+  if (priceMode !== 'per_person_per_night') return 0
+  return round2((Number(price) || 0) * Math.max(0, persons) * Math.max(0, nights))
+}
+
 export interface CartLine {
   key: string
   roomType: string
@@ -231,6 +265,12 @@ export interface CartLine {
    *  (`CreateBookingRoomAmenity`) — él cobra el precio real de la habitación que asigna.
    *  `undefined` en líneas sin amenidades elegidas. Importe de la línea = Σ price × `quantity`. */
   roomAmenities?: CartLineRoomAmenity[]
+  /** MR-03 (#268, régimen) — elegido para ESTA línea, POR LÍNEA como las amenidades. SNAPSHOT del
+   *  catálogo (`store.mealPlans`) tomado al agregar: código, modo, precio unitario, personas que
+   *  pagan y el importe por unidad ya calculado. Al backend viaja solo el código (`mealPlan`) — él
+   *  recalcula contra su catálogo activo. `undefined` = solo alojamiento (nunca se guarda
+   *  `room_only`). Importe de la línea = `mealPlan.total × quantity`. */
+  mealPlan?: CartLineMealPlan
   /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
   unitPrice: number
   unitTaxBreakdown: RoomTypeTaxItem[]
@@ -304,7 +344,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  silencio. */
   function cartLineKeyForComposition(
     roomType: string, adults: number, childrenAges: number[], needsCrib = false,
-    roomAmenityKeys: string[] = [],
+    roomAmenityKeys: string[] = [], mealPlan: string | null = null,
   ): string {
     const sortedAges = [...childrenAges].sort((a, b) => a - b).join('.')
     // REQ-01 (#290) — las amenidades de la habitación entran en la key por el MISMO motivo que la
@@ -314,7 +354,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // amenidades de habitación no cambien.
     const sortedRoomAmenities = [...new Set(roomAmenityKeys)].sort().join(',')
     const base = `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}`
-    return sortedRoomAmenities ? `${base}|ra${sortedRoomAmenities}` : base
+    const withRoomAmenities = sortedRoomAmenities ? `${base}|ra${sortedRoomAmenities}` : base
+    // MR-03 (#268) — el régimen, ídem: misma composición con distinto régimen = habitaciones
+    // DISTINTAS (una con desayuno y otra sin no se funden en "×2"). Segmento solo si hay régimen.
+    return mealPlan && mealPlan !== 'room_only' ? `${withRoomAmenities}|mp${mealPlan}` : withRoomAmenities
   }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
@@ -322,11 +365,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const upsellsLoading = ref(false)
   const selectedUpsells = ref<SelectedUpsell[]>([])
 
-  // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4) ──────────────────────
+  // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4 → MR-03 #268) ─────────
   // Los regímenes se muestran DESDE que aparece la lista de habitaciones (RoomsStep) —
-  // se cargan junto con `search()`. Solo informativo esta fase: "Solo alojamiento" es la
-  // base implícita (no viene del backend); `priceMode:'per_person_per_night'` se muestra
-  // con precio pero NO es seleccionable todavía (ver alcance en el plan aprobado).
+  // se cargan junto con `search()`. "Solo alojamiento" es la base implícita (no viene del
+  // backend). MR-03: cada tarjeta elige UNO por habitación (`useGuestComposer.setMealPlan`), la
+  // línea del carrito guarda el snapshot (`CartLine.mealPlan`) y `per_person_per_night` se cobra
+  // `price × (adultos + niños con plaza) × noches` — misma fórmula que el backend.
   //
   // `upsells` también se precarga junto con `search()` (igual que mealPlans, ver mismo
   // motivo abajo): un composer que necesite mostrar el catálogo de extras ANTES de
@@ -362,6 +406,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
   // ─── Estado de la máquina ─────────────────────────────────────────────────────
   const status = ref<BookingStatus>('idle')
   const error = ref<string | null>(null)
+  // #267 — localizador (8 chars del reservationId) cuando la reserva se creó SIN pasarela:
+  // PayStep lo muestra como aviso "recibimos tu pedido" en lugar de un error rojo.
+  const receivedUnpaidLocator = ref<string | null>(null)
 
   // ─── Multi-moneda (D10, task 2.15) ────────────────────────────────────────────
   // `currencyPreference` es lo que el usuario eligió en el switcher ('' = auto/detect).
@@ -471,9 +518,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return [...seen.values()]
   })
 
-  /** Subtotal room(s)+upsells+amenidades de habitación ANTES de promo e impuestos — misma cuenta
-   *  que `totalBreakdown.subtotal` del backend. Promo se aplica sobre este monto. */
-  const subtotal = computed(() => round2(roomsSubtotal.value + upsellsTotal.value + roomAmenitiesTotal.value))
+  /** Subtotal room(s)+upsells+amenidades de habitación+régimen ANTES de promo e impuestos — misma
+   *  cuenta que `totalBreakdown.subtotal` del backend. Promo se aplica sobre este monto. */
+  const subtotal = computed(() => round2(
+    roomsSubtotal.value + upsellsTotal.value + roomAmenitiesTotal.value + mealPlansTotal.value,
+  ))
 
   /** Bebés del carrito (subconjunto de `cartTotalFreeChildren`, misma cuenta). No consumen
    *  desayuno ni transfer: se restan de las personas que multiplican un extra por persona. */
@@ -589,6 +638,29 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return lines
   })
 
+  /** MR-03 (#268) — Σ del régimen de TODAS las líneas: `mealPlan.total × quantity`. Snapshot de
+   *  cada línea (en `chargeCurrency`, igual que upsells/amenidades). `included` aporta 0. */
+  const mealPlansTotal = computed(() => round2(
+    cart.value.reduce((s, l) => s + (l.mealPlan ? Number(l.mealPlan.total) || 0 : 0) * l.quantity, 0),
+  ))
+
+  /** MR-03 (#268) — régimen elegido, una fila por línea del carrito que lo tenga (≠ room_only),
+   *  para verlo por separado en el resumen/pago (espejo de `roomAmenityLines`). Las `included`
+   *  entran con `total` 0 — el desglose las muestra como "incluido", no las oculta. */
+  const mealPlanLines = computed<MealPlanLine[]>(() => {
+    const lines: MealPlanLine[] = []
+    for (const l of cart.value) {
+      const mp = l.mealPlan
+      if (!mp || mp.code === 'room_only' || !mp.priceMode) continue
+      lines.push({
+        lineKey: l.key, roomName: l.roomName, code: mp.code, priceMode: mp.priceMode,
+        persons: mp.persons, nights: nights.value, quantity: l.quantity, unitPrice: mp.unitPrice,
+        total: round2((Number(mp.total) || 0) * l.quantity),
+      })
+    }
+    return lines
+  })
+
   const promoDiscount = computed(() =>
     promoResult.value?.valid ? Number(promoResult.value.discount) || 0 : 0,
   )
@@ -685,6 +757,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     if (typeof opts?.rooms === 'number' && Number.isFinite(opts.rooms)) rooms.value = Math.max(1, opts.rooms)
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
   }
 
   /** Step 0 → 1: dispara GET /rates. Idempotente: si ya hay rates para las mismas fechas
@@ -847,6 +920,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
    * gateo por niños: una cama extra se pide para cualquier composición. La cuna (#292,
    * `custom:cuna`) llega por acá también — el composer la agrega a `roomAmenityKeys` sólo con
    * bebé y con el tipo ofreciéndola; el backend la re-valida contra la composición real.
+   *
+   * MR-03 (#268): `mealPlan` (código del catálogo `mealPlans`) se resuelve a un SNAPSHOT
+   * `{code, priceMode, unitPrice, persons, total}` en la línea, con `total = price × (adultos +
+   * niños con plaza) × noches` (0 si `included`) — misma fórmula que el backend. Un código que el
+   * hotel no tiene activo (o `'room_only'`) se ignora: la línea queda como solo alojamiento.
    */
   async function addToCart(
     room: RoomTypeRate,
@@ -856,6 +934,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
       needsCrib?: boolean; cribCount?: number
       // REQ-01 (#290) — amenidades DE la habitación (cuna, cama extra…) de ESTA línea.
       roomAmenityKeys?: string[]
+      // MR-03 (#268) — régimen de ESTA línea ('room_only' u omitido = solo alojamiento).
+      mealPlan?: string
     },
   ): Promise<void> {
     const isComposition = typeof occupancy === 'object' && occupancy !== null
@@ -899,10 +979,15 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // REQ-01 (#290) — snapshot del catálogo POR TIPO para esta línea: solo keys conocidas, sin
     // duplicados, en el orden del catálogo. No depende de la composición.
     const lineRoomAmenities: CartLineRoomAmenity[] = isComposition ? resolveRoomAmenities(room.id, occupancy.roomAmenityKeys) : []
+    // MR-03 (#268) — snapshot del régimen para esta línea: personas que pagan = ocupación
+    // chargeable (adultos + niños con plaza), noches de la búsqueda actual.
+    const lineMealPlan: CartLineMealPlan | null = isComposition
+      ? resolveMealPlan(occupancy.mealPlan, composition!.effectiveAdults + composition!.payingChildren)
+      : null
     const key = isComposition
       ? cartLineKeyForComposition(
         room.id, occupancy.adults, occupancy.childrenAges, occupancy.needsCrib,
-        lineRoomAmenities.map((a) => a.key),
+        lineRoomAmenities.map((a) => a.key), lineMealPlan?.code ?? null,
       )
       : cartLineKey(room.id, effectiveOccupancy)
     const cap = Math.max(1, room.availableCount)
@@ -920,6 +1005,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
         ...(isComposition && occupancy.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
         // REQ-01 (#290) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
         ...(lineRoomAmenities.length > 0 ? { roomAmenities: lineRoomAmenities } : {}),
+        // MR-03 (#268) — solo con régimen ≠ solo alojamiento (nunca se guarda `room_only`).
+        ...(lineMealPlan ? { mealPlan: lineMealPlan } : {}),
       })
     }
 
@@ -944,6 +1031,22 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return roomAmenitiesFor(roomTypeId)
       .filter((a) => wanted.has(a.key))
       .map((a) => ({ key: a.key, name: a.name, price: Number(a.price) || 0 }))
+  }
+
+  /** MR-03 (#268) — resuelve el código elegido contra el catálogo activo cargado
+   *  (`store.mealPlans`). Devuelve el snapshot `{code, priceMode, unitPrice, persons, total}` o
+   *  `null` para `room_only`/omitido/código que el hotel no tiene activo (el backend igual lo
+   *  rechazaría con `meal_plan_unavailable` — acá se degrada a solo alojamiento, nunca se muestra
+   *  un total con un régimen que después no se cobra). */
+  function resolveMealPlan(code: string | undefined, persons: number): CartLineMealPlan | null {
+    if (!code || code === 'room_only') return null
+    const found = mealPlans.value.find((m) => m.code === code)
+    if (!found) return null
+    const unitPrice = Number(found.price) || 0
+    return {
+      code: found.code, priceMode: found.priceMode, unitPrice, persons,
+      total: computeMealPlanTotal(found.priceMode, unitPrice, persons, nights.value),
+    }
   }
 
   /** Quita una línea entera del carrito (todas sus unidades) — sin afectar las demás. */
@@ -1107,6 +1210,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
     isSubmitting.value = true
     error.value = null
+    receivedUnpaidLocator.value = null
     if (!idempotencyKey.value) idempotencyKey.value = genIdempotencyKey()
     try {
       const base = window.location.origin
@@ -1166,6 +1270,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
           ...(line.roomAmenities && line.roomAmenities.length > 0
             ? { roomAmenities: line.roomAmenities.map((a) => ({ key: a.key })) }
             : {}),
+          // MR-03 (#268) — solo el código: el backend recalcula contra su catálogo activo.
+          ...(line.mealPlan && line.mealPlan.code !== 'room_only' ? { mealPlan: line.mealPlan.code } : {}),
           guest: guestPayload,
           ...promoPayload,
           ...upsellsPayload,
@@ -1193,6 +1299,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
             ...(l.roomAmenities && l.roomAmenities.length > 0
               ? { roomAmenities: l.roomAmenities.map((a) => ({ key: a.key })) }
               : {}),
+            // MR-03 (#268) — POR LÍNEA, igual que las amenidades.
+            ...(l.mealPlan && l.mealPlan.code !== 'room_only' ? { mealPlan: l.mealPlan.code } : {}),
           })),
           guest: guestPayload,
           ...promoPayload,
@@ -1213,11 +1321,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
         window.location.href = res.checkoutUrl
         return
       }
-      // Sin checkoutUrl: Stripe no configurado o gateway caído. Reserva creada pending.
+      // Sin checkoutUrl: Stripe no configurado o gateway caído (`res.paymentError`). La reserva
+      // existe (pending) y el backend (#267) ya le mandó al huésped el correo "recibimos tu
+      // pedido"; el hotel lo contacta para coordinar el pago. NO es un error: se deja
+      // status='failed' sólo para que el widget quede en PayStep, y PayStep muestra el
+      // localizador en vez del texto rojo.
       status.value = 'failed'
-      error.value = res.paymentError
-        ? `Tu reserva quedó creada pero el pago no se pudo iniciar (${res.paymentError}). Te contactaremos.`
-        : 'Tu reserva quedó creada pero el pago online no está disponible. Te contactaremos.'
+      error.value = null
+      receivedUnpaidLocator.value = String(res.reservationId).slice(0, 8)
     } catch (e) {
       status.value = 'failed'
       error.value = errMessage(e, 'No se pudo crear la reserva. Probá de nuevo.')
@@ -1264,6 +1375,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     promoLoading.value = false
     status.value = 'idle'
     error.value = null
+    receivedUnpaidLocator.value = null
     reservation.value = null
     isSubmitting.value = false
     idempotencyKey.value = ''
@@ -1296,6 +1408,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     promoLoading,
     status,
     error,
+    receivedUnpaidLocator,
     reservation,
     isSubmitting,
     idempotencyKey,
@@ -1330,6 +1443,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     upsellStayPrice,
     roomAmenitiesTotal,
     roomAmenityLines,
+    mealPlansTotal,
+    mealPlanLines,
     totalBreakdown,
     searchValid,
     roomsValid,

@@ -13,12 +13,12 @@ import type { NotificationLanguage } from '../../services/notification-defaults'
 import { escapeHtml } from '../../services/notification-renderer'
 import { DEFAULT_PLATFORM_IDENTITY } from '../utils/platform-identity'
 
+import { ROOM_ONLY } from './meal-plan-labels'
+
 export const CRIB_NO: Record<NotificationLanguage, string> = { es: 'No', en: 'No', pt: 'Não' }
 
-/** La reserva no persiste régimen todavía: sin dato se informa "sólo alojamiento". */
-export const ROOM_ONLY: Record<NotificationLanguage, string> = {
-  es: 'Sólo alojamiento', en: 'Room only', pt: 'Somente hospedagem',
-}
+/** Sin régimen (`room_only`, MR-03 #268) se informa "sólo alojamiento". Etiquetas en meal-plan-labels.ts. */
+export { ROOM_ONLY }
 
 /** Todas las variables que usan las plantillas de `reservation_confirmed`, en valor neutro. */
 export function confirmationVariableDefaults(

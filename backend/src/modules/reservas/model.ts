@@ -6,7 +6,16 @@ export const ReservasModel: ModelDefinition = {
   fields: {
     id: { type: 'string', required: true },
     guestId: { type: 'string' },
-    roomId: { type: 'string', required: true },
+    // REQ-HAC-01 (#256/#258) — La habitación se asigna al check-in, no al reservar: `roomId` es
+    // nullable (una reserva sin habitación es válida; `scripts/relax-reservations-roomid.ts` quita el
+    // NOT NULL de las bases viejas). Lo que se vende es el TIPO: `roomType` = `rooms.type` (vacío en
+    // filas anteriores a #258 hasta que corra `scripts/backfill-reservation-room-type.ts`).
+    // `roomAssignedAt`/`roomAssignedBy` (users.id) registran quién y cuándo asignó la unidad
+    // (REQ-HAC-03). Anti-patrón ORM D5: declarados acá, case-sensitive, o se descartan al persistir.
+    roomId: { type: 'string' },
+    roomType: { type: 'string', indexed: true },
+    roomAssignedAt: { type: 'string' },
+    roomAssignedBy: { type: 'string' },
     hotelId: { type: 'string', required: true, indexed: true },
     checkIn: { type: 'string', required: true },
     checkOut: { type: 'string', required: true },
@@ -71,6 +80,22 @@ export const ReservasModel: ModelDefinition = {
     // En un grupo cada unidad física lleva las suyas (ver public-booking-group.ts).
     roomAmenities: { type: 'json' },
     roomAmenitiesTotal: { type: 'number', default: 0 },
+    // MR-03 (#268) — Régimen (desayuno / media pensión / todo incluido) elegido desde la web.
+    // Snapshot congelado con el mismo criterio que `childAmenities`: `mealPlanUnitPrice` es el
+    // precio por persona y noche RELEÍDO del catálogo `meal_plans` al reservar (nunca del body),
+    // `mealPlanTotal` = unitPrice × (adultos + niños con plaza) × noches, ya incluido en
+    // `totalAmount`/`priceBreakdown.subtotal`. Sin default: `null` en reservas anteriores a esta
+    // feature (el panel muestra "—"). El flujo público escribe también `regime` (más abajo) con
+    // el mismo código para que el modal/listado existentes lo muestren.
+    mealPlan: { type: 'string' },
+    mealPlanPriceMode: { type: 'string' },
+    mealPlanUnitPrice: { type: 'number', default: 0 },
+    mealPlanTotal: { type: 'number', default: 0 },
+    // Personas que pagaron el régimen (adultos + niños con plaza, sin bebés) al reservar. Se
+    // persiste porque derivarlas de `mealPlanTotal ÷ (unitPrice × noches)` con las fechas
+    // ACTUALES inventa un número al reagendar. Sin default ni backfill: `null` en reservas
+    // anteriores a la columna → el panel no muestra personas.
+    mealPlanPersons: { type: 'number' },
     notes: { type: 'text' },
     // #270 — Hora estimada de llegada y pedido especial del huésped, estructurados. Hasta ahora
     // solo iban dentro de `notes` como texto libre ("Llegada estimada: ..." / "Pedido especial:
@@ -148,6 +173,14 @@ export const ReservasModel: ModelDefinition = {
     cancellationFee: { type: 'number', default: 0 },
     refundAmount: { type: 'number', default: 0 },
     policyApplied: { type: 'json' },
+    // #272 — Estado del reembolso REAL en la pasarela tras una cancelación web (lo escribe
+    // shared/usecases/web-booking-refund.ts). none = no correspondía (refundAmount 0) · pending =
+    // en curso · done = Stripe devolvió (refundedAt ISO + refundPaymentId = fila `payments` type
+    // 'refund') · failed = no salió, el hotel puede reintentar desde la reserva. En un grupo las N
+    // filas llevan el mismo estado. Case-sensitive (anti-patrón ORM). RUN_MIGRATE ADD COLUMN.
+    refundStatus: { type: 'string', default: 'none' },
+    refundedAt: { type: 'string' },
+    refundPaymentId: { type: 'string' },
     // Pre-checkin público (prototipo 8 pasos): firma digital + timestamp de aceptación del
     // contrato. signatureUrl es la URL del storage (carpeta 'signatures') donde queda la imagen
     // del canvas firmado; contractAcceptedAt es el ISO timestamp de cuándo el huésped aceptó.

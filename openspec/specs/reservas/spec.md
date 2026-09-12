@@ -430,6 +430,63 @@ re-evalúa en vivo al cambiar la edad de un menor.
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
 
+### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268)
+
+El hotel configura sus regímenes en `meal_plans` (`code` breakfast|half_board|all_inclusive,
+`active`, `priceMode` included|per_person_per_night, `price`). "Solo alojamiento" (`room_only`)
+NO tiene fila: es la base implícita, siempre disponible y sin costo. El motor público MUST
+aceptar `mealPlan` por habitación (`mealPlan` en el body single y en cada `rooms[i]` del grupo)
+y resolverlo SIEMPRE contra el catálogo del hotel (`public-meal-plan-lines.ts`): precio y modo
+se releen de `meal_plans`, nunca del body. Un código inexistente, inactivo o de otro hotel
+MUST rechazar con 400 `meal_plan_unavailable` ANTES de escribir nada (a diferencia de las
+amenidades, que se ignoran con warn: el régimen cambia el precio que el huésped vio y eligió).
+El importe es `price × persons × nights` con `persons = adultos efectivos + niños con plaza`
+(`childComposition.effectiveAdults + payingChildren`; bebés y niños libres no pagan) y
+`included` → 0. Entra en `subtotal` ANTES de promo e impuestos, se desglosa en
+`priceBreakdown.mealPlanTotal` y se resume en `notes` ("Régimen: Media pensión (2 pers × 3
+noches = 90.00)"). Cada fila `reservations` persiste el snapshot congelado `mealPlan`,
+`mealPlanPriceMode`, `mealPlanUnitPrice`, `mealPlanTotal` (unitario por habitación física;
+en un grupo `priceBreakdown.mealPlanTotal` = Σ líneas × quantity) y escribe `regime` con el
+mismo código para el panel. Cambiar `meal_plans` después NO altera reservas existentes.
+Reservas anteriores o creadas desde el panel quedan `mealPlan = null` (el panel muestra "—" o
+el `regime` manual). `GET /rates` MUST devolver `mealPlans[]` activos con `perNight`,
+`totalForStay`, `persons` y `nights` ya resueltos para `guests + children` (misma fórmula,
+en `chargeCurrency`, sin conversión) y la confirmación pública (`public-reservation.ts`)
+expone el snapshot. El widget y la landing ofrecen el régimen como radio por habitación
+("Solo alojamiento" + los activos; los no ofrecidos visibles y deshabilitados, sin
+"Próximamente"), muestran el importe antes de agregar al carrito y la fila "Régimen: … · N
+pers × M noches" en el desglose; el panel lo muestra en el modal, filtra por él en el listado
+y lo ve recepción en las llegadas del día.
+
+#### Scenario: Desayuno por persona y noche con niño con plaza y bebé
+
+- GIVEN breakfast `per_person_per_night` 10 activo, 2 adultos + 1 niño con plaza + 1 bebé, 3 noches
+- WHEN se reserva con `mealPlan: 'breakfast'`
+- THEN `mealPlanTotal = 90`, `subtotal = habitación + 90`, impuestos sobre `(subtotal − promo)`,
+  `Reservations.mealPlan = 'breakfast'`, `mealPlanUnitPrice = 10`, `regime = 'breakfast'`
+- AND `GET /rates?guests=2&children=1` devolvió `mealPlans[breakfast].totalForStay = 90`
+
+#### Scenario: Régimen inactivo en ese hotel
+
+- GIVEN `half_board` inactivo (o inexistente) para el hotel
+- WHEN se reserva con `mealPlan: 'half_board'`
+- THEN 400 `meal_plan_unavailable` y ninguna reserva ni huésped creados
+
+#### Scenario: Régimen incluido y snapshot congelado
+
+- GIVEN `all_inclusive` con `priceMode: included`
+- WHEN se reserva con él
+- THEN `mealPlanTotal = 0`, `mealPlan = 'all_inclusive'`, `mealPlanPriceMode = 'included'`
+- AND si después el hotel cambia el precio de un régimen, la reserva ya creada conserva su
+  `mealPlanTotal`; una reserva nueva cobra el precio nuevo
+
+#### Scenario: Grupo con regímenes distintos por línea
+
+- GIVEN 2 líneas, una con breakfast y otra con half_board
+- WHEN se reserva el grupo
+- THEN cada fila `reservations` lleva su propio `mealPlan`/`mealPlanTotal` y
+  `priceBreakdown.mealPlanTotal` es la suma
+
 ### Requirement: Intentos de la pasarela en el detalle de la reserva (REQ-RWP-02)
 
 El detalle extendido (`GET /api/reservations/:id`) MUST devolver `paymentAttempts[]`: la
@@ -720,7 +777,7 @@ esas mismas filas por tipo/nombre (nunca el número: la unidad puede reasignarse
 víspera).
 
 `GET /api/public/reservations/:id/receipt.pdf?token=` MUST responder `application/pdf` (A4 vía
-`facturas/usecases/pdf.ts`, template `shared/usecases/payment-receipt.ts`, leyenda "Recibo de
+`infrastructure/pdf.ts`, template `shared/usecases/payment-receipt.ts`, leyenda "Recibo de
 pago · no es factura fiscal": hotel con `ownerTaxId`, huésped, localizador, líneas, impuestos,
 total, método y `payments.reference`) con el MISMO HMAC y el MISMO body 404 que
 `GET /api/public/reservations/:id` (`reservationTokenMatches`); rate limit 10/min por IP. El
@@ -755,6 +812,82 @@ seed que refrescar) y el flujo del panel (`reservation-email.ts`) parte de
 
 - WHEN `enqueueNotification` lanza
 - THEN se crea la notificación `system` al hotel con el email del huésped y la función devuelve `false`
+
+### Requirement: La reserva vende un tipo; la habitación física se asigna (REQ-HAC-01 mínimo + REQ-HAC-03, #258)
+
+**Modelo (HAC-01, lo mínimo que HAC-03 necesita; el resto de #256 —tipo obligatorio y `roomId`
+opcional en el alta— es HAC-05).** `reservations.roomType` (string, indexado) es el tipo vendido
+(= `rooms.type`); `roomId` es nullable ("dónde duerme"); `roomAssignedAt`/`roomAssignedBy` registran
+quién y cuándo asignó. El alta desde el panel sigue exigiendo `roomId` y rellena `roomType` con el
+`type` de esa habitación cuando no viene. Migración por script (`ormMigrate` NO relaja `NOT NULL`):
+`scripts/relax-reservations-roomid.ts` (PG `ALTER COLUMN roomid DROP NOT NULL`; SQLite recrea la tabla
+sin la restricción, copiando por nombre e índices, en transacción) y
+`scripts/backfill-reservation-room-type.ts` (`roomType = rooms.type` de la asignada, SQL puro),
+ambos idempotentes y llamados desde `migrate-db.ts` tras `addColumnIfMissing` de las tres columnas.
+
+**Un solo camino para asignar (`usecases/assign-room.ts`).** `validateRoomAssignment` MUST: 400 si la
+habitación no existe o no es del hotel de la reserva; 409 `room_not_sellable` si `isRoomSellable`
+falla (`maintenance`/`out_of_order`); 409 `room_overlap` (con `conflictReservationId`, `locator` =
+`externalLocator || id`, o `blockId`) si otra reserva **asignada** no cancelada/no_show solapa las
+noches o hay un `RoomBlock` sobre ellas (`assertNoRoomConflict`); 409 `type_mismatch` (`expected`,
+`actual`) si `rooms.type` difiere del tipo vendido y no viene `allowTypeChange` — con él se actualiza
+`roomType` y se audita `reservation.room_type_changed`. El tipo vendido es `roomType` o, en filas
+anteriores al backfill, el de la habitación actual; sin ninguno no hay mismatch y se fija el de la
+unidad. Los códigos viajan en `details.reason` del 409.
+
+`assignRoom` MUST rechazar 409 `invalid_status` en `cancelled`/`no_show`/`checked_out`, ser idempotente
+si ya tiene esa habitación, escribir `roomId/roomAssignedAt/roomAssignedBy`, auditar
+`reservation.room_assigned` `{from, to}` y emitir `onRoomAssigned({reservationId, hotelId, roomId,
+previousRoomId})`. Reasignar una `checked_in` MUST mover el folio abierto (`folios.roomId`), poner la
+anterior en `cleaning` (el vocabulario real de "dirty", `shared/usecases/room-status.ts`) y la nueva
+en `occupied`, **en la misma transacción que la fila de la reserva** (`ReservasQueries.transaction`,
+`FolioRoomWriter.updateReservation`): si mover falla, la reserva no queda apuntando a una unidad cuyo
+folio sigue en la anterior. `unassignRoom` sólo en `pending`/`confirmed` (409 `invalid_status`),
+deja `roomId/roomAssignedAt/roomAssignedBy` en null, conserva `roomType`, audita
+`reservation.room_unassigned` y emite `onRoomAssigned` con `roomId: null`.
+
+**Endpoints** (todos `guard('reservations','edit')` + `moduleGuard`, ownership post-findById con
+bypass `super_admin`): `GET /api/reservas/:id/assignable-rooms` devuelve las unidades vendibles del
+hotel sin solape esas noches (reservas asignadas + bloqueos; la propia reserva no choca consigo
+misma) como `{id, number, floor, status, cleaningStatus: clean|dirty, typeMismatch, suggested}`,
+sólo del tipo vendido salvo `?allTypes=1`, ordenadas limpia+available → libre con otro estado →
+resto (`suggested` en la primera del primer grupo). `POST /api/reservas/:id/assign-room`
+`{roomId, allowTypeChange?}` (`AssignRoomSchema`) y `DELETE /api/reservas/:id/assign-room`. El
+controller mapea `ConflictError` a 409 con `details` y hace push de disponibilidad a Channex para la
+nueva y la anterior (best-effort).
+
+`PUT /api/reservas/:id` con `roomId` distinto delega en `validateRoomAssignment` (mismos 409; sin
+`allowTypeChange` en el body → `type_mismatch`), rechaza 409 `use_unassign_endpoint` si viene vacío,
+`use_assign_endpoint` si la reserva está `checked_in` (mover una estadía es `POST /assign-room`) e
+`invalid_status` en cerradas; tras persistir audita y emite `onRoomAssigned`. `validate-update.ts`
+ya no valida solape por su cuenta: sólo cuando cambian fechas sin cambiar habitación re-chequea la
+unidad actual con `assertNoRoomConflict`. `POST /:id/reschedule` con cambio de habitación manda
+`allowTypeChange: true` (el quote ya decidió tipo y precio) y, si la reserva está `checked_in`,
+pre-valida el rango nuevo y delega en `assignRoom` antes de persistir fechas/total (deuda #314: las
+dos escrituras no comparten transacción).
+
+**Código de puerta al asignar (`connectors/reservas-ttlock.ts`, `payment-requests-ttlock.ts`).**
+`onRoomAssigned` genera el código TTLock sólo si la reserva está confirmada/pagada (`confirmed`,
+`checked_in`, `depositStatus: paid` o saldo 0 con total > 0): primera asignación →
+`generateCodeIfAbsent`; cambio de habitación → `generateCode` (que revoca los anteriores:
+**un código vigente por reserva**); `roomId: null` → `expireCodesByReservation`. Al pagarse la seña
+sólo se genera si la reserva ya tiene habitación (sin unidad no hay cerradura; 0 códigos). Todo
+best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
+
+#### Scenario: asignar en estadía mueve folio y estados
+- **GIVEN** una reserva `checked_in` en la 101 con folio abierto
+- **WHEN** `POST /assign-room {roomId: 102}`
+- **THEN** 200; `folios.roomId = 102`; la 101 queda `cleaning` y la 102 `occupied`; audit `reservation.room_assigned {from: 101, to: 102}`; `onRoomAssigned` con `previousRoomId: 101` y TTLock reemplaza el código
+
+#### Scenario: la ocupada no aparece y el tipo distinto exige el flag
+- **GIVEN** la 101 ocupada esas noches por otra reserva y la 201 de tipo `suite` para una reserva `double`
+- **WHEN** `GET /assignable-rooms`
+- **THEN** no devuelve la 101; sin `?allTypes=1` tampoco la 201; con él la marca `typeMismatch: true`; `POST /assign-room {roomId: 201}` → 409 `type_mismatch` y con `allowTypeChange: true` → 200 con `roomType: suite`
+
+#### Scenario: pago sin habitación no genera código
+- **GIVEN** una reserva web pagada sin `roomId`
+- **WHEN** llega `onPaymentRequestPaid`
+- **THEN** 0 códigos; al asignarle habitación → 1 código activo
 
 ### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
 
@@ -813,6 +946,52 @@ las filas para las reservas del motor anteriores al cambio a partir de
 - GIVEN folio con noche + 2 extras y prepago 165.20
 - WHEN checkout
 - THEN factura con 3 líneas, `amountPaid = total`, saldo 0 y `creditBalance` 0
+
+### Requirement: Reintentar el reembolso de una cancelación web (#272)
+
+`POST /api/reservas/:id/retry-refund` (permiso `reservations:edit`; ownership post-findById con
+bypass `super_admin`; sin body) vuelve a ejecutar en Stripe el reembolso que
+`shared/usecases/web-booking-refund` dejó `failed` al cancelar desde el motor público
+(`usecases/retry-refund.ts`, puerto `retryWebRefund` cableado por
+`connectors/bookingengine-refunds.ts`; sin puerto → 400, fail-closed). MUST aplicar sólo a
+reservas `cancelled` con `refundAmount > 0` (409 en otro caso) y usar SIEMPRE el
+`refundAmount` de la reserva, nunca uno del cliente. Idempotente: `refundStatus:'done'` responde
+200 con el estado actual sin tocar la pasarela. MUST responder 409 ("reembolso en curso") si hay
+un `refundStatus:'pending'` FRESCO (escrito hace menos de `REFUND_PENDING_STALE_MS`, 10 min —
+helper `isRefundInFlight`): es un reembolso en vuelo esperando a Stripe y el compare-and-swap
+`claimRefund` (guard por `updatedAt`) solo no lo ve; un `pending` viejo (proceso muerto tras
+reclamar) sí se reintenta. Mueve dinero → MUST auditar `reservation.refund_retry`
+(`userId` del token, `detail: resultado=<status> monto=<refundAmount> refundPaymentId=<id|->`)
+y el refund en `payments` se asienta a nombre del usuario que reintentó (no de `system`).
+Respuesta 200 `{reservationId, refundStatus, refundedAt, refundPaymentId, refundAmount}`
+releídos de la reserva.
+
+#### Scenario: Reintento sobre un reembolso fallido
+
+- GIVEN reserva `cancelled`, `refundAmount:100`, `refundStatus:'failed'`
+- WHEN `POST /:id/retry-refund` con un usuario `reservations:edit` del hotel
+- THEN 200 con `refundStatus:'done'`, `refundPaymentId` y `refundedAt`; `payments.refundPayment`
+  recibió 100 con ese usuario como actor; audit `reservation.refund_retry` con
+  `resultado=done monto=100 refundPaymentId=<id>`
+
+#### Scenario: Ya reembolsada
+
+- GIVEN `refundStatus:'done'`
+- WHEN `POST /:id/retry-refund`
+- THEN 200 con el estado actual y NO se llama a la pasarela
+
+#### Scenario: Reembolso en curso
+
+- GIVEN `refundStatus:'pending'` con `updatedAt` de hace 1 minuto
+- WHEN `POST /:id/retry-refund`
+- THEN 409 "Ya hay un reembolso en curso" sin llamar a la pasarela ni auditar
+- AND con `updatedAt` de hace 15 minutos el reintento sí se ejecuta
+
+#### Scenario: Sin plata que devolver o de otro hotel
+
+- WHEN `POST /:id/retry-refund` sobre una reserva `confirmed`, o `cancelled` con `refundAmount:0`
+- THEN 409 sin efectos
+- AND un `hotel_admin` de otro hotel recibe 403
 
 ### Requirement: Rechazo manual de una reserva web pendiente de aprobación (#271 MR-06)
 
