@@ -9,11 +9,13 @@ export async function getPreCheckinData(hash: string, hotelRepo: any, roomRepo: 
   if (reservation.checkOut && String(reservation.checkOut).slice(0, 10) < today) throw new NotFoundError('Esta reserva ya expiró')
   const hotels = await hotelRepo.findMany({ id: reservation.hotelId }) as any[]
   const hotel = hotels?.[0] as any
-  const rooms = await roomRepo.findMany({ id: reservation.roomId }) as any[]
+  // REQ-HAC-04 (#259): la reserva puede llegar al pre-check-in sin unidad (`roomId = null`, HAC-01).
+  // No se consulta Rooms con `{ id: null }`; el huésped ve el TIPO vendido y `roomNumber` vacío.
+  const rooms = reservation.roomId ? await roomRepo.findMany({ id: reservation.roomId }) as any[] : []
   const room = rooms?.[0] as any
   const guests = reservation.guestId ? await guestRepo.findMany({ id: reservation.guestId }) as any[] : []
   const guest = guests?.[0] as any
-  return { id: reservation.id, reservationId: reservation.id, hash, hotelName: hotel?.name || '', roomNumber: room?.number || '', checkIn: reservation.checkIn, checkOut: reservation.checkOut, guestName: guest?.name || '', email: guest?.email || '' }
+  return { id: reservation.id, reservationId: reservation.id, hash, hotelName: hotel?.name || '', roomNumber: room?.number || '', roomType: reservation.roomType || room?.type || '', checkIn: reservation.checkIn, checkOut: reservation.checkOut, guestName: guest?.name || '', email: guest?.email || '' }
 }
 
 /**

@@ -23,6 +23,8 @@ export interface BookingConfigDTO {
   pendingTtlMinutes: number
   /** #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168, default 24). */
   approvalDeadlineHours: number
+  /** #262 REQ-HAC-07 — Horas antes de la llegada para auto-asignar habitación (0–168, 0 = apagado). */
+  autoAssignBeforeArrivalHours: number
   createdAt: string
   updatedAt: string
 }
@@ -44,6 +46,7 @@ export interface UpdateBookingConfigDTO {
   allowedCountries?: string[]
   pendingTtlMinutes?: number
   approvalDeadlineHours?: number
+  autoAssignBeforeArrivalHours?: number
 }
 
 // ─── Availability ──────────────────────────────────────

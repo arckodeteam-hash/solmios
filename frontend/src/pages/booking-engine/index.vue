@@ -299,6 +299,21 @@
                   />
                   <p class="mt-1 text-[10px] text-text-muted">Con confirmación manual, el hotel recibe un recordatorio cuando una reserva pagada supera este plazo sin aprobar ni rechazar. Entre 1 y 168.</p>
                 </div>
+                <!-- #262 REQ-HAC-07 — auto-asignación de habitación antes de la llegada: el cron de
+                     pase pre-llegada asigna la sugerida si la reserva sigue sin habitación. 0 = apagado. -->
+                <div>
+                  <label for="booking-engine-auto-asignar-horas" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Asignar habitación automáticamente (horas antes de la llegada)</label>
+                  <input id="booking-engine-auto-asignar-horas" name="autoAssignBeforeArrivalHours"
+                    v-model.number="form.autoAssignBeforeArrivalHours"
+                    type="number"
+                    min="0"
+                    max="168"
+                    step="1"
+                    aria-label="Asignar habitación automáticamente (horas antes de la llegada)"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">0 = apagado. Con N &gt; 0, si la reserva sigue sin habitación N horas antes de llegar, el sistema le asigna la sugerida y manda el pase completo.</p>
+                </div>
               </div>
               <!-- F3 (#627): editor estructurado de políticas de cancelación (base + overrides).
                    Reemplaza al textarea libre: el merchant arma niveles de penalidad por hora/%.
@@ -597,6 +612,18 @@ function clampApprovalDeadlineHours(value: unknown): number {
   return Math.min(APPROVAL_DEADLINE_HOURS_MAX, Math.max(APPROVAL_DEADLINE_HOURS_MIN, n))
 }
 
+/** #262 REQ-HAC-07: rango que acepta el backend para `autoAssignBeforeArrivalHours` (booking_config). */
+const AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_MIN = 0
+const AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_MAX = 168
+const AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_DEFAULT = 0
+
+/** Entero dentro de [0, 168]; un valor vacío/NaN cae al default (0 = apagado). */
+function clampAutoAssignBeforeArrivalHours(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_DEFAULT
+  return Math.min(AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_MAX, Math.max(AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_MIN, n))
+}
+
 function defaultConfig(): BookingConfig {
   return {
     id: '',
@@ -610,6 +637,7 @@ function defaultConfig(): BookingConfig {
     maxNights: 30,
     pendingTtlMinutes: PENDING_TTL_MINUTES_DEFAULT,
     approvalDeadlineHours: APPROVAL_DEADLINE_HOURS_DEFAULT,
+    autoAssignBeforeArrivalHours: AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_DEFAULT,
     cancellationPolicy: '',
     showComparison: false,
     googleAdsEnabled: false,
@@ -749,6 +777,8 @@ async function saveConfig() {
   form.pendingTtlMinutes = clampPendingTtlMinutes(form.pendingTtlMinutes)
   // #271 MR-06: mismo criterio para el plazo de revisión (entero entre 1 y 168 horas).
   form.approvalDeadlineHours = clampApprovalDeadlineHours(form.approvalDeadlineHours)
+  // #262 REQ-HAC-07: auto-asignación (entero entre 0 y 168 horas; 0 = apagado).
+  form.autoAssignBeforeArrivalHours = clampAutoAssignBeforeArrivalHours(form.autoAssignBeforeArrivalHours)
   saving.value = true
   try {
     const [updated] = await Promise.all([

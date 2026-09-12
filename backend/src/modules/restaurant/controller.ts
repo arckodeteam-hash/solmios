@@ -156,7 +156,9 @@ export class RestaurantController {
   async indexOrders(req: HttpRequest) {
     this.logger.info('GET /restaurant/orders')
     const q = req.query as any
-    return { status: 200, body: await this.service.listOrders({ status: q?.status, tableId: q?.tableId }, req.user as any) }
+    // `waiterId=me` → las comandas del usuario del token (pantalla "Mis mesas" del mozo).
+    const waiterId = q?.waiterId === 'me' ? (req.user as any)?.id : q?.waiterId
+    return { status: 200, body: await this.service.listOrders({ status: q?.status, tableId: q?.tableId, waiterId, businessDate: q?.businessDate }, req.user as any) }
   }
   async showOrder(req: HttpRequest) {
     const item = await this.service.getOrder(req.params.id, req.user as any)
@@ -320,7 +322,11 @@ export class RestaurantController {
     const item = await this.service.setLineStatus(req.params.id, data.status, req.user as any)
     return { status: 200, body: item }
   }
-  /** KDS — cocina quita/agrega ingredientes de un plato. El body es el estado final: { removed: string[], added: string[] }. */
+  /** Receta de un ítem de la carta (ingredientes con nombre), para que la comanda del mozo la muestre y edite. */
+  async menuItemIngredients(req: HttpRequest) {
+    return { status: 200, body: await this.service.menuItemIngredients(req.params.id, req.user as any) }
+  }
+  /** Cocina o el mozo quitan/agregan/doblan ingredientes de un plato. El body es el estado final: { removed, added, doubled }. */
   async setLineIngredients(req: HttpRequest) {
     this.logger.info('PUT /restaurant/kds/lines/:id/ingredients', { id: req.params.id })
     const data = validateSchema(KdsLineIngredientsSchema, req.body) as any

@@ -3,8 +3,11 @@
     <!-- Header -->
     <div class="flex items-center justify-between gap-3 flex-wrap mb-6">
       <div>
-        <h1 class="text-xl font-black text-navy">Cola de Channex</h1>
-        <p class="text-sm text-text-muted">{{ total }} ráfaga(s) de tarifas e inventario en la outbox</p>
+        <h1 class="text-xl font-black text-navy">Channex</h1>
+        <p class="text-sm text-text-muted">
+          <template v-if="tab === 'cola'">{{ total }} ráfaga(s) de tarifas e inventario en la outbox</template>
+          <template v-else>{{ logTotal }} evento(s) registrados: lo que salió, lo que esperó, lo que Channex rechazó y lo que entró por webhook</template>
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <!-- La configuración vivía DEBAJO de la tabla, que pagina de a 50 filas: con la cola
@@ -14,12 +17,18 @@
           class="bg-white text-text-secondary border border-border font-bold text-sm px-5 py-2.5 rounded-xl hover:border-navy/30 hover:text-navy transition-all cursor-pointer disabled:opacity-50">
           Configuración
         </button>
-        <button @click="recargar" :disabled="loading"
+        <button @click="tab === 'cola' ? recargar() : cargarLog()" :disabled="loading || logLoading"
           class="bg-white text-text-secondary border border-border font-bold text-sm px-5 py-2.5 rounded-xl hover:border-navy/30 hover:text-navy transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-          {{ loading ? 'Cargando…' : 'Refrescar' }}
+          {{ (loading || logLoading) ? 'Cargando…' : 'Refrescar' }}
         </button>
       </div>
     </div>
+
+    <!-- #347 — Dos vistas del mismo tema: la COLA (qué está por salir / falló) y el REGISTRO (qué pasó
+         con cada cosa: salió con task ids, esperó por rate limit, 429, reintentos, webhook). -->
+    <PillTabs v-model="tab" :tabs="tabs" query-param="tab" aria-label="Secciones de Channex" class="mb-6" />
+
+    <div v-if="tab === 'cola'">
 
     <!-- Contadores por estado. `pending` y `retrying` son DISJUNTOS (ver AriOutboxStats): las
          cinco tarjetas suman el total, no hay que sumar dos veces las que esperan reintento. -->
@@ -158,6 +167,121 @@
         </div>
       </div>
     </SectionCard>
+    </div>
+
+    <!-- ══ Registro (#347) ══ -->
+    <div v-else>
+      <div class="bg-white rounded-2xl border border-border card-shadow p-4 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold text-text-muted uppercase">Filtros</span>
+            <span v-if="logFiltersCount > 0" class="bg-cyan/20 text-cyan text-[10px] font-bold px-2 py-0.5 rounded-full">{{ logFiltersCount }} activos</span>
+          </div>
+          <button v-if="logFiltersCount > 0" @click="limpiarFiltrosLog" class="text-[10px] font-bold text-danger hover:text-danger/80 transition-colors cursor-pointer">Limpiar filtros</button>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <select id="log-estado" name="log-estado" aria-label="Filtrar el registro por estado" v-model="logStatus"
+            class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+            <option value="all">Todos los estados</option>
+            <option value="success">OK</option>
+            <option value="warning">Avisos (esperas, reintentos)</option>
+            <option value="error">Errores (no salió / rechazado)</option>
+          </select>
+          <select id="log-accion" name="log-accion" aria-label="Filtrar el registro por tipo de evento" v-model="logAction"
+            class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+            <option value="all">Todos los eventos</option>
+            <option v-for="a in logActions" :key="a" :value="a">{{ channexLogActionLabel(a) }}</option>
+          </select>
+          <select id="log-hotel" name="log-hotel" aria-label="Filtrar el registro por hotel" v-model="logHotel"
+            class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+            <option value="all">Todos los hoteles</option>
+            <option :value="CHANNEX_LOG_PLATFORM">Plataforma (cron, webhook)</option>
+            <option v-for="h in hoteles" :key="h.id" :value="h.id">{{ h.name }}</option>
+          </select>
+        </div>
+      </div>
+
+      <div v-if="logError" class="mb-6 rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <span class="text-sm font-bold text-danger">{{ logError }}</span>
+        <button @click="cargarLog" class="px-4 py-2 rounded-xl border border-danger/40 text-xs font-bold text-danger hover:bg-danger/10 transition-colors cursor-pointer">Reintentar</button>
+      </div>
+
+      <SkeletonLoader v-if="logLoading && logRows.length === 0" variant="table" :rows="8" />
+
+      <SectionCard v-else title="Registro de Channex" :subtitle="subtituloRegistro" body-class="p-0">
+        <EmptyState
+          v-if="logRows.length === 0"
+          title="Sin eventos"
+          :message="logFiltersCount > 0
+            ? 'Ningún evento coincide con estos filtros. Probá con otros.'
+            : 'Acá va a aparecer cada push a Channex con sus ids de tarea, cada espera por límite de peticiones, cada 429 y cada reserva que entre por webhook.'"
+        >
+          <template #action>
+            <button v-if="logFiltersCount > 0" @click="limpiarFiltrosLog"
+              class="px-5 py-2.5 rounded-full border border-border text-sm font-bold text-navy hover:bg-surface transition-colors cursor-pointer">
+              Ver todo
+            </button>
+          </template>
+        </EmptyState>
+
+        <div v-else class="overflow-x-auto">
+          <table class="w-full tbl-head">
+            <thead>
+              <tr class="border-b border-border">
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Cuándo</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Hotel</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Evento</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Estado</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Detalle</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Tareas Channex</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in logRows" :key="row.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors align-top">
+                <td class="p-4 whitespace-nowrap">
+                  <div class="text-sm font-bold text-navy">{{ fechaCorta(row.createdAt) }}</div>
+                  <div class="text-[10px] text-text-muted font-mono">{{ horaExacta(row.createdAt) }}</div>
+                </td>
+                <td class="p-4">
+                  <div class="text-sm font-bold text-navy">{{ row.hotelId === CHANNEX_LOG_PLATFORM ? 'Plataforma' : hotelName(row.hotelId) }}</div>
+                  <div v-if="row.hotelId !== CHANNEX_LOG_PLATFORM" class="text-[10px] text-text-muted">{{ row.hotelId }}</div>
+                </td>
+                <td class="p-4 text-sm text-navy font-bold max-w-xs">{{ row.action }}</td>
+                <td class="p-4">
+                  <span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="channexLogStatusMeta(row.status).class">{{ channexLogStatusMeta(row.status).label }}</span>
+                </td>
+                <td class="p-4 text-xs text-text-secondary max-w-md break-words">
+                  <span v-if="row.details">{{ row.details }}</span>
+                  <span v-else class="text-text-muted">—</span>
+                </td>
+                <td class="p-4">
+                  <button v-if="row.taskIds?.length" @click="copiarTaskIds(row.taskIds)"
+                    class="font-mono text-[11px] text-navy bg-navy/5 hover:bg-navy/10 rounded-lg px-2 py-1 transition-colors cursor-pointer"
+                    :title="`Copiar ${row.taskIds.length} id(s) de tarea de Channex`">
+                    <span>{{ row.taskIds[0].slice(0, 8) }}…</span>
+                    <span v-if="row.taskIds.length > 1" class="font-sans text-text-muted"> +{{ row.taskIds.length - 1 }}</span>
+                  </button>
+                  <span v-else class="text-xs text-text-muted">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="logTotal > logLimit" class="flex items-center justify-between px-4 py-3 border-t border-border">
+          <span class="text-[11px] text-text-muted font-bold">
+            {{ (logPage - 1) * logLimit + 1 }}–{{ Math.min(logPage * logLimit, logTotal) }} de {{ logTotal }}
+          </span>
+          <div class="flex items-center gap-1">
+            <button @click="irAPaginaLog(1)" :disabled="logPage <= 1 || logLoading" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">«</button>
+            <button @click="irAPaginaLog(logPage - 1)" :disabled="logPage <= 1 || logLoading" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">‹</button>
+            <span class="px-2 text-xs font-bold text-navy">{{ logPage }} / {{ logPages }}</span>
+            <button @click="irAPaginaLog(logPage + 1)" :disabled="logPage >= logPages || logLoading" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">›</button>
+            <button @click="irAPaginaLog(logPages)" :disabled="logPage >= logPages || logLoading" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">»</button>
+          </div>
+        </div>
+      </SectionCard>
+    </div>
 
     <!-- Configuración de la cola -->
     <AppModal v-if="showConfig" size="md" title="Configuración de la cola"
@@ -227,6 +351,16 @@ import {
   type AriQueueConfig,
 } from '@/services/AriOutbox.service'
 import { SuperAdminService, type AdminHotel } from '@/services/SuperAdmin.service'
+import PillTabs, { type PillTab } from '@/components/ui/PillTabs.vue'
+import {
+  ChannexLogService,
+  channexLogActionLabel,
+  channexLogStatusMeta,
+  CHANNEX_LOG_PLATFORM,
+  CHANNEX_LOG_ACTION_LABELS,
+  type ChannexLogRow,
+  type ChannexLogStatus,
+} from '@/services/ChannexLog.service'
 
 // Rangos que acepta el backend: fuera de ellos cae al default en silencio, así que se acota acá.
 const MIN_ATTEMPTS = 1
@@ -252,6 +386,99 @@ const hoteles = ref<AdminHotel[]>([])
 const statusFilter = ref<AriOutboxStatus | 'all'>('all')
 const kindFilter = ref<AriOutboxKind | 'all'>('all')
 const hotelFilter = ref<string>('all')
+
+// ── Pestañas (#347) ──
+const tabs: PillTab[] = [
+  { value: 'cola', label: 'Cola' },
+  { value: 'registro', label: 'Registro' },
+]
+const tab = ref<string>('cola')
+
+// ── Registro (#347) ──
+const logRows = ref<ChannexLogRow[]>([])
+const logTotal = ref(0)
+const logPage = ref(1)
+const logLimit = ref(50)
+const logPages = ref(0)
+const logLoading = ref(false)
+const logError = ref('')
+const logStatus = ref<ChannexLogStatus | 'all'>('all')
+const logAction = ref<string>('all')
+const logHotel = ref<string>('all')
+// Lo que el backend acepta como filtro. Hasta que responde, el espejo local.
+const logActions = ref<string[]>(Object.keys(CHANNEX_LOG_ACTION_LABELS))
+
+const logFiltersCount = computed(() => [logStatus.value, logAction.value, logHotel.value].filter((v) => v !== 'all').length)
+const subtituloRegistro = computed(() => {
+  if (logTotal.value === 0) return 'Nada registrado todavía'
+  return `${logTotal.value} evento(s)${logFiltersCount.value ? ' con estos filtros' : ''} · más nuevos primero`
+})
+
+async function cargarLog() {
+  logLoading.value = true
+  logError.value = ''
+  try {
+    const pagina = await ChannexLogService.list({
+      status: logStatus.value === 'all' ? undefined : logStatus.value,
+      action: logAction.value === 'all' ? undefined : logAction.value,
+      hotelId: logHotel.value === 'all' ? undefined : logHotel.value,
+      page: logPage.value,
+      limit: logLimit.value,
+    })
+    logRows.value = pagina.items ?? []
+    logTotal.value = pagina.total ?? 0
+    logPage.value = pagina.page ?? logPage.value
+    logLimit.value = pagina.limit ?? logLimit.value
+    logPages.value = pagina.pages ?? Math.max(1, Math.ceil(logTotal.value / logLimit.value))
+    if (pagina.filters?.actions?.length) logActions.value = pagina.filters.actions
+  } catch (e: unknown) {
+    logRows.value = []
+    logTotal.value = 0
+    logError.value = (e as Error)?.message || 'No se pudo cargar el registro de Channex.'
+  } finally {
+    logLoading.value = false
+  }
+}
+
+function irAPaginaLog(n: number) {
+  const destino = Math.min(Math.max(1, n), Math.max(1, logPages.value))
+  if (destino === logPage.value) return
+  logPage.value = destino
+  cargarLog()
+}
+
+function limpiarFiltrosLog() {
+  logStatus.value = 'all'
+  logAction.value = 'all'
+  logHotel.value = 'all'
+}
+
+watch([logStatus, logAction, logHotel], () => {
+  logPage.value = 1
+  cargarLog()
+})
+
+// La pestaña carga su contenido la primera vez que se abre (y al volver, refresca: el registro es
+// lo que cambia mientras uno mira la cola).
+watch(tab, (t) => { if (t === 'registro') cargarLog() })
+
+const fechaCorta = (iso: string): string => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('es', { day: '2-digit', month: 'short' })
+}
+const horaExacta = (iso: string): string => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+async function copiarTaskIds(ids: string[]) {
+  try {
+    await navigator.clipboard.writeText(ids.join('\n'))
+    toast.success(`${ids.length} id(s) de tarea copiados`)
+  } catch {
+    toast.error('No se pudo copiar al portapapeles')
+  }
+}
 
 const statCards = computed(() => [
   { label: 'Pendientes', value: stats.value.pending, color: 'text-navy' },
@@ -429,5 +656,6 @@ onMounted(() => {
   cargarLista()
   cargarConfig()
   cargarHoteles()
+  // Si la URL ya trae ?tab=registro, PillTabs lo aplica al montarse y el watch de `tab` dispara la carga.
 })
 </script>

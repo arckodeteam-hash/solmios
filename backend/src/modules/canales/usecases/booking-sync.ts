@@ -163,7 +163,9 @@ export class BookingSyncUseCase {
     }
 
     if (result.feedSize === 0) {
-      await this.logSync(result)
+      // Sin nada en el feed y sin errores NO se escribe fila (#347): el cron corre cada minuto y
+      // en prod había 10.000+ filas "0 reservas" tapando lo que sí importa en el registro.
+      if (result.errors.length) await this.logSync(result)
       return result
     }
 

@@ -81,7 +81,7 @@ describe('sidebar — no lista una ruta cuyo permiso el rol no tiene', () => {
     expect(visibleMenu(KITCHEN).map((r) => r.menu!.label)).toEqual(['Cocina y Bar (KDS)'])
     // El KDS es `restaurant:edit` y el mozo lo tiene (mismo permiso con el que el backend le deja
     // PUT /kds/lines/:id): verlo en el menú es coherente con la API, antes se le escondía por nombre.
-    expect(visibleMenu(WAITER).map((r) => r.menu!.label)).toEqual(['Salón', 'Cocina y Bar (KDS)', 'Caja'])
+    expect(visibleMenu(WAITER).map((r) => r.menu!.label)).toEqual(['Salón', 'Mis mesas', 'Cocina y Bar (KDS)', 'Caja'])
   })
 
   it('toda entrada visible para un rol tiene una ruta cuyo meta.permission ese rol cumple', () => {
@@ -196,7 +196,7 @@ describe('sidebar — misma exigencia que el router también para el `view` del 
         return hasPermission(perms, m, a) && (!mod || hasPermission(perms, mod, 'view'))
       })
     expect(visible(['restaurant:create']).map((r) => r.menu!.label)).toEqual([])
-    expect(visible(['restaurant:view', 'restaurant:create']).map((r) => r.menu!.label)).toEqual(['Salón', 'Caja'])
+    expect(visible(['restaurant:view', 'restaurant:create']).map((r) => r.menu!.label)).toEqual(['Salón', 'Mis mesas', 'Caja'])
     expect(visible(['restaurant-catalog:view']).map((r) => r.menu!.label)).toEqual(['Carta'])
   })
 })

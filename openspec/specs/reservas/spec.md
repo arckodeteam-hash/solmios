@@ -283,6 +283,40 @@ session y MUST validar ownership implícita por hash→reserva.
 - THEN `preCheckinStatus='completed'`, foto guardada, aceptaciones con timestamp, y el
   recepcionista ve el check-in listo en el detalle
 
+### Requirement: Enlace de check-in digital por correo y WhatsApp desde el detalle (#336)
+
+La tarjeta "Check-in digital" del detalle (`ReservationModal.vue`, botones `checkin-link-wa` /
+`checkin-link-email`) MUST permitir mandarle al huésped el enlace del formulario.
+`POST /api/reservas/:id/send-checkin-link-email` (permiso `reservations:edit`,
+`usecases/checkin-link-email.ts`) MUST enviar al email del huésped el evento `checkin_link` de
+`notification-defaults` (es/en/pt) con `hotel_name`, `locator` (`externalLocator` o últimos 8 del
+id), la invitación y `checkin_url = PUBLIC_URL/checkin/:hash` con `checkinHashFromId(id)` — el MISMO
+hash que el `checkinCode` del detalle, nunca el de otra reserva. Ownership fail-closed → 404; sin
+email del huésped o sin `PUBLIC_URL` → 400. Cada intento MUST quedar en `message_logs`
+(`messageType:'email'`, `status` sent/failed, traza manual
+`{kind:'manual', reference:'Enlace de check-in digital', byUserId}`) y se puede reenviar.
+El botón "Enviar por WhatsApp" abre `wa.me/<teléfono del huésped>` con hotel, referencia,
+invitación y el enlace, y registra `queued` vía `POST /api/reservas/:id/message-log`. Ambos botones
+MUST quedar deshabilitados con aviso cuando falta teléfono/correo. Tests:
+`reservas/tests/checkin-link-email.test.ts` y `ReservationModal.test.ts` ('check-in digital #336').
+
+#### Scenario: Correo con el enlace de ESA reserva
+
+- GIVEN reserva R del hotel H con huésped con email y `PUBLIC_URL` configurada
+- WHEN staff de H con `reservations:edit` hace `POST /api/reservas/R/send-checkin-link-email`
+- THEN se encola `checkin_link` al email del huésped con `checkin_url` terminado en
+  `/checkin/<checkinHashFromId(R)>` (igual al `checkinCode` del detalle) y queda una fila `sent`
+  en `message_logs` con la traza manual; si el encolado falla, queda `failed` y se puede reintentar
+- WHEN lo pide staff de otro hotel
+- THEN 404 y no se envía nada
+
+#### Scenario: Huésped sin correo/teléfono
+
+- GIVEN reserva cuyo huésped no tiene email ni teléfono
+- WHEN se abre la tarjeta "Check-in digital" del detalle
+- THEN "Enviar por WhatsApp" y "Enviar por correo" quedan deshabilitados con el aviso
+  correspondiente, y el endpoint de correo responde 400 ("El huésped no tiene email cargado")
+
 ### Requirement: Acompañantes, addons y reprogramación como operaciones de dominio
 
 - Acompañantes (`companions.ts`): CRUD sobre `/api/reservations/:id/companions` con
@@ -432,6 +466,59 @@ re-evalúa en vivo al cambiar la edad de un menor.
 
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
+
+### Requirement: Composición visible del motor público = composición cotizada (#343)
+
+En el paso "Habitación" del motor público (widget `/book/:slug` → `RoomsStep.vue`, landing →
+`BookingModal.vue`, ambos vía `frontend/src/composables/useGuestComposer.ts`) lo que el huésped
+compone en cada tarjeta de tipo —adultos, cantidad y edad de cada niño (con su clasificación
+niño/bebé y consume/no consume plaza), cuna, amenidades de habitación tildadas y régimen— MUST
+persistir hasta que él lo cambie explícitamente. Ese estado (`ComposerState`, keyed por
+`roomTypeId`) vive en el store Pinia `booking-widget` (`useBooking.ts` → `composerState`), NO en
+la instancia del componente: un re-render, un recálculo de precio, un cambio de paso (el widget
+desmonta `RoomsStep`) o cerrar y reabrir el modal MUST NOT reiniciarlo. Sólo lo cambian el
+huésped, `editCartLine` (que devuelve una unidad de la línea al composer con exactamente lo
+guardado) y `store.reset()` (cambio de hotel / desmontaje del widget). Cada tipo de habitación
+tiene su propio estado, independiente del resto (reservas múltiples).
+
+"Agregar esta habitación" MUST guardar en el carrito exactamente la composición visible y MUST
+NOT reiniciar la tarjeta: después de agregar, la tarjeta sigue mostrando lo que acaba de entrar
+al carrito; un segundo click suma otra unidad a la misma línea (agrupación por composición).
+
+El resumen estimado previo al pago (`EstimatedTotals.vue`, montado en Habitación/Extras) MUST
+listar por separado: subtotal de alojamiento (`roomsSubtotal`), cada upsell, cada amenidad de
+habitación (`roomAmenityLines`, p.ej. "Cama"), cada régimen (`mealPlanLines`, "incluido" cuando
+`priceMode: included`), el descuento promo, cada impuesto con su nombre y % tal como lo publica
+`GET /api/public/hotels/:slug/rates` → `taxes` (origen: `configuration('taxes')` con fallback
+`hotels.taxRate`, `hotel-taxes.ts`; nunca hardcodeado en la interfaz) y el total estimado. Lo
+listado MUST cerrar: alojamiento + extras − descuento + impuestos = total, y una amenidad que
+aparece destildada MUST NOT quedar en el total.
+
+#### Scenario: Agregar y editar conserva la composición
+
+- GIVEN una tarjeta con 2 adultos, niños de 5 y 1 años y la amenidad "Cama" (US$200) tildada
+- WHEN el huésped pulsa "Agregar esta habitación"
+- THEN el carrito tiene una línea con `adults:2`, `childrenAges:[5,1]`, `roomAmenities:[Cama 200]`
+- AND la tarjeta sigue mostrando 2 adultos, edades 5 y 1 y Cama tildada
+- AND al pulsar "Editar" la línea vuelve al composer con esos mismos datos
+
+#### Scenario: El desglose cierra con la Cama a la vista
+
+- GIVEN alojamiento de 390 + Cama 200 en el carrito y un impuesto ITBIS 18% configurado
+- WHEN se muestra el resumen estimado
+- THEN aparecen Subtotal 390.00 · Cama 200.00 · ITBIS (18%) 106.20 · Total estimado 696.20
+
+#### Scenario: Destildar quita el importe
+
+- GIVEN la composición anterior
+- WHEN el huésped quita un niño, baja a 1 adulto y destilda Cama, y vuelve a agregar
+- THEN `roomAmenitiesTotal` es 0 y el total estimado es el alojamiento de 1 adulto más su impuesto
+
+#### Scenario: Cambiar de paso no reinicia la tarjeta
+
+- GIVEN una composición armada en una tarjeta (2 adultos, 2 niños, Cama)
+- WHEN el widget desmonta y vuelve a montar `RoomsStep` (otra instancia de `useGuestComposer()`)
+- THEN la tarjeta muestra la misma composición y las otras tarjetas conservan la suya
 
 ### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268)
 
@@ -892,6 +979,43 @@ best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
 - **WHEN** llega `onPaymentRequestPaid`
 - **THEN** 0 códigos; al asignarle habitación → 1 código activo
 
+### Requirement: Consumidores toleran reserva sin habitación y auto-asignación la víspera (REQ-HAC-07, #262)
+
+**Auto-asignación por el sistema (`usecases/auto-assign-room.ts`, `service.autoAssignRoom(id, hotelId)`).**
+Sin ruta HTTP: lo consume el cron de pase pre-llegada (`shared/usecases/prearrival-pass-cron.ts`).
+`autoAssignSuggestedRoom` MUST leer la reserva y devolver `{ assigned: false, reason }` sin escribir
+nada si no existe (`not_found`), ya tiene `roomId` (`already_assigned`) o está en `CLOSED_STATUSES`
+(`closed`); si no, toma la `suggested` (o la primera) de `listAssignableRooms` del tipo vendido
+(nunca `allTypes`: un upgrade no es una decisión automática) y delega en `assignRoom` con el usuario
+`{ id: 'system', role: 'system', hotelId }` → `roomAssignedBy: 'system'`, audit
+`reservation.room_assigned` con `userId: 'system'`, `onRoomAssigned` (TTLock genera el código,
+`reservas-wallet` genera/completa el pase). Sin libres → `{ assigned: false, reason: 'no_rooms' }`.
+`assertOwnership` sigue corriendo: el sistema sólo asigna unidades del hotel de la reserva.
+
+**Cuándo se intenta (`booking_config.autoAssignBeforeArrivalHours`, entero 0–168, default 0 =
+apagado; Página pública → Motor de reservas).** El cron, para cada reserva `confirmed` sin `roomId`
+con llegada a ≤ 24 h, intenta la auto-asignación sólo si el valor es > 0 y las horas hasta la llegada
+son ≤ ese valor; si asigna y el pase quedó con código → manda el pase completo; si no hay libres
+(`warn`) o el valor es 0 → manda el pase parcial (tipo, fechas y horario, "Por asignar", sin código;
+ver spec de wallet-pass).
+
+**Los demás consumidores toleran `roomId` nulo (tests uno por uno):** auto-mensajes reemplazan
+`{room_number}` por `por asignar` (`marketing/usecases/trigger-auto-messages.ts`); housekeeping no
+crea `arrival_setup` para una llegada sin unidad y la borra si se desasigna; el dashboard enriquece
+con `roomNumber: ''`; el no-show cron no toca `Rooms`; el night audit saltea la fila sin cortar el
+loop; los reports calculan la ocupación por RESERVA vigente esa noche y por tipo (`roomType`, con la
+unidad como fallback), así una sin asignar cuenta como ocupada.
+
+#### Scenario: la víspera sin habitación con auto-asignación encendida
+- **GIVEN** `autoAssignBeforeArrivalHours: 24`, una reserva `confirmed` sin `roomId` que llega en 20 h y una unidad libre de su tipo
+- **WHEN** corre el cron de pase pre-llegada
+- **THEN** la reserva queda con esa unidad, `roomAssignedBy: 'system'`, audit `reservation.room_assigned`, código TTLock generado y el huésped recibe el pase completo (número + código)
+
+#### Scenario: sin libres o apagado → pase parcial
+- **GIVEN** la misma reserva y `autoAssignBeforeArrivalHours: 0`, o `24` pero ninguna unidad libre
+- **WHEN** corre el cron
+- **THEN** no se escribe `roomId` (con `24` se loguea `warn`), el huésped recibe el pase parcial una sola vez, y al asignarle habitación después recibe el completo
+
 ### Requirement: Disponibilidad por tipo que cuenta reservas sin asignar (REQ-HAC-02, #257)
 
 **Fuente única (`shared/usecases/type-availability.ts`).** `availableOfType(port, hotelId, roomType,
@@ -995,6 +1119,47 @@ nullable hasta la asignación; los mensajes de la IA nombran el tipo, nunca un n
 - **GIVEN** un hotel con unidades `double` disponibles
 - **WHEN** `POST /api/reservas {roomType: 'double'}`, la tool `create_reservation {roomType: 'double'}` o `POST /api/public/v1/reservations {roomType: 'double'}`
 - **THEN** 201 (la IA: confirmación con el tipo) y la respuesta trae `roomType: 'double'` y `roomId: null`; sin `roomId` ni `roomType` → 409 `room_or_type_required` en el panel y 400 en la API pública; con el tipo agotado → 409 `type_sold_out` / error `No hay disponibilidad de double para esas fechas`
+
+### Requirement: El check-in exige habitación y la asigna en el mismo paso (REQ-HAC-04, #259)
+
+**Sin unidad no hay check-in.** `POST /api/reservas/:id/checkin` acepta un body opcional
+`CheckinSchema { roomId?: string; allowTypeChange?: boolean }` (`CheckinDTO`). Si la reserva no tiene
+`roomId` y el body tampoco lo trae, el servidor MUST responder 409 con `details.reason =
+'room_not_assigned'` **sin escribir nada** (ni folio, ni cargo, ni estado). Los chequeos de estado
+(`checked_in` → «ya tiene check-in»; fuera de `confirmed|pending` → 409 por estado) MUST correr
+**antes** que el de habitación, para que un body con `roomId` nunca asigne una unidad a una reserva
+que igual no podía hacer check-in.
+
+**Asignar y entrar en un solo POST.** Con `body.roomId` y la reserva sin unidad, el controller MUST
+invocar `assignRoom` (usecases/assign-room.ts, con `allowTypeChange` del body) **antes** de
+`executeCheckin`, con los mismos 409 (`room_overlap`, `type_mismatch`, `room_not_sellable`,
+`invalid_status`) y el mismo 400 de habitación de otro hotel; si la asignación falla NO hay check-in
+y la reserva queda como estaba. Recién con la reserva ya asignada corre el check-in atómico (folio con
+esa `roomId`, cargo de la noche, habitación `occupied`), el push a Channex y el email de check-in
+con la unidad final. Si la reserva **ya** tiene `roomId`, el body se ignora: cambiar de habitación es
+`POST /assign-room`. `executeCheckin` sigue asertando `roomId` (defensa en profundidad): la
+invariante `status ∈ {checked_in, checked_out} ⇒ roomId` se mantiene.
+
+**Pre-check-in y panel.** `getPreCheckinData` MUST tolerar `roomId = null` (no consulta `Rooms` con
+`{ id: null }`) y devolver `roomType` (el vendido o, si la fila es anterior al backfill, el de la
+unidad) además de `roomNumber` (vacío sin unidad). En el panel, el botón **Check-in** de una reserva
+sin unidad abre «Asignar habitación» (RoomAssignModal en modo check-in: sugerida preseleccionada,
+ocupadas deshabilitadas) y confirma con un único `POST /checkin { roomId, allowTypeChange? }`.
+
+#### Scenario: Check-in sin habitación y sin body
+- **GIVEN** una reserva `confirmed` con `roomId = null` y `roomType = 'double'`
+- **WHEN** se hace `POST /api/reservas/:id/checkin` sin body
+- **THEN** responde 409 con `details.reason = 'room_not_assigned'`, la reserva sigue `confirmed` sin `roomId` y no existe ningún folio
+
+#### Scenario: Check-in con habitación ocupada en el body
+- **GIVEN** la misma reserva y la habitación 102 ocupada esas noches por otra reserva
+- **WHEN** se hace `POST /checkin { roomId: '102' }`
+- **THEN** responde 409 `room_overlap` con el localizador que choca, la reserva sigue `confirmed` sin `roomId` y sin folio
+
+#### Scenario: Check-in con habitación libre en el body
+- **GIVEN** la misma reserva y la habitación 101 libre y del tipo vendido
+- **WHEN** se hace `POST /checkin { roomId: '101' }`
+- **THEN** responde 200; la reserva queda `checked_in` con `roomId = '101'` y `roomAssignedAt`, el folio abierto lleva `roomId = '101'` y la habitación pasa a `occupied`. Con una unidad de otro tipo sin `allowTypeChange` es 409 `type_mismatch`; con `allowTypeChange: true` entra y `roomType` pasa al de la unidad
 
 ### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
 

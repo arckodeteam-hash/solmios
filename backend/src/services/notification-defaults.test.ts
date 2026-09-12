@@ -5,7 +5,7 @@ import { getCodeDefault, NOTIFICATION_DEFAULTS, type NotificationLanguage } from
 
 describe('notification-defaults (spec 11.1.6)', () => {
   it('cada evento tiene default en es con subject y body no vacíos', () => {
-    for (const event of ['reservation_confirmed', 'reservation_presale', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder', 'reservation_approved', 'reservation_rejected'] as const) {
+    for (const event of ['reservation_confirmed', 'reservation_presale', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder', 'checkin_link', 'reservation_approved', 'reservation_rejected'] as const) {
       const d = getCodeDefault(event, 'es')
       expect(d.subject.length).toBeGreaterThan(0)
       expect(d.body.length).toBeGreaterThan(0)
@@ -105,8 +105,32 @@ describe('notification-defaults (spec 11.1.6)', () => {
     })
   })
 
+  // #336: enlace del check-in digital enviado a mano desde el detalle de la reserva.
+  describe('checkin_link (#336)', () => {
+    const langs: NotificationLanguage[] = ['es', 'en', 'pt']
+
+    it.each(langs)('%s: subject y body con {hotel_name}; body con {locator} y el enlace {checkin_url} como href', (lang) => {
+      const { subject, body } = getCodeDefault('checkin_link', lang)
+      expect(subject).toContain('{hotel_name}')
+      expect(body).toContain('{hotel_name}')
+      expect(body).toContain('{locator}')
+      expect(body).toContain('href="{checkin_url}"')
+      expect(body).toContain('{guest_name}')
+      expect(body).toContain('{checkin_date}')
+      expect(body).toContain('{checkout_date}')
+      expect(body).toContain('{hotel_phone}')
+      expect(subject + body).not.toMatch(/solmios/i)
+    })
+
+    it('subjects traducidos', () => {
+      expect(getCodeDefault('checkin_link', 'es').subject).toBe('Completá tu check-in digital — {hotel_name}')
+      expect(getCodeDefault('checkin_link', 'en').subject).toBe('Complete your digital check-in — {hotel_name}')
+      expect(getCodeDefault('checkin_link', 'pt').subject).toBe('Complete o seu check-in digital — {hotel_name}')
+    })
+  })
+
   it('NOTIFICATION_DEFAULTS registra todos los eventos × 3 idiomas', () => {
-    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_approved', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'reservation_confirmed', 'reservation_new_ota_staff', 'reservation_new_staff', 'reservation_presale', 'reservation_received_unpaid', 'reservation_rejected', 'review_request'])
+    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_link', 'checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_approved', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'reservation_confirmed', 'reservation_new_ota_staff', 'reservation_new_staff', 'reservation_presale', 'reservation_received_unpaid', 'reservation_rejected', 'review_request'])
     for (const event of Object.keys(NOTIFICATION_DEFAULTS)) {
       const langs = Object.keys((NOTIFICATION_DEFAULTS as any)[event])
       expect(langs.sort()).toEqual(['en', 'es', 'pt'])

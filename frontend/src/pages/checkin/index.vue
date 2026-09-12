@@ -158,7 +158,7 @@
                   <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
                 </span>
               </div>
-              <div class="text-[10px] text-text-muted">Hab {{ a.roomNumber }} · {{ a.channelLabel }}<template v-if="a.mealPlanLabel"> · <span data-testid="arrival-meal-plan" class="font-bold text-purple" :title="mealPlanTitle(a)">{{ a.mealPlanLabel }}</span></template></div>
+              <div class="text-[10px] text-text-muted"><template v-if="a.roomId">Hab {{ a.roomNumber }}</template><span v-else data-testid="arrival-no-room" class="font-bold text-gold">Sin habitación · {{ a.roomType || 'tipo sin definir' }}</span> · {{ a.channelLabel }}<template v-if="a.mealPlanLabel"> · <span data-testid="arrival-meal-plan" class="font-bold text-purple" :title="mealPlanTitle(a)">{{ a.mealPlanLabel }}</span></template></div>
               <div class="text-[10px] text-text-muted">{{ a.checkIn }} → {{ a.checkOut }} · {{ a.nights }}n · ${{ a.totalAmount }}</div>
             </div>
             <button v-if="!a.checkedIn" data-testid="checkin-arrival-button" @click.stop="openCheckinModal(a)" :disabled="processing"
@@ -570,12 +570,18 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- REQ-HAC-04 (#259) — llegada SIN habitación: el check-in exige elegirla y la asigna en el
+         mismo request (POST /checkin { roomId }). Con habitación sigue el modal propio de arriba. -->
+    <RoomAssignModal v-if="assignCheckinGuest" :open="showAssignCheckin" :reservation-id="assignCheckinGuest.id"
+      :room-type="assignCheckinGuest.roomType" mode="checkin" @close="closeAssignCheckin" @checked-in="onAssignedCheckin" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
 import { useRouter } from 'vue-router'
 import { useCountUp } from '@/composables/useCountUp'
 import { effectiveMealPlan, hasMealPlan, mealPlanLabel as mealPlanLabelOf } from '@/utils/meal-plans'
@@ -852,7 +858,8 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
     guestEmail: (r.guestEmail as string) || '',
     initials: ((r.guestName as string) || 'G').split(' ').map((p: string) => p[0]).slice(0, 2).join(''),
     roomNumber: (r.roomNumber as string) || '—',
-    roomId: r.roomId as string,
+    roomId: (r.roomId as string | null) || '',
+    roomType: (r.roomType as string | null) || null,
     checkIn: String(r.checkIn).slice(0, 10),
     checkOut: String(r.checkOut).slice(0, 10),
     nights,
@@ -998,8 +1005,31 @@ async function checkoutFromRoom(room: CheckinRoom) {
 }
 
 function openCheckinModal(guest: CheckinGuest) {
+  // REQ-HAC-04 (#259) — sin unidad asignada no hay check-in posible (409 room_not_assigned):
+  // se elige la habitación y se hace el check-in en un solo paso desde RoomAssignModal.
+  if (!guest.roomId) {
+    assignCheckinGuest.value = guest
+    showAssignCheckin.value = true
+    return
+  }
   checkinGuest.value = guest
   showCheckinModal.value = true
+}
+
+const assignCheckinGuest = ref<CheckinGuest | null>(null)
+const showAssignCheckin = ref(false)
+
+function closeAssignCheckin() {
+  showAssignCheckin.value = false
+  assignCheckinGuest.value = null
+}
+
+/** El modal ya asignó + hizo el check-in (y mostró su toast): acá sólo se refleja en la pantalla. */
+async function onAssignedCheckin() {
+  const guest = assignCheckinGuest.value
+  closeAssignCheckin()
+  if (guest) checkedIn.value.add(guest.id)
+  await loadData()
 }
 
 function closeCheckinModal() {

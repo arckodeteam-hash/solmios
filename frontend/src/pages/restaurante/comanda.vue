@@ -26,6 +26,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
+import LineIngredientsEditor from '@/components/features/restaurante/LineIngredientsEditor.vue'
 import DiscountModal from '@/components/features/restaurante/DiscountModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
@@ -430,6 +431,11 @@ function openNotes(l: OrderLine) {
   notesLine.value = l
   notesDraft.value = l.notes ?? ''
 }
+/** Receta editada desde la línea: pintar el cambio sin recargar toda la comanda. */
+function onLineIngredientsUpdated(line: OrderLine, updated: OrderLine) {
+  line.ingredientChanges = updated.ingredientChanges ?? null
+}
+
 async function saveNotes() {
   const line = notesLine.value
   if (!line || notesSaving.value) return
@@ -602,11 +608,11 @@ function cancel() {
                   </template>
                   <!-- #210 — nota de la línea ("sin cebolla"): viaja al KDS y se ve debajo del plato. -->
                   <div v-if="l.notes" class="text-[11px] text-gold font-bold">⚑ {{ l.notes }}</div>
-                  <!-- KDS con receta: lo que COCINA quitó/agregó del plato. Solo lectura acá (se edita en el tablero de cocina). -->
-                  <div v-if="l.ingredientChanges?.removed?.length || l.ingredientChanges?.added?.length" class="text-[11px] font-bold text-navy/80 flex flex-wrap gap-x-2" data-testid="line-ingredient-changes">
-                    <span v-for="n in l.ingredientChanges?.removed ?? []" :key="'sin-' + n" class="text-danger">SIN {{ n }}</span>
-                    <span v-for="n in l.ingredientChanges?.added ?? []" :key="'con-' + n" class="text-success">CON {{ n }}</span>
-                  </div>
+                  <!-- Receta del plato: el mozo ve los ingredientes y los quita / dobla / agrega a pedido del
+                       cliente, antes o después de enviar a cocina (mientras la línea siga viva). Mismo editor
+                       que el KDS; se guarda en la línea y la cocina lo ve en su tablero y en el papel. -->
+                  <LineIngredientsEditor v-if="l.kind !== 'combo_header' && isLineActive(l)" :line="l" :editable="editable && editPerm"
+                    @updated="onLineIngredientsUpdated(l, $event)" />
                   <div class="flex flex-wrap items-center gap-3">
                     <!-- El header de un combo NO acepta nota: el KDS lo excluye de la cola (nunca es
                          un plato a preparar) y sus componentes los rechaza `updateLine` ("editá el

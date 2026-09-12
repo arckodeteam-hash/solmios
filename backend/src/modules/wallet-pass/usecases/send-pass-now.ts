@@ -43,6 +43,7 @@ export async function sendPassEmailNow(
         checkOutTime: info.checkOutTime,
         // Número FRESCO: si la habitación se reasignó después del pago, va la nueva.
         roomNumber: info.roomNumber,
+        roomType: info.roomType,
         lockCode: String((pass as { lockCode?: unknown }).lockCode ?? ''),
         appleUrl: (pass as { appleUrl?: string }).appleUrl,
         googleUrl: (pass as { googleUrl?: string }).googleUrl,

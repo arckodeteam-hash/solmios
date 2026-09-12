@@ -237,6 +237,7 @@ export const KdsLineStatusSchema: Record<string, ValidationRule> = {
 export const KdsLineIngredientsSchema: Record<string, ValidationRule> = {
   removed: { type: 'array' as const },
   added: { type: 'array' as const },
+  doubled: { type: 'array' as const },
 }
 
 // ─── Anulaciones con motivo (#207) ───

@@ -5,6 +5,36 @@ import {
   inDateRange, paymentDate, expenseDate, sumCharged, sumRefunded, chargeTotal, isConsumption,
 } from './money'
 
+/** Una reserva ocupa la noche `day` (YYYY-MM-DD) si está viva y checkIn <= day < checkOut. */
+export function occupiesNight(r: any, day: string): boolean {
+  if (r.status !== 'confirmed' && r.status !== 'checked_in') return false
+  const ci = String(r.checkIn || '').slice(0, 10)
+  const co = String(r.checkOut || '').slice(0, 10)
+  return !!ci && !!co && ci <= day && day < co
+}
+
+/** Reservas vigentes la noche `day`. Una sin habitación asignada (roomId null, #262) cuenta igual. */
+export function occupiedNightsOn(reservations: any[], day: string): number {
+  return reservations.filter((r) => occupiesNight(r, day)).length
+}
+
+/**
+ * Ocupación por tipo para la noche `day`: `total` = habitaciones del tipo, `occupied` = reservas
+ * vigentes de ese tipo (el tipo vendido `roomType` manda; la unidad asignada es el fallback para
+ * filas previas al backfill de #262). Un tipo con reservas pero sin habitaciones aparece con total 0.
+ */
+export function occupancyByTypeForNight(reservations: any[], rooms: any[], day: string): Array<{ type: string; total: number; occupied: number; percentage: number }> {
+  const roomById = new Map(rooms.map((r: any) => [r.id, r]))
+  const types: Record<string, { total: number; occupied: number }> = {}
+  const bucket = (t: string) => (types[t] ||= { total: 0, occupied: 0 })
+  for (const r of rooms) bucket(r.type).total++
+  for (const r of reservations) {
+    if (!occupiesNight(r, day)) continue
+    bucket(r.roomType || roomById.get(r.roomId)?.type || 'unknown').occupied++
+  }
+  return Object.entries(types).map(([type, d]) => ({ type, ...d, percentage: d.total ? Math.round((d.occupied / d.total) * 100) : 0 }))
+}
+
 export class ReportQueries {
   constructor(private readonly orm: any) {}
 
@@ -56,14 +86,12 @@ export class ReportQueries {
     const byChannel = revenueRes.reduce((a: any, r: any) => { const c = r.channel || 'direct'; a[c] = (a[c] || 0) + r.totalAmount; return a }, {})
     const channelBookings = revenueRes.reduce((a: any, r: any) => { const c = r.channel || 'direct'; a[c] = (a[c] || 0) + 1; return a }, {})
     const dailyRevenue = Object.entries(revenueRes.reduce((a: any, r: any) => { const d = String(r.checkIn).slice(0, 10); if (d) a[d] = (a[d] || 0) + r.totalAmount; return a }, {})).map(([date, value]) => ({ date, value }))
-    const occupancyByType = (() => {
-      const types: Record<string, { total: number; occupied: number }> = {}
-      for (const r of rooms) { if (!types[r.type]) types[r.type] = { total: 0, occupied: 0 }; types[r.type].total++; if (r.status === 'occupied') types[r.type].occupied++ }
-      return Object.entries(types).map(([type, d]) => ({ type, ...d, percentage: d.total ? Math.round((d.occupied / d.total) * 100) : 0 }))
-    })()
+    const today = new Date().toISOString().slice(0, 10)
+    // #262: ocupación por RESERVA de esta noche, no por rooms.status — una reserva sin habitación
+    // asignada todavía ocupa una unidad de su tipo.
+    const occupancyByType = occupancyByTypeForNight(res, rooms, today)
     const channelADRs: Record<string, number> = {}
     for (const [ch, cnt] of Object.entries(channelBookings)) { const rev = (byChannel as any)[ch] || 0; channelADRs[ch] = (cnt as number) > 0 ? Math.round(rev / (cnt as number)) : 0 }
-    const today = new Date().toISOString().slice(0, 10)
     const todayCheckins = res.filter((r: any) => r.checkIn && String(r.checkIn).slice(0, 10) === today && (r.status === 'confirmed' || r.status === 'checked_in')).length
     const todayCheckouts = res.filter((r: any) => r.checkOut && String(r.checkOut).slice(0, 10) === today && (r.status === 'checked_in' || r.status === 'checked_out')).length
     return {
@@ -146,7 +174,8 @@ export class ReportQueries {
     const pagosRecibidos = sumCharged(paymentsToday)
     const reembolsos = sumRefunded(paymentsToday)
 
-    const occupied = rooms.filter((r: any) => r.status === 'occupied').length
+    // #262: ocupación = reservas vigentes esta noche (con o sin habitación asignada), no rooms.status.
+    const occupied = occupiedNightsOn(res, t)
     const ocupacion = rooms.length ? Math.round((occupied / rooms.length) * 100) : 0
 
     // Una noche vendida = un cargo de habitación posteado ese día (uno por folio in-house).

@@ -27,7 +27,13 @@ async function taxRateForCheckin(orm: any, hotelId: string): Promise<number> {
   }
 }
 
-export async function checkinValidation(repo: any, id: string, user: any, auth?: any): Promise<any> {
+/**
+ * `opts.roomId` (REQ-HAC-04, #259): el body de POST /checkin puede traer la unidad a asignar en el
+ * mismo paso. Acá sólo se releva el 409 `room_not_assigned`: la asignación real (solape, tipo,
+ * vendibilidad, auditoría) la hace el controller con `assignRoom` ANTES de `executeCheckin`, que
+ * sigue exigiendo `roomId` en la fila (invariante checked_in ⇒ roomId).
+ */
+export async function checkinValidation(repo: any, id: string, user: any, auth?: any, opts?: { roomId?: string | null }): Promise<any> {
   const hotelId = user?.hotelId
   const r = await repo.findById(id) as any
   if (!r) throw new NotFoundError('Reserva no encontrada')
@@ -35,9 +41,12 @@ export async function checkinValidation(repo: any, id: string, user: any, auth?:
   // assertOwnership recibe (dueño, solicitante, rol, rolAdmin) — todos strings. Pasarle objetos
   // hace que la comparación `===` nunca dé true y lanza Forbidden SIEMPRE: el check-in quedaba muerto.
   if (auth) auth.assertOwnership(r.hotelId, hotelId, user.role, 'super_admin')
-  assertRoomAssigned(r)
+  // El estado va ANTES que la habitación: si el body trae `roomId`, el controller la asigna al
+  // pasar esta validación, y asignar una unidad a una reserva cancelled/checked_in sería un efecto
+  // lateral de un check-in que igual iba a fallar.
   if (r.status === 'checked_in') throw new ConflictError('La reserva ya tiene check-in')
   if (!['confirmed', 'pending'].includes(r.status)) throw new ConflictError(`No se puede hacer check-in de una reserva ${r.status}`)
+  if (!opts?.roomId) assertRoomAssigned(r)
   return { reservation: r, hotelId: r.hotelId }
 }
 
@@ -46,11 +55,12 @@ export async function checkinValidation(repo: any, id: string, user: any, auth?:
  * habitación NO hay check-in: el folio nacería sin `roomId`, el cargo de la noche se postearía
  * con `Rooms` vacío y el check-out reventaría en `connectors/reservas-housekeeping.ts`
  * (`habitaciones.update(null)`). Mismo formato de 409 que `assign-room.ts`: `details.reason`
- * le dice al panel que lo que falta es asignar, no que el estado esté mal.
+ * (`room_not_assigned`, REQ-HAC-04 #259) le dice al panel que lo que falta es asignar — abre
+ * "Asignar habitación" desde el botón Check-in —, no que el estado esté mal.
  */
 export function assertRoomAssigned(r: { roomId?: string | null }): void {
   if (r.roomId) return
-  throw new ConflictError('La reserva no tiene habitación asignada: asigne una antes del check-in', { reason: 'no_room_assigned' })
+  throw new ConflictError('La reserva no tiene habitación asignada: asigne una antes del check-in', { reason: 'room_not_assigned' })
 }
 
 export async function checkoutValidation(repo: any, id: string, user: any, auth?: any): Promise<any> {

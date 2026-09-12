@@ -30,6 +30,8 @@ export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   pendingTtlMinutes: { type: 'integer' as const, min: 15, max: 1440, message: 'pendingTtlMinutes debe ser un entero entre 15 y 1440' },
   // #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168; default 24).
   approvalDeadlineHours: { type: 'integer' as const, min: 1, max: 168, message: 'approvalDeadlineHours debe ser un entero entre 1 y 168' },
+  // #262 REQ-HAC-07 — Horas antes de la llegada para auto-asignar habitación (0–168; 0 = apagado).
+  autoAssignBeforeArrivalHours: { type: 'integer' as const, min: 0, max: 168, message: 'autoAssignBeforeArrivalHours debe ser un entero entre 0 y 168' },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────

@@ -40,7 +40,7 @@ export interface PrintLine {
   notes?: string
   modifiers: { name: string; priceDelta: number }[]
   // KDS — lo que cocina quitó/agregó de la receta ("SIN cebolla · CON extra queso"); solo lo imprime la comanda de cocina.
-  ingredientChanges?: { removed: string[]; added: string[] } | null
+  ingredientChanges?: { removed: string[]; added: string[]; doubled?: string[] } | null
   kind: 'item' | 'combo_header' | 'combo_component'
   stationId?: string
   stationName?: string
@@ -343,6 +343,7 @@ export function renderKitchen(d: PrintOrderData): string {
     const ing = [
       ...(l.ingredientChanges?.removed ?? []).map((n) => `SIN ${esc(n)}`),
       ...(l.ingredientChanges?.added ?? []).map((n) => `CON ${esc(n)}`),
+      ...(l.ingredientChanges?.doubled ?? []).map((n) => `DOBLE ${esc(n)}`),
     ]
     return `<div class="line">${l.quantity}× ${esc(l.name)}</div>
 ${mods.length ? `<div class="mods">${mods.map((m) => esc(m.name)).join(', ')}</div>` : ''}

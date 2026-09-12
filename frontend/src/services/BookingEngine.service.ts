@@ -16,6 +16,9 @@ export interface BookingConfig {
   /** #271 MR-06 — horas que tiene el hotel (con confirmación manual) para aprobar o rechazar una
    *  reserva pagada antes de que el cron le mande un recordatorio (1–168, default 24). */
   approvalDeadlineHours: number
+  /** #262 REQ-HAC-07 — horas antes de la llegada a partir de las cuales el sistema asigna solo la
+   *  habitación sugerida a una reserva sin unidad y manda el pase completo (0–168, 0 = apagado). */
+  autoAssignBeforeArrivalHours: number
   cancellationPolicy: string
   showComparison: boolean
   googleAdsEnabled: boolean

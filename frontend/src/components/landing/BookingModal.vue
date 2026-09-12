@@ -1015,15 +1015,6 @@ function moneyCharge(value: number): string {
 function moneyEstimated(amount: unknown): string {
   return money(Number(amount))
 }
-/** #220: strings en español para <EstimatedTotals> (el modal de la landing no usa i18n).
- *  Son las mismas que ya muestra el desglose del paso de pago. */
-const ESTIMATED_LABELS = {
-  subtotal: 'Subtotal',
-  total: 'Total estimado',
-  beforeTaxes: 'sin impuestos',
-  noTaxes: 'Este hotel no aplica impuestos sobre la reserva.',
-  discount: 'Descuento',
-}
 
 const staySummary = computed(() => {
   if (!store.checkIn || !store.checkOut) return 'Elegí tus fechas'
@@ -1155,6 +1146,22 @@ const BOARD_PLAN_LABELS: Record<MealPlanCode | 'room_only', string> = {
   breakfast: 'Desayuno incluido',
   half_board: 'Desayuno y cena',
   all_inclusive: 'Todo incluido',
+}
+
+/** #220: strings en español para <EstimatedTotals> (el modal de la landing no usa i18n).
+ *  Son las mismas que ya muestra el desglose del paso de pago. */
+const ESTIMATED_LABELS = {
+  subtotal: 'Subtotal',
+  total: 'Total estimado',
+  beforeTaxes: 'sin impuestos',
+  noTaxes: 'Este hotel no aplica impuestos sobre la reserva.',
+  discount: 'Descuento',
+  // #343 — la fila de régimen de `EstimatedTotals` también es español fijo en la landing: sin
+  // estas tres claves el componente caería al i18n del widget (idioma del navegador) y mezclaría
+  // "Board"/"included" con "Subtotal"/"Total estimado".
+  mealPlan: 'Régimen',
+  mealPlanIncluded: 'incluido',
+  mealPlanNames: BOARD_PLAN_LABELS,
 }
 
 /** La opción elegida en esta tarjeta (para la ayuda "{price} por persona y noche"). */

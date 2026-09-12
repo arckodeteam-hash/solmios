@@ -125,7 +125,7 @@ export class RestaurantService {
 
   // ─── Comandas (RES-3) — delegan a usecases/orders + usecases/order-lines ───
   openOrder(dto: orders.OpenOrderInput, user: CurrentUser) { return orders.openOrder(ordersDeps(this.w()), dto, user) }
-  listOrders(query: { status?: string; tableId?: string } | undefined, user: CurrentUser) { return orders.listOrders(ordersDeps(this.w()), query, user) }
+  listOrders(query: { status?: string; tableId?: string; waiterId?: string; businessDate?: string } | undefined, user: CurrentUser) { return orders.listOrders(ordersDeps(this.w()), query, user) }
   getOrder(id: string, user: CurrentUser) { return orders.getOrder(ordersDeps(this.w()), id, user) }
   sendOrder(id: string, user: CurrentUser) { return orders.sendOrder(ordersDeps(this.w()), id, user) }
   cancelOrder(id: string, reason: string | undefined, user: CurrentUser) { return orders.cancelOrder(ordersDeps(this.w()), id, reason, user) }
@@ -157,11 +157,11 @@ export class RestaurantService {
   refundOrderPayment(orderId: string, partId: string, dto: { reason?: string }, user: CurrentUser) { return splitPayments.refundOrderPayment(splitPaymentsDeps(this.w()), orderId, partId, dto, user) }
   settleOrderPayment(partId: string, paymentId: string, user: CurrentUser) { return splitPayments.settleOrderPayment(splitPaymentsDeps(this.w()), partId, paymentId, user) }
   expireOrderPayment(partId: string, user: CurrentUser) { return splitPayments.expireOrderPayment(splitPaymentsDeps(this.w()), partId, user) }
-
-  // ─── KDS / cocina (RES-4) — delegan a usecases/kds ───
+  // ─── KDS / cocina (RES-4) — delegan a usecases/kds. Receta por línea (quitar/doble/agregar) también acá ───
   kdsQueue(station: string | undefined, user: CurrentUser) { return kds.kdsQueue(kdsDeps(this.w()), station, user) }
   setLineStatus(lineId: string, status: LineStatus, user: CurrentUser) { return kds.setLineStatus(kdsDeps(this.w()), lineId, status, user) }
   setLineIngredients(lineId: string, input: unknown, user: CurrentUser) { return kds.setLineIngredients(kdsDeps(this.w()), lineId, input, user) }
+  menuItemIngredients(menuItemId: string, user: CurrentUser) { return kds.menuItemIngredients(kdsDeps(this.w()), menuItemId, user) }
 
   // ─── Canal en vivo (#211) — usecases/events. publishEvent lo llama el conector; eventStream/eventsTicket, el controller ───
   publishEvent(hotelId: string, event: Omit<events.RestaurantEvent, 'at'>) { this.eventHub.publish(hotelId, event) }

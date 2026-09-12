@@ -84,6 +84,8 @@ export interface ChannexWebhookDeps {
    * sin él, el caso sigue siendo 400.
    */
   syncFeed?: () => Promise<{ success: boolean; errors: string[] }>
+  /** Registro en `sync_log` de lo que se hizo con cada callback (#347). Opcional; nunca frena la respuesta. */
+  trail?: { logWebhook: (input: { outcome: 'ingested' | 'ingest_failed' | 'feed_fallback' | 'rejected' | 'no_payload' | 'own_event'; propertyId?: string | null; revisionId?: string | null; event?: string | null; detail?: Record<string, unknown> }) => Promise<void> }
   logger: ChannexWebhookLogger
 }
 
@@ -101,6 +103,10 @@ export async function handleChannexWebhook(
   req: { headers?: Record<string, any>; query?: Record<string, any>; body?: any },
 ): Promise<{ status: number; body: any }> {
   const { store, logger } = deps
+  const anotar = (input: Parameters<NonNullable<ChannexWebhookDeps['trail']>['logWebhook']>[0]): void => {
+    if (!deps.trail) return
+    deps.trail.logWebhook(input).catch(() => { /* registrar nunca frena la respuesta */ })
+  }
 
   // 1. La credencial PRIMERO, antes de mirar el body: un endpoint público no puede gastar trabajo
   // (ni loguear payloads ajenos) por una request que no está autenticada.
@@ -119,10 +125,12 @@ export async function handleChannexWebhook(
   const recibido = (leerHeader(req.headers, 'api-key') || String(req.query?.api_key ?? '')).trim()
   if (!esperado || !recibido || !secretosCoinciden(esperado, recibido)) {
     logger.warn('channex-webhook: credencial inválida', { conCredencial: Boolean(recibido), configurado: Boolean(esperado) })
+    anotar({ outcome: 'rejected', event: req.body?.event ?? null, propertyId: req.body?.property_id ?? null, detail: { conCredencial: Boolean(recibido) } })
     return { status: 401, body: { success: false } }
   }
 
   const body = req.body || {}
+  const propertyId: string | null = body?.payload?.property_id ?? body?.property_id ?? null
 
   // 2. Eventos propios. Los eventos de booking los origina la OTA y llegan con `user_id: null`;
   // un `user_id` seteado en una cuenta de plataforma que es SOLO nuestra significa que el evento
@@ -134,6 +142,7 @@ export async function handleChannexWebhook(
     const propio = String(cfg?.channexUserId || '').trim()
     if (!propio || propio === userId) {
       logger.info('channex-webhook: evento propio descartado', { userId })
+      anotar({ outcome: 'own_event', event: body?.event ?? null, propertyId, detail: { userId } })
       return { status: 200, body: { success: true, ignored: 'own_event' } }
     }
   }
@@ -149,13 +158,16 @@ export async function handleChannexWebhook(
       try {
         const res = await deps.syncFeed()
         if (!res?.success) logger.error('channex-webhook: el sync del feed falló, queda para el cron', { errors: res?.errors || [] })
+        anotar({ outcome: 'feed_fallback', event: body?.event ?? null, propertyId, detail: { synced: Boolean(res?.success), errors: res?.errors || [] } })
         return { status: 200, body: { success: true, ingested: false, fallback: 'feed', synced: Boolean(res?.success) } }
       } catch (e: any) {
         logger.error('channex-webhook: excepción sincronizando el feed, queda para el cron', { error: e?.message || String(e) })
+        anotar({ outcome: 'feed_fallback', event: body?.event ?? null, propertyId, detail: { synced: false, error: e?.message || String(e) } })
         return { status: 200, body: { success: true, ingested: false, fallback: 'feed', synced: false } }
       }
     }
     logger.warn('channex-webhook: callback sin revision_id', { event: body?.event ?? null })
+    anotar({ outcome: 'no_payload', event: body?.event ?? null, propertyId })
     return { status: 400, body: { success: false, error: 'revision_id ausente' } }
   }
 
@@ -167,14 +179,17 @@ export async function handleChannexWebhook(
     const res = await deps.ingestRevision(revisionId)
     if (!res?.success) {
       logger.error('channex-webhook: la ingesta falló, queda para el cron', { revisionId, errors: res?.errors || [] })
+      anotar({ outcome: 'ingest_failed', event: body?.event ?? null, propertyId, revisionId, detail: { errors: res?.errors || [] } })
       return { status: 200, body: { success: true, revisionId, ingested: false } }
     }
     logger.info('channex-webhook: revisión ingestada', { revisionId })
+    anotar({ outcome: 'ingested', event: body?.event ?? null, propertyId, revisionId })
     return { status: 200, body: { success: true, revisionId, ingested: true } }
   } catch (e: any) {
     logger.error('channex-webhook: excepción ingestando la revisión, queda para el cron', {
       revisionId, errors: [e?.message || String(e)],
     })
+    anotar({ outcome: 'ingest_failed', event: body?.event ?? null, propertyId, revisionId, detail: { error: 'excepción' } })
     return { status: 200, body: { success: true, revisionId, ingested: false } }
   }
 }

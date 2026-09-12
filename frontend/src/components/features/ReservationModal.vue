@@ -118,6 +118,8 @@ const guaranteeCard = ref<GuaranteeCardData | null>(null)
 const guaranteeError = ref('')
 const unlocking = ref(false)
 const sendingLockCode = ref(false)
+// #336 — envío del enlace de check-in digital por correo (la tarjeta "Check-in digital").
+const sendingCheckinLink = ref(false)
 
 // Cerradura de la habitación (independiente de si ya hay un código generado para la reserva):
 // deja generar el código / revisar conexión desde acá aunque `d.lockCodes` todavía esté vacío
@@ -319,6 +321,24 @@ function lockCodeWaLink(code: string, startDate?: string | null, endDate?: strin
   if (h?.wifiNetwork) lines.push(`- WiFi: ${h.wifiNetwork}${h.wifiPassword ? ' — Contraseña: ' + h.wifiPassword : ''}`)
   lines.push('', '¡Que disfrutes tu estancia!' + (h?.phone ? ` Cualquier cosa, llamá al ${h.phone}.` : ''))
   return waLink(g?.phone, lines.join('\n'))
+}
+
+/** #336 — cuerpo del WhatsApp con el enlace de check-in digital. SIN emojis (ver `lockCodeWaLink`). */
+function checkinLinkWaBody(): string | null {
+  const url = checkinUrl.value
+  if (!url || !d.value) return null
+  const g = d.value.guest
+  const ref = d.value.externalLocator || d.value.id.slice(-8)
+  return [
+    `Hola${g?.name ? ', ' + g.name : ''}`,
+    '',
+    `Le escribimos de ${hotelInfo.value?.name || 'nuestro hotel'} por su reserva ${ref}.`,
+    '',
+    'Para agilizar su llegada, le invitamos a completar el check-in digital antes de llegar:',
+    url,
+    '',
+    '¡Le esperamos!',
+  ].join('\n')
 }
 
 async function copyLockCode(code: string) {
@@ -585,6 +605,9 @@ const secondaryTotal = computed(() => {
 })
 const secondaryCurrency = computed(() => currency.value?.secondaryCurrency || 'DOP')
 const checkinUrl = computed(() => d.value?.checkinCode ? `${window.location.origin}/checkin/${d.value.checkinCode}` : null)
+// #336 — sin teléfono/correo del huésped los botones de envío del enlace quedan deshabilitados con aviso.
+const hasGuestPhone = computed(() => !!d.value?.guest?.phone)
+const hasGuestEmail = computed(() => !!d.value?.guest?.email)
 
 // ── Comprobante de cargos ───────────────────────────────────────────────
 // NO es una factura: no lleva numeración fiscal ni NCF (eso vive en el módulo Facturación).
@@ -1003,6 +1026,26 @@ async function sendLockCodeEmail() {
     toast.error((e as Error).message || 'No se pudo enviar el email')
   } finally {
     sendingLockCode.value = false
+  }
+}
+
+/** #336 — WhatsApp con el enlace de check-in digital; deja traza `queued` vía `waSend`. */
+async function sendCheckinLinkWa() {
+  await waSend(checkinLinkWaBody(), 'Enlace de check-in digital')
+}
+
+/** #336 — correo con el enlace de check-in digital (el backend registra sent/failed en message_logs). */
+async function sendCheckinLinkEmail() {
+  if (!d.value) return
+  sendingCheckinLink.value = true
+  try {
+    const res = await ReservationService.sendCheckinLinkEmail(d.value.id)
+    toast.success(`Enlace de check-in enviado a ${res.sentTo}`)
+    await load({ silent: true })
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo enviar el correo')
+  } finally {
+    sendingCheckinLink.value = false
   }
 }
 
@@ -1791,6 +1834,24 @@ function facturar() {
                 <div class="text-2xl font-black text-cyan tracking-wider mt-1 font-mono">{{ d.checkinCode }}</div>
               </div>
               <p class="text-xs text-text-muted mt-2">Usa este código para el check-in digital del huésped. <a v-if="checkinUrl" :href="checkinUrl" target="_blank" class="text-cyan font-bold hover:underline">Abrir formulario →</a></p>
+              <!-- #336 — enviar el enlace de check-in al huésped por WhatsApp (wa.me + traza) o por correo (backend) -->
+              <div class="flex flex-wrap gap-2 mt-3">
+                <button type="button" data-testid="checkin-link-wa" @click="sendCheckinLinkWa" :disabled="!hasGuestPhone || !can('reservations','edit')"
+                  :title="hasGuestPhone ? 'Enviar el enlace por WhatsApp al ' + d.guest?.phone : 'El huésped no tiene teléfono registrado'"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-text-secondary text-xs font-bold hover:border-teal hover:text-teal disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors">
+                  <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg>
+                  Enviar por WhatsApp
+                </button>
+                <button type="button" data-testid="checkin-link-email" @click="sendCheckinLinkEmail" :disabled="!hasGuestEmail || sendingCheckinLink || !can('reservations','edit')"
+                  :title="hasGuestEmail ? 'Enviar el enlace por correo a ' + d.guest?.email : 'El huésped no tiene correo registrado'"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-text-secondary text-xs font-bold hover:border-cyan hover:text-cyan disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors">
+                  <svg v-if="!sendingCheckinLink" class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>
+                  <svg v-else class="h-3.5 w-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  {{ sendingCheckinLink ? 'Enviando…' : 'Enviar por correo' }}
+                </button>
+              </div>
+              <p v-if="!hasGuestPhone" data-testid="checkin-link-no-phone" class="text-[11px] text-gold mt-1">El huésped no tiene teléfono registrado: no se puede enviar por WhatsApp.</p>
+              <p v-if="!hasGuestEmail" data-testid="checkin-link-no-email" class="text-[11px] text-gold mt-1">El huésped no tiene correo registrado: no se puede enviar por correo.</p>
             </div>
 
             <!-- Cerradura (si hay código) -->

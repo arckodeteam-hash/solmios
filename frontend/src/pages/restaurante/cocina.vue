@@ -4,9 +4,9 @@
 // comanda: cocina arrastra la tarjeta a la columna siguiente o toca el botón (tablet). Una tarjeta
 // lleva a dónde va ("Terraza · Mesa 3" / "Hab. 204"), la comanda, el cronómetro y la RECETA del
 // plato (ingredientes de Carta → ítem → Receta, resueltos por el server en la cola): cocina puede
-// QUITAR un ingrediente (queda tachado, "SIN") o AGREGAR uno ("CON"). Eso se guarda en la línea
-// (`ingredientChanges`), lo ve la comanda del mozo y sale en la comanda impresa. No toca el precio:
-// un extra que se cobra es un modificador y lo carga el mozo.
+// QUITAR un ingrediente ("SIN"), pedirlo DOBLE o AGREGAR uno ("CON") — LineIngredientsEditor, el
+// mismo editor que usa el mozo en la comanda. Se guarda en la línea (`ingredientChanges`) y sale en
+// la comanda impresa. No toca el precio: un extra que se cobra es un modificador y lo carga el mozo.
 // #211: se actualiza por el canal en vivo (SSE, useRestaurantEvents); si el stream cae, polling cada
 // 15 s. Cronómetro desde el envío a cocina (`sentAt`, #210), ámbar a N min y rojo a 2N (N por estación).
 // Suena al entrar un ticket de la estación que se mira (toggle en localStorage).
@@ -17,11 +17,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   RestaurantService,
-  type Station, type KdsTicket, type OrderLine, type LineStatus, type RestaurantEvent, type IngredientChanges,
+  type Station, type KdsTicket, type OrderLine, type LineStatus, type RestaurantEvent,
   ORDER_TYPE_LABELS, DEFAULT_ALERT_MINUTES,
 } from '@/services/Restaurant.service'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
+import LineIngredientsEditor from '@/components/features/restaurante/LineIngredientsEditor.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 import { useNow } from '@/composables/useNow'
@@ -105,66 +106,10 @@ async function onDrop(e: DragEvent, status: BoardStatus) {
 }
 const LABEL_OF: Record<string, string> = Object.fromEntries(COLUMNS.map((c) => [c.status, c.label]))
 
-// ─── Receta: ver, quitar y agregar ingredientes ───
-// Tarjetas con la receta desplegada. Por defecto se muestra cerrada con el conteo ("Receta · 5") y
-// los cambios ya hechos siempre visibles (SIN/CON), que es lo que la cocina necesita de un vistazo.
-const expanded = ref<Set<string>>(new Set())
-function toggleRecipe(lineId: string) {
-  const next = new Set(expanded.value)
-  if (next.has(lineId)) next.delete(lineId); else next.add(lineId)
-  expanded.value = next
-}
-const ingredientDraft = ref<Record<string, string>>({})
-const savingIngredients = ref<string | null>(null)
-
-function changesOf(l: OrderLine): IngredientChanges {
-  return { removed: [...(l.ingredientChanges?.removed ?? [])], added: [...(l.ingredientChanges?.added ?? [])] }
-}
-const sameName = (a: string, b: string) => a.trim().toLocaleLowerCase('es') === b.trim().toLocaleLowerCase('es')
-function isRemoved(l: OrderLine, name: string): boolean { return (l.ingredientChanges?.removed ?? []).some((n) => sameName(n, name)) }
-
-async function saveIngredients(l: OrderLine, changes: IngredientChanges) {
-  if (!editPerm.value || savingIngredients.value) return
-  savingIngredients.value = l.id
-  try {
-    const updated = await RestaurantService.setLineIngredients(l.id, changes)
-    // Pintar sin esperar el refresco del canal en vivo.
-    l.ingredientChanges = updated.ingredientChanges ?? null
-  } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo guardar el cambio de receta')
-  } finally {
-    savingIngredients.value = null
-  }
-}
-/** Ingrediente de la receta: tocarlo lo QUITA ("SIN"); tocarlo de nuevo lo restituye. */
-function toggleRemoved(l: OrderLine, name: string) {
-  const c = changesOf(l)
-  c.removed = isRemoved(l, name) ? c.removed.filter((n) => !sameName(n, name)) : [...c.removed, name]
-  void saveIngredients(l, c)
-}
-/** Quita un ingrediente AGREGADO por cocina. */
-function dropAdded(l: OrderLine, name: string) {
-  const c = changesOf(l)
-  c.added = c.added.filter((n) => !sameName(n, name))
-  void saveIngredients(l, c)
-}
-/** Lo que se tipeó en la tarjeta: "Agregar" lo suma como CON; "Quitar" lo suma como SIN (sirve para platos sin receta cargada). */
-function submitDraft(l: OrderLine, as: 'added' | 'removed') {
-  const name = (ingredientDraft.value[l.id] ?? '').trim()
-  if (!name) return
-  const c = changesOf(l)
-  if (as === 'added' && !c.added.some((n) => sameName(n, name))) c.added.push(name)
-  if (as === 'removed' && !c.removed.some((n) => sameName(n, name))) c.removed.push(name)
-  ingredientDraft.value[l.id] = ''
-  void saveIngredients(l, c)
-}
-function hasChanges(l: OrderLine): boolean {
-  return !!(l.ingredientChanges?.removed?.length || l.ingredientChanges?.added?.length)
-}
-function qty(n: number, unit: string): string {
-  const v = Number(n) || 0
-  const num = Number.isInteger(v) ? String(v) : v.toFixed(v < 1 ? 3 : 2).replace(/\.?0+$/, '')
-  return `${num} ${unit === 'unit' ? 'u' : unit}`
+// ─── Receta (LineIngredientsEditor) ───
+// La receta viene resuelta en la cola (`line.ingredients`); el editor guarda y devuelve la línea.
+function onLineUpdated(c: Card, updated: OrderLine) {
+  c.line.ingredientChanges = updated.ingredientChanges ?? null   // pintar sin esperar el refresco del canal en vivo
 }
 
 // #207: modal de motivo. `voidTarget` = línea + comanda a anular; null = cerrado.
@@ -479,46 +424,8 @@ onUnmounted(() => {
             </div>
             <div v-if="c.line.notes" class="text-xs text-gold font-bold">⚑ {{ c.line.notes }}</div>
 
-            <!-- Cambios de receta hechos por cocina: siempre visibles. -->
-            <div v-if="hasChanges(c.line)" class="flex flex-wrap gap-1" data-testid="kds-changes">
-              <span v-for="n in c.line.ingredientChanges?.removed ?? []" :key="'sin-' + n" class="px-2 py-0.5 rounded-md bg-danger/10 text-danger text-xs font-black">SIN {{ n }}</span>
-              <span v-for="n in c.line.ingredientChanges?.added ?? []" :key="'con-' + n" class="px-2 py-0.5 rounded-md bg-success/10 text-success text-xs font-black">CON {{ n }}</span>
-            </div>
-
-            <!-- Receta desplegable -->
-            <button type="button" @click="toggleRecipe(c.line.id)" :aria-expanded="expanded.has(c.line.id)" data-testid="kds-recipe-toggle"
-              class="w-full min-h-10 flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface text-xs font-bold text-navy hover:bg-navy/10">
-              <span>🥣 Receta<template v-if="c.line.ingredients?.length"> · {{ c.line.ingredients.length }} ingredientes</template><template v-else> · sin cargar</template></span>
-              <span aria-hidden="true">{{ expanded.has(c.line.id) ? '▴' : '▾' }}</span>
-            </button>
-            <div v-if="expanded.has(c.line.id)" class="rounded-xl border border-border p-2 space-y-2" data-testid="kds-recipe">
-              <p v-if="!c.line.ingredients?.length" class="text-[11px] text-text-muted">Este plato no tiene receta cargada (Carta → ítem → Receta). Igual podés anotar qué va sin o con.</p>
-              <ul v-else class="space-y-1">
-                <li v-for="ing in c.line.ingredients" :key="ing.name" class="flex items-center justify-between gap-2">
-                  <span :class="['text-sm', isRemoved(c.line, ing.name) ? 'line-through text-danger/70' : 'text-navy']">
-                    {{ ing.name }} <span class="text-[11px] text-text-muted">· {{ qty(ing.quantity * (c.line.quantity || 1), ing.unit) }}</span>
-                  </span>
-                  <button v-if="editPerm" type="button" @click="toggleRemoved(c.line, ing.name)" :disabled="savingIngredients === c.line.id" data-testid="kds-ingredient-toggle"
-                    :class="['min-h-9 px-2.5 rounded-lg text-xs font-bold disabled:opacity-50', isRemoved(c.line, ing.name) ? 'bg-navy/10 text-navy' : 'border-2 border-danger/40 text-danger']">
-                    {{ isRemoved(c.line, ing.name) ? '↺ Poner' : '− Quitar' }}
-                  </button>
-                </li>
-              </ul>
-              <ul v-if="c.line.ingredientChanges?.added?.length" class="space-y-1">
-                <li v-for="n in c.line.ingredientChanges?.added ?? []" :key="'a-' + n" class="flex items-center justify-between gap-2">
-                  <span class="text-sm text-success font-bold">+ {{ n }}</span>
-                  <button v-if="editPerm" type="button" @click="dropAdded(c.line, n)" :disabled="savingIngredients === c.line.id" class="min-h-9 px-2.5 rounded-lg text-xs font-bold bg-navy/10 text-navy disabled:opacity-50">Sacar</button>
-                </li>
-              </ul>
-              <form v-if="editPerm" class="flex gap-1.5" @submit.prevent="submitDraft(c.line, 'added')">
-                <input v-model="ingredientDraft[c.line.id]" type="text" maxlength="60" placeholder="Ingrediente…" data-testid="kds-ingredient-input"
-                  class="flex-1 min-w-0 min-h-10 px-2.5 rounded-lg border-2 border-border text-sm text-navy focus:border-navy outline-none" @mousedown.stop @dragstart.stop />
-                <button type="submit" :disabled="savingIngredients === c.line.id || !(ingredientDraft[c.line.id] ?? '').trim()" data-testid="kds-ingredient-add"
-                  class="min-h-10 px-3 rounded-lg bg-success text-white text-xs font-bold disabled:opacity-50">+ Agregar</button>
-                <button type="button" @click="submitDraft(c.line, 'removed')" :disabled="savingIngredients === c.line.id || !(ingredientDraft[c.line.id] ?? '').trim()" data-testid="kds-ingredient-remove"
-                  class="min-h-10 px-3 rounded-lg border-2 border-danger/40 text-danger text-xs font-bold disabled:opacity-50">− Quitar</button>
-              </form>
-            </div>
+            <!-- Receta del plato: quitar / doble / agregar. Los cambios se ven siempre; la lista se despliega. -->
+            <LineIngredientsEditor :line="c.line" :ingredients="c.line.ingredients ?? []" :editable="editPerm" :size="kiosk ? 'md' : 'sm'" @updated="onLineUpdated(c, $event)" />
 
             <!-- #282 (M2): el KDS se usa con el dedo en una tablet — botones de ≥44 px de alto. -->
             <div v-if="editPerm || (deletePerm && VOIDABLE.includes(c.line.status))" class="flex flex-wrap gap-2 pt-1">

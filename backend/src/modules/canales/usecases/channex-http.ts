@@ -28,7 +28,23 @@ export interface ChannexHttpOptions {
   /** Inyectables para tests: reloj y sleep falsos hacen los tests instantáneos. */
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /** Escucha de eventos (esperas, 429, 5xx, reintentos). Ver `ChannexHttpEvent`. */
+  onEvent?: ChannexHttpEventSink
 }
+
+/**
+ * Lo que el transporte le cuenta a quien quiera escucharlo (#347). Antes una espera por rate
+ * limit, un 429 o un reintento no quedaban en ningún lado — solo en el journal del server, que se
+ * rota y nadie mira. El sink es opcional y NUNCA puede romper el request: se llama con try/catch.
+ */
+export type ChannexHttpEvent =
+  | { type: 'throttled'; url: string; endpoint: AriEndpoint | null; propertyIds: string[]; waitMs: number; reason: 'global' | 'property' | 'paused' }
+  | { type: 'rate_limited'; url: string; endpoint: AriEndpoint | null; propertyIds: string[]; status: 429; attempt: number; retryAfter: string | null; backoffMs: number; willRetry: boolean }
+  | { type: 'server_error'; url: string; endpoint: AriEndpoint | null; propertyIds: string[]; status: number; attempt: number; backoffMs: number; willRetry: boolean }
+  | { type: 'network_error'; url: string; endpoint: AriEndpoint | null; propertyIds: string[]; attempt: number; backoffMs: number; willRetry: boolean; error: string }
+  | { type: 'client_error'; url: string; endpoint: AriEndpoint | null; propertyIds: string[]; status: number; body: unknown }
+
+export type ChannexHttpEventSink = (event: ChannexHttpEvent) => void
 
 export interface ChannexHttpResponse<T = unknown> {
   ok: boolean
@@ -99,6 +115,12 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
   const timeoutMs = opts.timeoutMs ?? 15_000
   const now = opts.now ?? Date.now
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  // `let`: en producción el sink se cablea DESPUÉS de crear el singleton (ver setEventSink).
+  let onEvent: ChannexHttpEventSink | null = opts.onEvent ?? null
+  const emit = (event: ChannexHttpEvent): void => {
+    if (!onEvent) return
+    try { onEvent(event) } catch { /* el registro nunca frena un push */ }
+  }
   const sentAt: number[] = [] // timestamps dentro de la ventana deslizante (budget global)
   // Budget por property × endpoint: `<property_id>:<availability|restrictions>` → timestamps.
   const sentAtByProperty = new Map<string, number[]>()
@@ -114,20 +136,25 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
    * intento (incluidos retries) consume slot en todas. Se toman juntas: reservar el slot global
    * y después quedarse esperando el de la property gastaría budget global sin mandar nada.
    */
-  async function acquireSlot(propertyIds: string[], endpoint: AriEndpoint | null): Promise<void> {
+  async function acquireSlot(url: string, propertyIds: string[], endpoint: AriEndpoint | null): Promise<void> {
     const keys = endpoint ? propertyIds.map((id) => propertyKey(id, endpoint)) : []
+    let avisado = false
     for (;;) {
       const t = now()
       let waitMs = 0
+      let reason: 'global' | 'property' | 'paused' = 'global'
       prune(sentAt, t)
       if (sentAt.length >= maxPerMinute) waitMs = Math.max(waitMs, windowMs - (t - sentAt[0]!))
       for (const k of keys) {
         const until = pausedUntil.get(k) ?? 0
-        if (until > t) waitMs = Math.max(waitMs, until - t)
+        if (until > t) { if (until - t > waitMs) { waitMs = until - t; reason = 'paused' } }
         else if (until) pausedUntil.delete(k)
         const arr = sentAtByProperty.get(k) ?? []
         prune(arr, t)
-        if (arr.length >= MAX_PER_PROPERTY_PER_MINUTE) waitMs = Math.max(waitMs, windowMs - (t - arr[0]!))
+        if (arr.length >= MAX_PER_PROPERTY_PER_MINUTE) {
+          const w = windowMs - (t - arr[0]!)
+          if (w > waitMs) { waitMs = w; reason = 'property' }
+        }
       }
       if (waitMs === 0) {
         sentAt.push(t)
@@ -139,6 +166,9 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
         return
       }
       // Alguna ventana llena (o property en pausa): esperar lo que le falta a la más lenta.
+      // Se avisa UNA vez por request (la primera espera): lo que importa es que hubo retención
+      // y por qué, no cada vuelta del loop.
+      if (!avisado) { avisado = true; emit({ type: 'throttled', url, endpoint, propertyIds, waitMs, reason }) }
       await sleep(waitMs + 5)
     }
   }
@@ -179,7 +209,7 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
     const endpoint = ari ? ariEndpointOf(url) : null
     const propertyIds = ari ? propertyIdsOf(init.body) : []
     for (let attempt = 0; attempt <= retries; attempt++) {
-      if (ari) await acquireSlot(propertyIds, endpoint)
+      if (ari) await acquireSlot(url, propertyIds, endpoint)
       try {
         const res = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
         const text = await res.text()
@@ -188,24 +218,37 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
         last = { ok: res.ok, status: res.status, data }
         if (res.ok) return last
         if (res.status === 429 && ari) pauseProperties(propertyIds, endpoint)
-        if (RETRYABLE_STATUS(res.status) && attempt < retries) {
-          await sleep(backoffMs(attempt, res.headers.get('retry-after')))
-          continue
+        if (RETRYABLE_STATUS(res.status)) {
+          const willRetry = attempt < retries
+          const retryAfter = res.headers.get('retry-after')
+          const wait = backoffMs(attempt, retryAfter)
+          if (res.status === 429) emit({ type: 'rate_limited', url, endpoint, propertyIds, status: 429, attempt, retryAfter, backoffMs: wait, willRetry })
+          else emit({ type: 'server_error', url, endpoint, propertyIds, status: res.status, attempt, backoffMs: wait, willRetry })
+          if (willRetry) { await sleep(wait); continue }
+          return last // reintentos agotados
         }
-        return last // 4xx definitivo (400/401/404…) o reintentos agotados
+        emit({ type: 'client_error', url, endpoint, propertyIds, status: res.status, body: data })
+        return last // 4xx definitivo (400/401/404…)
       } catch (err) {
         // Timeout / error de red: mismo tratamiento que 5xx — reintentar con backoff.
         last = { ok: false, status: 0, data: null as T }
-        if (attempt < retries) { await sleep(backoffMs(attempt, null)); continue }
+        const willRetry = attempt < retries
+        const wait = backoffMs(attempt, null)
+        emit({ type: 'network_error', url, endpoint, propertyIds, attempt, backoffMs: wait, willRetry, error: (err as any)?.message || String(err) })
+        if (willRetry) { await sleep(wait); continue }
         throw err
       }
     }
     return last
   }
 
+  /** Cablea (o descablea con null) el escucha de eventos. Ver `setChannexHttpEventSink`. */
+  function setEventSink(sink: ChannexHttpEventSink | null): void { onEvent = sink }
+
   return {
     request,
     setMaxPerMinute,
+    setEventSink,
     resetWindow: () => { sentAt.length = 0; sentAtByProperty.clear(); pausedUntil.clear() },
   }
 }
@@ -220,6 +263,14 @@ export const sharedChannexHttp = createChannexHttp()
  * cambio de config y llama acá. Un valor inválido no cambia nada (ver saneMaxPerMinute).
  */
 export const setChannexMaxPerMinute = (n: number): void => { sharedChannexHttp.setMaxPerMinute(n) }
+
+/**
+ * El escucha de eventos del transporte compartido (#347). Lo cablea `canales/index.ts` para
+ * escribir en `sync_log` las esperas por rate limit, los 429/5xx y los reintentos, con el hotel
+ * resuelto por `property_id`. Existe como función de módulo por el mismo motivo que
+ * `setChannexMaxPerMinute`: el singleton se crea antes que el ORM.
+ */
+export const setChannexHttpEventSink = (sink: ChannexHttpEventSink | null): void => { sharedChannexHttp.setEventSink(sink) }
 
 /**
  * SOLO TESTS: reinicia la ventana del limiter compartido. bun:test corre cada archivo en su
