@@ -114,7 +114,7 @@ export class ReservasService {
   }
 
   // ── CHECK-IN ─────────────────────────────────────────────────────────────
-  async checkin(id: string, user: any): Promise<any> { return checkinValidation(this.repo, id, user, this.auth) }
+  async checkin(id: string, user: any, opts?: { roomId?: string | null }): Promise<any> { return checkinValidation(this.repo, id, user, this.auth, opts) } // #259: opts.roomId releva el 409 room_not_assigned (el controller asigna con assignRoom antes de executeCheckin)
   async executeCheckin(r: any, user: any, deps: { orm: any; pushAvailabilityToChannex?: any; sendCheckinEmail?: any; logger?: any }): Promise<any> { return executeCheckin(r, user, { orm: deps.orm, logger: deps.logger || this.logger, repo: this.repo, queries: this.queries }) }
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
