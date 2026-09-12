@@ -155,21 +155,24 @@ describe('getPublicReservation — approvalDeadlineHours / rejectionReason / ref
     expect(res.body.reservation.refundAmount).toBe(0)
   })
 
-  it('reserva pending: rejectionReason y refundAmount son null', async () => {
+  // #272 unificó `refundAmount` con el snapshot del reembolso (refundStatus/refundedAt/...): es SU
+  // dinero y sale SIEMPRE como número (0 si no hay nada que devolver), no sólo en el rechazo.
+  it('reserva pending: rejectionReason null; refundAmount 0 (número, #272)', async () => {
     const orm = makeOrm({ approvalStatus: 'pending', refundAmount: 0 }, null)
     const res = await getPublicReservation(orm, 'res-1', VALID_TOKEN)
     expect(res.body.reservation.rejectionReason).toBeNull()
-    expect(res.body.reservation.refundAmount).toBeNull()
+    expect(res.body.reservation.refundAmount).toBe(0)
+    expect(res.body.reservation.refundStatus).toBe('none')
   })
 
-  it('cancelada por el panel (no rechazo) con motivo libre: NO filtra el motivo ni el reembolso', async () => {
+  it('cancelada por el panel (no rechazo) con motivo libre: NO filtra el motivo; el reembolso es suyo (#272)', async () => {
     const orm = makeOrm(
       { status: 'cancelled', approvalStatus: null, cancellationReason: 'Nota interna del empleado', refundAmount: 80 },
       null,
     )
     const res = await getPublicReservation(orm, 'res-1', VALID_TOKEN)
     expect(res.body.reservation.rejectionReason).toBeNull()
-    expect(res.body.reservation.refundAmount).toBeNull()
+    expect(res.body.reservation.refundAmount).toBe(80)
     expect(res.body.reservation.cancellationReason).toBeNull()
   })
 })

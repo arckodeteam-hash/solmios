@@ -6,7 +6,7 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerBookingengineModels } from './model'
 import { BookingengineService } from './service'
 import { BookingengineController } from './controller'
-import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO, MealPlanDTO, ChildAmenityDTO } from './types'
+import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO, MealPlanDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
@@ -15,11 +15,11 @@ import { PaymentEventStore } from '../../services/payment-gateway/payment-events
 import { PaymentAttemptStore } from '../../services/payment-gateway/payment-attempts'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
-export { registerBookingengineModels, UpsellModel, MealPlanModel, ChildAmenityModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
+export { registerBookingengineModels, UpsellModel, MealPlanModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
 export { BookingengineService } from './service'
-export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan, ChildAmenityDTO, CreateChildAmenityDTO, UpdateChildAmenityDTO, PublicChildAmenity } from './types'
+export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan } from './types'
 export type { BookingengineSockets } from './sockets'
-export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema, CreateChildAmenitySchema, UpdateChildAmenitySchema } from './validators/schema'
+export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema } from './validators/schema'
 // Calendario público de tarifas (`GET /api/public/hotels/:slug/calendar`).
 export { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from './validators/schema'
 export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './usecases/public-calendar'
@@ -78,8 +78,6 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación, mismo
       // criterio que upsellRepo arriba (sub-dominio, deps del controller, no del service).
       const mealPlanRepo = new OrmRepository<MealPlanDTO>(orm, 'MealPlans')
-      // REQ-01 (#233) — Amenidades para niños/bebés, mismo criterio que upsellRepo/mealPlanRepo.
-      const childAmenityRepo = new OrmRepository<ChildAmenityDTO>(orm, 'ChildAmenities')
       // F2 2.4 / 2.5 — Deps nuevos: configuration (taxes + currency_rates) y promo_codes
       // (valida + incrementa uses en el flujo unificado). Sin estos, los endpoints públicos
       // /rates y /booking procesan todo vacío (degradación graceful, no rompe el flujo).
@@ -145,8 +143,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         hotelAmenitiesRepo,
         // PG-7.5 — registry para la página hospedada de CardNet (/api/pay/go). Al final.
         registry,
-        // REQ-01 (#233) — Amenidades para niños/bebés, al final por el mismo motivo.
-        childAmenityRepo,
+        // #272 — `Groups` para la cancelación pública en cascada. Al final.
+        new OrmRepository<any>(orm, 'Groups'),
       )
 
       // Admin routes (protegidas con auth)
@@ -190,16 +188,6 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         ]
         router.get('/api/meal-plans', mealPlanGuard('view'), (req: any) => controller.listMealPlans(req))
         router.put('/api/meal-plans/:code', mealPlanGuard('edit'), (req: any) => controller.upsertMealPlan(req))
-
-        // REQ-01 (#233) — Amenidades para niños/bebés admin. Decisión: se REUSA el permiso
-        // `upsells:*` (extras del motor) en vez de crear uno nuevo — son extras del motor del
-        // mismo tipo que los upsells, los gestiona la misma persona desde la misma pantalla, y
-        // un permiso aparte obligaría a migrar roles existentes sin ganancia real. userType
-        // merchant, mismo motivo que upsellGuard.
-        router.get('/api/child-amenities', upsellGuard('view'), (req: any) => controller.listChildAmenities(req))
-        router.post('/api/child-amenities', upsellGuard('create'), (req: any) => controller.createChildAmenity(req))
-        router.put('/api/child-amenities/:id', upsellGuard('edit'), (req: any) => controller.updateChildAmenity(req))
-        router.delete('/api/child-amenities/:id', upsellGuard('delete'), (req: any) => controller.destroyChildAmenity(req))
       }
 
       // Público (sin auth) — TODOS con rate-limit por IP (F0 0.5). Límites y claves por
@@ -255,13 +243,6 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         const { allowed, retryAfter } = await rateLimit(`public-meal-plans:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.getPublicMealPlans(req)
-      })
-      // REQ-01 (#233) — Amenidades para niños/bebés activas del hotel, checklist por habitación
-      // en el motor público. Rate-limit 60/60s (read-only), mismo techo que /upsells. Sin auth.
-      router.get('/api/public/hotels/:slug/child-amenities', async (req: any) => {
-        const { allowed, retryAfter } = await rateLimit(`public-child-amenities:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
-        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
-        return controller.publicChildAmenities(req)
       })
       // REQ-01 (#290) — Amenidades PERSONALIZADAS por tipo de habitación (unión de las custom
       // activas de sus rooms vendibles, precio mínimo). Rate-limit 60/60s (read-only). Sin auth.

@@ -124,6 +124,27 @@ describe('auto-messages — handler de Guardar (regresión qa-ui 2026-08-22)', (
     expect(w.find('[data-testid="auto-message-title"]').exists()).toBe(false)
   })
 
+  // #267: las plantillas al staff (web/OTA) y el acuse sin pasarela son editables desde acá.
+  // Sin la opción en el <select>, el hotel no tenía forma de pisarlas aunque el backend las aceptara.
+  it.each(['reservation_new_staff', 'reservation_new_ota_staff', 'reservation_received_unpaid'])(
+    'la plantilla %s se puede elegir y viaja en el payload',
+    async (event) => {
+      createMock.mockResolvedValue({ id: 'am3' })
+      const w = await openModal()
+      await w.find<HTMLInputElement>('[data-testid="auto-message-title"]').setValue(`Override ${event}`)
+      const selects = w.find('[data-testid="modal-stub"]').findAll('select')
+      const option = selects[1].findAll('option').find(o => o.element.value === event)
+      expect(option?.text().trim().length ?? 0).toBeGreaterThan(0)
+      await selects[1].setValue(event)
+
+      await guardarBtn(w).trigger('click')
+      await flushPromises()
+
+      expect(createMock).toHaveBeenCalledTimes(1)
+      expect((createMock.mock.calls[0][0] as Record<string, unknown>).event).toBe(event)
+    },
+  )
+
   it('crear con el toggle "Envío activo" desactivado manda isActive: 0 (INT-1: ese 0 ya no se guarda activo)', async () => {
     createMock.mockResolvedValue({ id: 'am2' })
     const w = await openModal()

@@ -36,7 +36,7 @@ function fakeRepo(rows: any[] = []) {
 function policy(over: Record<string, any> = {}) {
   return {
     acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0,
-    childrenDiscountEnabled: true, childrenRatePercent: 50, cribAvailable: false,
+    childrenDiscountEnabled: true, childrenRatePercent: 50,
     ...over,
   }
 }

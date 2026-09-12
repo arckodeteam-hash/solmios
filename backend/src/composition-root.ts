@@ -551,6 +551,7 @@ import { attendancePayrollConnector } from './connectors/attendance-payroll'
 import { bookingenginePaymentsConnector } from './connectors/bookingengine-payments'
 import { bookingengineNotificacionesConnector } from './connectors/bookingengine-notificaciones'
 import { bookingengineDepositsConnector } from './connectors/bookingengine-deposits'
+import { bookingengineRefundsConnector } from './connectors/bookingengine-refunds'
 import { bookingenginePromocodesConnector } from './connectors/bookingengine-promocodes'
 import { bookingengineTtlockConnector } from './connectors/bookingengine-ttlock'
 import { messagesUsuariosConnector } from './connectors/messages-usuarios'
@@ -780,6 +781,10 @@ system.addConnector('payment-requests-ttlock', paymentRequestsTtlockConnector(lo
 system.addConnector('bookingengine-payments', bookingenginePaymentsConnector)
 // #246: aviso al hotel (campanita + push) por reserva web y pago confirmado; el correo se inyecta
 // post-init en `notificaciones` (ver email-bootstrap), por la misma TDZ que explica el bloque de abajo.
+// #272 — Reembolso REAL en Stripe de la cancelación web + puerto de reintento para reservas. Va
+// ANTES del aviso al hotel y del correo (email-bootstrap): los sockets de `onBookingCancelled` se
+// encadenan en orden de registro y el aviso/correo tienen que releer el `refundStatus` verdadero.
+system.addConnector('bookingengine-refunds', bookingengineRefundsConnector(logger))
 system.addConnector('bookingengine-notificaciones', bookingengineNotificacionesConnector(logger))
 // El correo de confirmación de PAGO del motor NO va acá: necesita el EmailService, que se
 // construye recién en `bootstrapEmail()` DESPUÉS de `system.start()`. Referenciarlo desde un

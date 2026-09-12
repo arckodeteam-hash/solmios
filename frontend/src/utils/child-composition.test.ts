@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, DEFAULT_CHILD_POLICY, type ChildPolicy } from './child-composition'
 
-const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
 
 describe('resolveChildComposition', () => {
   it('0-3 años → no consume plaza (ejemplo del pedido)', () => {
@@ -93,7 +93,7 @@ describe('DEFAULT_CHILD_POLICY', () => {
 
 // ─── Tarea 21 (Identificar bebés en la reserva pública, 2026-09-08) ────────────────────────────
 describe('classifyAge / resolveChildComposition — bebé', () => {
-  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
 
   it('0-1 años → bebé (maxBabyAge=1), frontera inclusive', () => {
     expect(classifyAge(0, POLICY_BABY)).toBe('baby')

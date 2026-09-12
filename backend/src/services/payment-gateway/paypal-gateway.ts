@@ -407,7 +407,7 @@ export class PayPalGateway implements RefundableGateway {
   }
 
   /** Reembolso de una CAPTURA. Sin monto = total; con monto = parcial, en el decimal de PayPal. */
-  async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
+  async refund(providerRef: string, amountMinor?: number, idempotencyKey?: string): Promise<RefundResult> {
     const token = await this.getAccessToken()
     // El total no manda `amount` (es lo que espera la API), así que tampoco necesita la consulta.
     let amount: { currency_code: string; value: string } | undefined
@@ -415,9 +415,12 @@ export class PayPalGateway implements RefundableGateway {
       const currency = await this.captureCurrency(providerRef, token)
       amount = { currency_code: currency, value: toPayPalAmount(amountMinor, currency) }
     }
+    const headers: Record<string, string> = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
+    // #272: mismo header de idempotencia que createCharge; PayPal devuelve el refund original si se repite.
+    if (idempotencyKey) headers['PayPal-Request-Id'] = idempotencyKey
     const res = await fetch(`${this.base}/v2/payments/captures/${encodeURIComponent(providerRef)}/refund`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(amount ? { amount } : {}),
     })
     const body = await res.json().catch(() => ({})) as any

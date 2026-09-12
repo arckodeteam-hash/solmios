@@ -572,24 +572,6 @@
                 </p>
               </div>
             </div>
-
-            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el checklist de
-                 "amenidades para bebé" por un único toggle: ¿el hotel ofrece cuna? Sin esto, el
-                 composer público ni pregunta "¿Necesita cuna?" aunque la reserva tenga un bebé. -->
-            <div class="pt-2 border-t border-border">
-              <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
-                <div>
-                  <div class="text-sm font-bold text-navy">Ofrece cuna para bebés</div>
-                  <div class="text-[10px] text-text-muted">
-                    Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé
-                  </div>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
-                  <input v-model="childPolicy.cribAvailable" type="checkbox" class="sr-only peer">
-                  <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
-                </label>
-              </div>
-            </div>
           </template>
         </div>
       </div>
@@ -951,15 +933,15 @@ async function saveRoomInfo() {
 // Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
 // NUNCA hardcodeado a 50): cada niño que consume plaza paga ese % del "valor de un adulto" en vez
 // del precio completo de ocupante, SOLO si el hotel lo habilita.
-// Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable` reemplaza el checklist
-// de "servicios para bebé" (flag de bebé sobre upsells) por un único toggle a nivel hotel.
+// #292 — la cuna ya no es config global (el toggle "Ofrece cuna" se dio de baja): es la amenidad
+// `custom:cuna` de cada habitación, configurada en Habitaciones.
 // REQ-03 (#235) — `maxFreeChildrenPerRoom`: tope de niños/bebés que no consumen plaza por
 // habitación (entero ≥ 0). `null` = sin límite; el input vacío se guarda como null, NUNCA se
 // precarga un número por default. El backend lo aplica por habitación en motor público, panel,
 // API/IA y reagendado.
 const childPolicy = reactive({
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  childrenDiscountEnabled: false, childrenRatePercent: 50,
   maxFreeChildrenPerRoom: null as number | string | null,
 })
 /** REQ-03 — input vacío/null → null (sin límite); cualquier otra cosa → Number (validado aparte). */
@@ -972,7 +954,7 @@ async function loadChildPolicy() {
   try {
     const c = await ConfigService.get('child_policy') as {
       acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number; maxBabyAge?: number
-      childrenDiscountEnabled?: boolean; childrenRatePercent?: number; cribAvailable?: boolean
+      childrenDiscountEnabled?: boolean; childrenRatePercent?: number
       maxFreeChildrenPerRoom?: number | null
     } | null
     if (c) {
@@ -982,11 +964,10 @@ async function loadChildPolicy() {
       childPolicy.maxBabyAge = Number.isFinite(c.maxBabyAge) ? Number(c.maxBabyAge) : 0
       childPolicy.childrenDiscountEnabled = c.childrenDiscountEnabled === true
       childPolicy.childrenRatePercent = Number.isFinite(c.childrenRatePercent) ? Number(c.childrenRatePercent) : 50
-      childPolicy.cribAvailable = c.cribAvailable === true
       childPolicy.maxFreeChildrenPerRoom = Number.isInteger(c.maxFreeChildrenPerRoom) && Number(c.maxFreeChildrenPerRoom) >= 0
         ? Number(c.maxFreeChildrenPerRoom) : null
     }
-  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años, nadie es "bebé", sin descuento ni cuna */ }
+  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años, nadie es "bebé", sin descuento */ }
 }
 // "La edad máxima sin consumir plaza no puede ser superior a la edad máxima considerada niño."
 // Tarea 21 — mismo criterio para maxBabyAge, pero contra maxFreeAge (del cual es subconjunto).
@@ -1012,7 +993,6 @@ async function saveChildPolicy() {
       acceptChildren: childPolicy.acceptChildren, maxChildAge: childPolicy.maxChildAge,
       maxFreeAge: childPolicy.maxFreeAge, maxBabyAge: childPolicy.maxBabyAge,
       childrenDiscountEnabled: childPolicy.childrenDiscountEnabled, childrenRatePercent: childPolicy.childrenRatePercent,
-      cribAvailable: childPolicy.cribAvailable,
       maxFreeChildrenPerRoom: normalizeMaxFreeChildren(childPolicy.maxFreeChildrenPerRoom),
     })
     await nextTick()

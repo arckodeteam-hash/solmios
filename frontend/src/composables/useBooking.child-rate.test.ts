@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBookingStore } from './useBooking'
 import type { RoomTypeRate } from '@/types/booking'
+import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
 
 vi.mock('@/services/Booking.service', () => ({
   BookingService: { getUpsells: vi.fn().mockResolvedValue([]) },
@@ -29,7 +30,7 @@ function rtWithMatrix(): RoomTypeRate {
   } as RoomTypeRate
 }
 
-const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+const BASE_POLICY = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -38,7 +39,7 @@ beforeEach(() => {
 describe('useBooking.addToCart — precio con el descuento infantil porcentual', () => {
   it('regla deshabilitada: unitPrice usa la fila plana de siempre — CERO regresión', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     await store.addToCart(rtWithMatrix(), { adults: 1, childrenAges: [8] }) // 1 adulto + 1 niño con plaza
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]!.unitPrice).toBe(200) // fila de ocupación=2 tal cual
@@ -47,7 +48,7 @@ describe('useBooking.addToCart — precio con el descuento infantil porcentual',
 
   it('1 adulto ($100) + 1 niño con plaza al 60% → unitPrice $160, impuesto reescalado proporcional (18 × 160/100)', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 60, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 60 } 
     await store.addToCart(rtWithMatrix(), { adults: 1, childrenAges: [8] })
     expect(store.cart[0]!.unitPrice).toBe(160)
     // La fila de ocupación=1 (adultsRow) trae impuesto $18 sobre $100 → reescalado a 160: 18×(160/100)=28.8.
@@ -56,28 +57,28 @@ describe('useBooking.addToCart — precio con el descuento infantil porcentual',
 
   it('2 adultos ($200) + 1 niño con plaza al 50% → unitPrice $250 (200 + 50% de 100)', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50 } 
     await store.addToCart(rtWithMatrix(), { adults: 2, childrenAges: [8] })
     expect(store.cart[0]!.unitPrice).toBe(250)
   })
 
   it('bebé (edad 1): NO recibe la regla — unitPrice queda en la fila de solo-adulto, sin descuento aplicado (nada que descontar)', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50 } 
     await store.addToCart(rtWithMatrix(), { adults: 1, childrenAges: [1] }) // bebé, no paga
     expect(store.cart[0]!.unitPrice).toBe(100) // fila de ocupación=1 (bebé no suma a chargeableOccupancy)
   })
 
   it('roomsSubtotal (resumen) usa el unitPrice YA descontado — el número que se mostró al componer es el que se cobra', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 60, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 60 } 
     await store.addToCart(rtWithMatrix(), { adults: 1, childrenAges: [8] })
     expect(store.roomsSubtotal).toBe(160)
   })
 
   it('sin fila de solo-adulto en la matriz (defensivo): no rompe, cae al precio plano sin descuento', async () => {
     const store = useBookingStore()
-    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent: 50 } 
     const room = rtWithMatrix()
     room.occupancies = [room.occupancies![1]!] // solo queda la fila de ocupación=2, sin la de 1
     await store.addToCart(room, { adults: 1, childrenAges: [8] })

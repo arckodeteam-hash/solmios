@@ -156,6 +156,10 @@ export interface Reservation {
    *  que es una cotización: entre abrir el modal y confirmar puede cruzarse un borde de tier. */
   cancellationFee?: number
   refundAmount?: number
+  /** #272 (MR-07) — estado real del reembolso en la pasarela (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
@@ -169,10 +173,10 @@ export interface Reservation {
   childAmenities?: ChildAmenitySnapshot[] | null
 }
 
-/** #274 — Una línea del snapshot `Reservations.childAmenities` que congela el motor público al
- *  reservar (`bookingengine/usecases/public-booking.ts`, REQ-01 #233): nombre y precio del
- *  catálogo `child_amenities` en ese momento. Según el driver puede llegar como string JSON:
- *  `mapReservation()` lo normaliza a array. */
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congelaba el motor público al
+ *  reservar (REQ-01 #233): nombre y precio del catálogo `child_amenities` en ese momento. #292 dio
+ *  de baja ese catálogo; el snapshot se conserva sólo para leer reservas históricas. Según el
+ *  driver puede llegar como string JSON: `mapReservation()` lo normaliza a array. */
 export interface ChildAmenitySnapshot {
   id?: string
   name: string
@@ -224,6 +228,10 @@ export interface ReservationApiRecord {
   refundAmount?: number
   cancellationReason?: string
   cancelledAt?: string
+  /** #272 (MR-07) — reembolso real al cancelar desde la web (ver `RefundStatus`). */
+  refundStatus?: RefundStatus
+  refundedAt?: string
+  refundPaymentId?: string
   /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
   createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
@@ -233,6 +241,11 @@ export interface ReservationApiRecord {
   cribCount?: number | null
   childAmenities?: ChildAmenitySnapshot[] | string | null
 }
+
+/** #272 (MR-07) — `reservations.refundStatus`: 'none' = nada que devolver (o reserva anterior a la
+ *  feature), 'pending' = en curso, 'done' = Stripe lo aceptó, 'failed' = falló y se puede
+ *  reintentar desde el panel (`POST /reservas/:id/retry-refund`). */
+export type RefundStatus = 'none' | 'pending' | 'done' | 'failed'
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
 // Espejo de `backend/src/modules/reservas/usecases/reschedule.ts`.
@@ -725,6 +738,18 @@ export interface ReservationDetail {
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
+  /** #272 (MR-07) — snapshot de la cancelación y estado real del reembolso (`GET /reservas/:id`).
+   *  El modal muestra el badge y ofrece "Reintentar reembolso" cuando quedó 'failed'. */
+  cancelledAt?: string | null
+  cancellationReason?: string | null
+  cancellationFee?: number
+  refundAmount?: number
+  refundStatus?: RefundStatus
+  refundedAt?: string | null
+  refundPaymentId?: string | null
+  /** ISO. #272 — un `refundStatus: 'pending'` escrito hace más de 10 min se puede reintentar
+   *  (`utils/refund-state.ts`, mismo umbral que el backend, que lo mide sobre este campo). */
+  updatedAt?: string
   /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el horario del hotel.
    *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
   checkInTime?: string | null

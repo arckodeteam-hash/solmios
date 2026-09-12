@@ -47,7 +47,10 @@ const SOURCE_MAP: Record<string, ReservationSource> = {
 }
 
 /** #274 — `Reservations.childAmenities` es un snapshot json; según el driver llega como array o
- *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`. */
+ *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`.
+ *  #292 — el catálogo global de amenidades infantiles se dio de baja (la cuna es la amenidad de
+ *  habitación `custom:cuna`); las reservas nuevas lo persisten en `[]`. Este lector se conserva
+ *  SOLO para reservas históricas que lo tengan cargado. */
 export function parseChildAmenities(value: unknown): ChildAmenitySnapshot[] | null {
   let list: unknown = value
   if (typeof value === 'string') {
@@ -109,6 +112,10 @@ export function mapReservation(r: RawReservation): Reservation {
     // realmente aplicó (el del preview es una cotización anterior).
     cancellationFee: r.cancellationFee,
     refundAmount: r.refundAmount,
+    // #272 (MR-07) — estado real del reembolso en la pasarela (ausente en respuestas viejas).
+    refundStatus: r.refundStatus ?? undefined,
+    refundedAt: r.refundedAt ?? undefined,
+    refundPaymentId: r.refundPaymentId ?? undefined,
     // Tarea 3.4 (corrección 2026-08-25) — bug real de QA: este allow-list no lo declaraba y
     // `pages/reservations/index.vue:load()` lee `r.approvalStatus` del objeto YA mapeado acá,
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
@@ -122,6 +129,14 @@ export function mapReservation(r: RawReservation): Reservation {
     cribCount: r.cribCount ?? 0,
     childAmenities: parseChildAmenities(r.childAmenities),
   } as Reservation
+}
+
+/** #272 — resultado de `POST /api/reservas/:id/retry-refund` (espejo de `reservas/usecases/retry-refund.ts`). */
+export interface RetryRefundResult {
+  reservationId: string
+  refundStatus: string
+  refundPaymentId?: string
+  refundedAt?: string
 }
 
 interface ReservationsResponse {
@@ -280,6 +295,15 @@ export const ReservationService = {
   async cancel(id: string, body: CancelReservationInput = {}): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/cancel`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * #272 (MR-07) — reintenta el reembolso en Stripe de una reserva cancelada desde la web cuyo
+   * refund quedó `failed` (o `pending` colgado). Idempotente: si ya está `done` el backend
+   * devuelve el estado sin volver a cobrar. Permiso `reservations:edit`.
+   */
+  async retryRefund(id: string): Promise<RetryRefundResult> {
+    return http.post<RetryRefundResult>(`/reservas/${id}/retry-refund`, {})
   },
 
   /**

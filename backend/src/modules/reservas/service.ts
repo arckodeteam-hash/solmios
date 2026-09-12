@@ -41,17 +41,15 @@ import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceil
 import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } from '../../shared/usecases/open-folio-balance'
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
 import type { RoomAssignmentDeps } from './usecases/assign-room'
+import { retryRefund as retryRefundUsecase, refundStatePatch, type RetryRefundResult } from './usecases/retry-refund'
 
 export class ReservasService {
   /** Envío por Meta. Lo inyecta el connector `reservas-whatsapp`. `null` = sin cablear en este servidor. */
-  whatsappPort: WhatsappSendPort | null = null
-  setWhatsappPort(port: WhatsappSendPort): void { this.whatsappPort = port }
+  whatsappPort: WhatsappSendPort | null = null; setWhatsappPort(port: WhatsappSendPort): void { this.whatsappPort = port }
 
   private sockets: ReservasSockets = {}
-  private auditPort: AuditPort | null = null
-  setAuditDeps(port: AuditPort): void { this.auditPort = port }
-  private emailSender: EmailSender = new NullEmailSender()
-  private messageLogRepo: RepositoryAdapter<any> | null = null
+  private auditPort: AuditPort | null = null; setAuditDeps(port: AuditPort): void { this.auditPort = port }
+  private emailSender: EmailSender = new NullEmailSender(); private messageLogRepo: RepositoryAdapter<any> | null = null
   setEmailDeps(es: EmailSender, r: RepositoryAdapter<any>): void { this.emailSender = es; this.messageLogRepo = r }
   private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger })
   getNotifyDeps() { return this.notifyDeps() } // deps reales (post setEmailDeps) para checkin/checkout
@@ -187,6 +185,9 @@ export class ReservasService {
   /** #253 — POST /api/reservas/:id/invoice. Ownership post-findById en el usecase (como markPaid); el camino (folio abierto o directo) lo decide usecases/issue-invoice.ts. */
   async issueInvoice(id: string, input: { notes?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<IssueInvoiceResult> { return issueInvoiceForReservation({ repo: this.repo, auth: this.auth, invoicing: this.orchestrationDeps.invoicing, folioReader: this.orchestrationDeps.folioReader, logger: this.logger }, id, input, currentUser) }
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
+  async retryRefund(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<RetryRefundResult> { return retryRefundUsecase({ repo: this.repo, auth: this.auth, port: this.orchestrationDeps.retryWebRefund, audit: this.auditPort, logger: this.logger }, id, currentUser) } // #272 — POST /api/reservas/:id/retry-refund: reintenta en Stripe vía el puerto del connector bookingengine-refunds; ownership post-findById en usecases/retry-refund.ts
+  async setRefundState(id: string, patch: Record<string, unknown>): Promise<ReservasDTO | null> { const row = await this.repo.update(id, refundStatePatch(patch) as any); await invalidateReservasCaches(this.cache, row?.hotelId); return row } // #272 — escritura acotada de refundStatus/refundedAt/refundPaymentId (sin state machine): la usa bookingengine-refunds, que ya validó reserva y hotel en shared/usecases/web-booking-refund. Invalida el listado como toda mutación: si no, `refundStatus` viejo hasta 300 s
+  claimRefund(id: string): Promise<boolean> { return this.queries.claimRefund(id) } // #272 — compare-and-swap → 'pending' antes de llamar a Stripe: el segundo concurrente ve false (ver usecases/reservas-queries.ts)
   /** Cancelación de SISTEMA (OTA/IA): sin usuario logueado, scoping por `hotelId`. Ver usecases/cancel-system.ts. Lo consumen los connectors canales-reservas / ai-recepcionista-reservas / ai-gerente-reservas. */
   async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem(this.cancelCoreDeps(), id, input) }
 

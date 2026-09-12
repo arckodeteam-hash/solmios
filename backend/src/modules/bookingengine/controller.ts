@@ -8,7 +8,7 @@ import { validateSchema } from 'arckode-framework'
 // para los schemas legacy que solo tienen tipos primitivos.
 import { validateSchema as validateBodySchema } from '../../shared/validators/validate-body'
 import type { BookingengineService } from './service'
-import type { AvailabilityQuery, CreateConversionEventDTO, UpdateBookingConfigDTO, UpsellDTO, UpsellCurrentUser, MealPlanDTO, ChildAmenityDTO } from './types'
+import type { AvailabilityQuery, CreateConversionEventDTO, UpdateBookingConfigDTO, UpsellDTO, UpsellCurrentUser, MealPlanDTO } from './types'
 import {
   UpdateBookingConfigSchema,
   CheckAvailabilitySchema,
@@ -18,8 +18,6 @@ import {
   CreateUpsellSchema,
   UpdateUpsellSchema,
   UpsertMealPlanSchema,
-  CreateChildAmenitySchema,
-  UpdateChildAmenitySchema,
 } from './validators/schema'
 // F2 2.3 — Upsells: el controller invoca los usecases directamente (sin pasar por service)
 // porque no hay lógica de orquestación entre el HTTP y el usecase. Mantener el service <
@@ -30,10 +28,9 @@ import * as upsellsCrud from './usecases/upsells-crud'
 // que upsells arriba (sub-dominio, sin service, catálogo fijo de 3 códigos).
 import * as mealPlansCrud from './usecases/meal-plans-crud'
 import { getPublicMealPlans } from './usecases/public-meal-plans'
-// REQ-01 (#233) — Amenidades para niños/bebés, mismo patrón que upsells (sub-dominio, sin
-// service, catálogo abierto por hotel con nombre + precio).
-import * as childAmenitiesCrud from './usecases/child-amenities-crud'
-import { getPublicChildAmenities } from './usecases/public-child-amenities'
+// #292 — el catálogo global de amenidades para niños/bebés (REQ-01 #233) se dio de baja: una
+// amenidad "global" contradecía la regla de no asumir que está disponible en TODAS las
+// habitaciones. Las amenidades salen ahora SÓLO por habitación (`RoomAmenities`, #290).
 import { getPublicRoomAmenities } from './usecases/public-room-amenities'
 import { getPublicBookingBySlug, createPublicBookingDirect } from './usecases/public-booking'
 // Tarea 10 (QA 2026-08-20/21) — varias habitaciones (mismo tipo ×N y/o tipos distintos) en 1 sola
@@ -127,9 +124,9 @@ export class BookingengineController {
     /** PG-7.5 — Registry de pasarelas para `GET /api/pay/go/:provider/:hotelId` (form hospedado
      *  de CardNet). Al final, mismo motivo que el resto de los deps nuevos. */
     private readonly gatewayRegistry?: PaymentGatewayRegistry,
-    /** REQ-01 (#233) — Repo de amenidades para niños/bebés. Al final, mismo motivo que el resto
-     *  de los deps nuevos. Opcional — defense-in-depth igual que upsellRepo/mealPlanRepo. */
-    private readonly childAmenityRepo?: RepositoryAdapter<ChildAmenityDTO>,
+    /** #272 — `Groups`: la cancelación pública de un grupo marca `groups.status='cancelled'`.
+     *  Al final, mismo motivo que el resto de los deps nuevos. Opcional, best-effort. */
+    private readonly groupsRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -146,14 +143,6 @@ export class BookingengineController {
       throw new Error('bookingengine: meal-plans deps no cableadas en el controller')
     }
     return { mealPlans: this.mealPlanRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
-  }
-
-  /** Deps para los usecases de amenidades infantiles (REQ-01 #233). Mismo criterio que upsells. */
-  private assertChildAmenitiesDeps(): childAmenitiesCrud.ChildAmenitiesCrudDeps {
-    if (!this.childAmenityRepo || !this.userRepoForUpsells || !this.authImpl) {
-      throw new Error('bookingengine: child-amenities deps no cableadas en el controller')
-    }
-    return { childAmenities: this.childAmenityRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
   }
 
   // ─── Admin (protegido con auth) ──────────────────────
@@ -341,6 +330,11 @@ export class BookingengineController {
         // políticas custom reembolsaba el 100% pese a anunciar 100% de penalidad.
         hotelsRepo: this.hotelsRepo,
         logger: this.logger,
+        // #272 — cascada al grupo + inventario por habitación (Channex).
+        groupsRepo: this.groupsRepo,
+        pushAvailability: this.pushAvailability,
+        // #272 — la cascada del grupo se escribe en UNA transacción (todo o nada de verdad).
+        orm: this.orm,
         // El evento onBookingCancelled está declarado en sockets.ts pero el service no lo
         // expone (gate <200 líneas). Accedemos al socket del service en runtime (ya está
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el
@@ -389,9 +383,6 @@ export class BookingengineController {
       // que upsells — el validador nativo descarta en silencio type:'array'. El usecase valida
       // longitud/rango contra la política de niños del hotel.
       ...(Array.isArray(rawBody.childrenAges) ? { childrenAges: rawBody.childrenAges } : {}),
-      // REQ-01 (#233) — amenidades para niños/bebés elegidas para ESTA habitación (array de
-      // {id}); mismo motivo que upsells. El usecase las valida contra las activas del hotel.
-      ...(Array.isArray(rawBody.childAmenities) ? { childAmenities: rawBody.childAmenities } : {}),
       // REQ-01 (#290) — amenidades personalizadas de la habitación (array de {key}); mismo
       // motivo. El usecase las valida contra las filas `RoomAmenities` de la unidad asignada.
       ...(Array.isArray(rawBody.roomAmenities) ? { roomAmenities: rawBody.roomAmenities } : {}),
@@ -409,7 +400,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -422,12 +413,17 @@ export class BookingengineController {
     // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el
     // listado de Administración podía tardar hasta 5 min (CACHE_TTL) en mostrar el alta.
     // Best-effort: un fallo acá no puede tumbar una reserva que YA se creó con éxito.
+    // #267: el payload lleva huésped y si hubo pasarela (`hasCheckout`) para que los connectors
+    // no relean la reserva; `paid: false` siempre — el cobro, si lo hay, avisa por `onBookingPaid`.
     if (result.status === 201 && result.body?.reservation) {
       const r = result.body.reservation
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
         checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -457,7 +453,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -468,10 +464,14 @@ export class BookingengineController {
     )
     // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
     // directo a Reservations, sin pasar por el CRUD de `reservas`.
+    // #267: el payload lleva huésped y si hubo pasarela para que los connectors no relean la reserva.
     if (result.status === 201 && Array.isArray(result.body?.reservations) && result.body.reservations[0]) {
       const r = result.body.reservations[0]
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública grupal) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -595,18 +595,6 @@ export class BookingengineController {
     )
   }
 
-  /** GET /api/public/hotels/:slug/child-amenities — amenidades infantiles activas (REQ-01 #233). */
-  async publicChildAmenities(req: HttpRequest) {
-    this.logger.info('GET /api/public/hotels/:slug/child-amenities', { slug: req.params.slug })
-    if (!this.hotelsRepo || !this.childAmenityRepo) {
-      return { status: 500, body: { error: 'child-amenities deps no cableados' } }
-    }
-    return getPublicChildAmenities(
-      { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo, bookingConfig: this.bookingConfigRepo },
-      String(req.params?.slug || ''),
-    )
-  }
-
   /** GET /api/public/hotels/:slug/room-amenities — amenidades personalizadas por tipo (REQ-01 #290). */
   async publicRoomAmenities(req: HttpRequest) {
     this.logger.info('GET /api/public/hotels/:slug/room-amenities', { slug: req.params.slug })
@@ -719,39 +707,6 @@ export class BookingengineController {
     const data = validateBodySchema(UpsertMealPlanSchema, req.body)
     const updated = await mealPlansCrud.upsert(this.assertMealPlansDeps(), req.params.code, data as any, req.user as UpsellCurrentUser)
     return { status: 200, body: updated }
-  }
-
-  // ─── Amenidades para niños/bebés admin (REQ-01, #233) ───────────────────────
-  // Catálogo ABIERTO por hotel (nombre libre + precio), mismo patrón que upsells arriba.
-
-  /** GET /api/child-amenities — amenidades del hotel del admin (sortOrder ASC, luego name). */
-  async listChildAmenities(req: HttpRequest) {
-    this.logger.info('GET /api/child-amenities', { hotelId: (req as any).hotelId })
-    const result = await childAmenitiesCrud.list(this.assertChildAmenitiesDeps(), req.user as UpsellCurrentUser)
-    return { status: 200, body: result }
-  }
-
-  /** POST /api/child-amenities — alta de amenidad. */
-  async createChildAmenity(req: HttpRequest) {
-    this.logger.info('POST /api/child-amenities', { hotelId: (req as any).hotelId })
-    const data = validateBodySchema(CreateChildAmenitySchema, req.body)
-    const created = await childAmenitiesCrud.create(this.assertChildAmenitiesDeps(), data as any, req.user as UpsellCurrentUser)
-    return { status: 201, body: created }
-  }
-
-  /** PUT /api/child-amenities/:id — edición (partial). */
-  async updateChildAmenity(req: HttpRequest) {
-    this.logger.info('PUT /api/child-amenities/:id', { id: req.params.id })
-    const data = validateBodySchema(UpdateChildAmenitySchema, req.body)
-    const updated = await childAmenitiesCrud.update(this.assertChildAmenitiesDeps(), req.params.id, data as any, req.user as UpsellCurrentUser)
-    return { status: 200, body: updated }
-  }
-
-  /** DELETE /api/child-amenities/:id — borrado físico. */
-  async destroyChildAmenity(req: HttpRequest) {
-    this.logger.info('DELETE /api/child-amenities/:id', { id: req.params.id })
-    const result = await childAmenitiesCrud.remove(this.assertChildAmenitiesDeps(), req.params.id, req.user as UpsellCurrentUser)
-    return { status: 200, body: result }
   }
 }
 
