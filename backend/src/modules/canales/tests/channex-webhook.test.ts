@@ -36,7 +36,7 @@ function fakeLogger() {
   }
 }
 
-/** El payload REAL de Channex con `send_data: false`: solo ids. */
+/** El payload REAL de Channex con `send_data: true`: `payload` trae los ids (con `false` no viene `payload`, #342). */
 const PAYLOAD = {
   event: 'booking',
   payload: { booking_id: 'bk-1', property_id: 'prop-1', revision_id: 'rev-42' },
@@ -47,6 +47,8 @@ const PAYLOAD = {
 function deps(opciones: {
   store?: ChannexWebhookConfigStore
   ingest?: (id: string) => Promise<{ success: boolean; errors: string[] }>
+  /** Plan B del #342. `undefined` = sin cablear (comportamiento viejo: 400). */
+  syncFeed?: () => Promise<{ success: boolean; errors: string[] }>
 } = {}) {
   const ingested: string[] = []
   const logger = fakeLogger()
@@ -55,7 +57,7 @@ function deps(opciones: {
     ingested.push(id)
     return opciones.ingest ? opciones.ingest(id) : { success: true, errors: [] }
   }
-  return { d: { store, ingestRevision, logger }, ingested, logger }
+  return { d: { store, ingestRevision, syncFeed: opciones.syncFeed, logger }, ingested, logger }
 }
 
 describe('handleChannexWebhook — CA-1: callback válido ingesta la revisión', () => {
@@ -169,8 +171,68 @@ describe('handleChannexWebhook — CA-5: los eventos que causamos nosotros se de
   })
 })
 
+// #342 — el body REAL que manda Channex cuando el webhook se registró con `send_data: false`:
+// sin `payload`. Así llegó a prod el 2026-09-12T04:58:48Z (`event: booking_new`) y respondimos 400.
+const SIN_PAYLOAD = { event: 'booking_new', property_id: 'prop-1', user_id: null, timestamp: '2099-10-01T10:00:00Z' }
+
+describe('handleChannexWebhook — #342: callback sin payload (webhook con send_data:false)', () => {
+  it('con syncFeed cableado: 200, barre el feed y NO ingesta por revisión', async () => {
+    let feedRuns = 0
+    const { d, ingested, logger } = deps({ syncFeed: async () => { feedRuns++; return { success: true, errors: [] } } })
+    const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: SIN_PAYLOAD })
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ success: true, ingested: false, fallback: 'feed', synced: true })
+    expect(feedRuns).toBe(1)
+    expect(ingested).toHaveLength(0)
+    expect(logger.lines.some((l) => l.level === 'warn' && /send_data/.test(l.msg))).toBe(true)
+  })
+
+  it('las tres variantes de evento de reserva disparan el plan B', async () => {
+    for (const event of ['booking', 'booking_new', 'booking_modification', 'booking_cancellation']) {
+      let feedRuns = 0
+      const { d } = deps({ syncFeed: async () => { feedRuns++; return { success: true, errors: [] } } })
+      const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: { ...SIN_PAYLOAD, event } })
+      expect(res.status).toBe(200)
+      expect(feedRuns).toBe(1)
+    }
+  })
+
+  it('un evento que NO es de reserva y sin payload sigue siendo 400 aunque haya syncFeed', async () => {
+    let feedRuns = 0
+    const { d } = deps({ syncFeed: async () => { feedRuns++; return { success: true, errors: [] } } })
+    const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: { ...SIN_PAYLOAD, event: 'ari' } })
+    expect(res.status).toBe(400)
+    expect(feedRuns).toBe(0)
+  })
+
+  it('el sync del feed falla → sigue 200 (el cron lo recupera) y queda logueado como error', async () => {
+    const { d, logger } = deps({ syncFeed: async () => ({ success: false, errors: ['feed caído'] }) })
+    const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: SIN_PAYLOAD })
+    expect(res.status).toBe(200)
+    expect(res.body.synced).toBe(false)
+    expect(logger.lines.some((l) => l.level === 'error')).toBe(true)
+  })
+
+  it('el sync del feed lanza → sigue 200', async () => {
+    const { d } = deps({ syncFeed: async () => { throw new Error('boom') } })
+    const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: SIN_PAYLOAD })
+    expect(res.status).toBe(200)
+    expect(res.body.synced).toBe(false)
+  })
+
+  it('con revision_id presente NO usa el plan B: ingesta la revisión', async () => {
+    let feedRuns = 0
+    const { d, ingested } = deps({ syncFeed: async () => { feedRuns++; return { success: true, errors: [] } } })
+    const res = await handleChannexWebhook(d, { headers: { 'api-key': SECRETO }, body: PAYLOAD })
+    expect(res.status).toBe(200)
+    expect(ingested).toEqual(['rev-42'])
+    expect(feedRuns).toBe(0)
+  })
+})
+
 describe('handleChannexWebhook — payload incompleto y fallos de ingesta', () => {
-  it('sin revision_id → 400 y ninguna ingesta', async () => {
+  it('sin revision_id y SIN syncFeed cableado → 400 y ninguna ingesta', async () => {
     const { d, ingested, logger } = deps()
     const res = await handleChannexWebhook(d, {
       headers: { 'api-key': SECRETO },
@@ -246,18 +308,31 @@ describe('getOrCreateWebhookSecret', () => {
 })
 
 /** Channex fake: guarda lo creado y lo devuelve en el listado, como el real. */
-function fakeChannex(iniciales: Array<{ id: string; callbackUrl: string }> = []) {
-  const webhooks = iniciales.map((w) => ({ ...w, eventMask: CHANNEX_BOOKING_EVENT_MASK, propertyId: null as string | null }))
+function fakeChannex(iniciales: Array<{ id: string; callbackUrl: string; sendData?: boolean }> = [], opts: { sinUpdate?: boolean; updateFalla?: boolean } = {}) {
+  const webhooks = iniciales.map((w) => ({ ...w, eventMask: CHANNEX_BOOKING_EVENT_MASK, propertyId: null as string | null, sendData: w.sendData ?? true }))
   const creados: any[] = []
-  return {
+  const actualizados: Array<{ id: string; patch: any }> = []
+  const base = {
     webhooks,
     creados,
+    actualizados,
     listWebhooks: async () => webhooks.map((w) => ({ ...w })),
     createWebhook: async (_key: string, input: any) => {
       creados.push(input)
       const id = `wh-${webhooks.length + 1}`
-      webhooks.push({ id, callbackUrl: input.callbackUrl, eventMask: input.eventMask, propertyId: input.propertyId ?? null })
+      webhooks.push({ id, callbackUrl: input.callbackUrl, eventMask: input.eventMask, propertyId: input.propertyId ?? null, sendData: true })
       return { id }
+    },
+  }
+  if (opts.sinUpdate) return base
+  return {
+    ...base,
+    updateWebhook: async (_key: string, id: string, patch: { sendData?: boolean }) => {
+      actualizados.push({ id, patch })
+      if (opts.updateFalla) return { ok: false, error: 'Channex: 422' }
+      const w = webhooks.find((x) => x.id === id)
+      if (w && patch.sendData !== undefined) w.sendData = patch.sendData
+      return { ok: true }
     },
   }
 }
@@ -303,6 +378,45 @@ describe('registerChannexWebhook — CA-8: el alta es idempotente', () => {
     expect(res.id).toBe('wh-viejo')
     expect(channex.creados).toHaveLength(0)
     expect(channex.webhooks).toHaveLength(1)
+  })
+
+  // #342 — el callback que la versión anterior dio de alta con send_data:false no manda ids.
+  it('un callback existente con send_data:false se corrige a true en vez de duplicarse', async () => {
+    const s = fakeStore({ webhookSecret: SECRETO })
+    const channex = fakeChannex([
+      { id: 'wh-viejo', callbackUrl: `https://app.solmios.com${CHANNEX_WEBHOOK_PATH}?api_key=${SECRETO}`, sendData: false },
+    ])
+    const logger = fakeLogger()
+    const res = await registerChannexWebhook({ store: s.store, channex, logger }, 'https://app.solmios.com')
+
+    expect(res).toEqual({ created: false, id: 'wh-viejo', callbackUrl: `https://app.solmios.com${CHANNEX_WEBHOOK_PATH}?api_key=${SECRETO}`, error: undefined })
+    expect(channex.creados).toHaveLength(0)
+    expect(channex.actualizados).toEqual([{ id: 'wh-viejo', patch: { sendData: true } }])
+    expect(channex.webhooks[0]!.sendData).toBe(true)
+    expect(logger.lines.some((l) => /corregido a send_data:true/.test(l.msg))).toBe(true)
+  })
+
+  it('si Channex rechaza la corrección, el motivo viaja en `error` y no se crea otro', async () => {
+    const s = fakeStore({ webhookSecret: SECRETO })
+    const channex = fakeChannex([
+      { id: 'wh-viejo', callbackUrl: `https://app.solmios.com${CHANNEX_WEBHOOK_PATH}?api_key=${SECRETO}`, sendData: false },
+    ], { updateFalla: true })
+    const res = await registerChannexWebhook({ store: s.store, channex, logger: fakeLogger() }, 'https://app.solmios.com')
+
+    expect(res.created).toBe(false)
+    expect(res.id).toBe('wh-viejo')
+    expect(res.error).toBe('Channex: 422')
+    expect(channex.creados).toHaveLength(0)
+  })
+
+  it('un callback existente ya con send_data:true no se toca', async () => {
+    const s = fakeStore({ webhookSecret: SECRETO })
+    const channex = fakeChannex([
+      { id: 'wh-ok', callbackUrl: `https://app.solmios.com${CHANNEX_WEBHOOK_PATH}?api_key=${SECRETO}`, sendData: true },
+    ])
+    const res = await registerChannexWebhook({ store: s.store, channex, logger: fakeLogger() }, 'https://app.solmios.com')
+    expect(res.id).toBe('wh-ok')
+    expect(channex.actualizados).toHaveLength(0)
   })
 
   it('un callback de OTRO host sí se da de alta', async () => {

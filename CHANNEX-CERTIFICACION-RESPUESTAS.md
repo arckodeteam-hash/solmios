@@ -26,7 +26,7 @@
 | P1 | Mecanismo que detecta cambios de ARI **al ocurrir**, no un polling | ✅ Eventos del framework (sockets) → connectors → outbox por hotel con debounce de 1,5 s | `backend/src/connectors/*-canales.ts` · `backend/src/modules/ari-outbox/usecases/outbox-queue.ts:16` |
 | P2 | Cola/outbox que **batchea** respetando **20 ARI/min** | ✅ Outbox persistente, un push por hotel por ráfaga, drain secuencial; transporte con 18/min global + 9/min por property y endpoint | `backend/src/modules/ari-outbox/` · `backend/src/modules/canales/usecases/channex-http.ts:52,55` |
 | P3 | Retry/backoff ante **429 y 5xx** | ✅ `Retry-After` manda; si no, 500 ms·2ⁿ hasta 30 s; 429 en ARI pausa esa property 60 s | `channex-http.ts:39` (`RETRYABLE_STATUS`), `backoffMs`, `pauseProperties` |
-| P4 | Endpoint de **webhook** para reservas + **ack** | ✅ Receptor registrado en la cuenta; ack tras procesar cada revisión; feed de respaldo cada 15 min | `backend/src/modules/canales/usecases/channex-webhook.ts:19` · `booking-sync.ts:143-146` |
+| P4 | Endpoint de **webhook** para reservas + **ack** | ✅ Receptor registrado en la cuenta con **`send_data: true`** (con `false` Channex no manda `payload.revision_id` — bug #342, corregido y el webhook de la cuenta actualizado el 2026-09-12); ack tras procesar cada revisión; feed de respaldo cada minuto | `backend/src/modules/canales/usecases/channex-webhook.ts:19` · `booking-sync.ts:143-146` |
 | P5 | Capa de **mapping** IDs internos ↔ UUIDs de Channex | ✅ Mapping persistido por hotel (property, room types, rate plans) con fallback GET+título | `backend/src/modules/canales/usecases/channex.ts:85-117` |
 
 **Texto para el formulario (EN)**

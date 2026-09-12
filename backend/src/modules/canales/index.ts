@@ -370,6 +370,8 @@ export function CanalesModule() {
       const webhookDeps = {
         store: webhookStore,
         ingestRevision: (revisionId: string) => service.syncOneBookingRevision(revisionId),
+        // Sin `payload` (webhook viejo con send_data:false, #342) se barre el feed entero: mismo `run` del cron.
+        syncFeed: () => service.syncAllBookingRevisions(),
         logger: log,
       }
       router.post(CHANNEX_WEBHOOK_PATH, async (req: any) => handleChannexWebhook(webhookDeps, req))
