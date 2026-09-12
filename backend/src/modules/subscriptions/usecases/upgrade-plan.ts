@@ -20,7 +20,7 @@
 // Cuenta de PLATAFORMA: `StripeService.getClient()` SIN hotelId, mismo criterio que el checkout —
 // con hotelId resolvería las keys DEL HOTEL, que son las que cobran a sus huéspedes.
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import { ValidationError, NotFoundError, ConflictError } from 'arckode-framework'
+import { ErrorContract, ValidationError, NotFoundError, ConflictError } from 'arckode-framework'
 import type Stripe from 'stripe'
 import { StripeService } from '../../../services/stripe-service'
 import { WORKING_STATUSES } from './access'
@@ -33,6 +33,23 @@ export interface UpgradePlanDeps {
   hotelsRepo: RepositoryAdapter<any>
   plansRepo: RepositoryAdapter<any>
   logger: Logger
+}
+
+/**
+ * Stripe no respondió como debía (price inexistente, timeout, rate limit, caída de la API) y por
+ * eso el cambio de plan no se pudo cotizar ni aplicar. #339: hasta acá estos errores subían crudos
+ * y el router —que sólo mapea `ErrorContract`— los convertía en un 500 "Error interno del servidor"
+ * sin motivo, sin log con contexto y sin decirle a la persona que su plan siguió intacto.
+ *
+ * 502 y no 400/409: el pedido del hotel estaba bien, lo que falló es el proveedor de atrás.
+ * `canRetry: true` porque casi siempre es transitorio o se arregla del lado de la plataforma
+ * (un `stripePriceId` mal cargado) sin que la persona cambie nada de lo que mandó.
+ */
+export class PaymentProviderError extends ErrorContract {
+  readonly httpStatus = 502
+  readonly isExpected = true
+  readonly canRetry = true
+  readonly errorCode = 'PAYMENT_PROVIDER_ERROR'
 }
 
 const MS_PER_SECOND = 1000
@@ -70,13 +87,22 @@ export async function previewUpgrade(
   // Ojo con la versión: en stripe-node v22 `invoices.retrieveUpcoming` YA NO EXISTE, esta es su
   // reemplazante. El `proration_behavior` tiene que ser el MISMO que usa `applyUpgrade` o el
   // número que se muestra no sería el que después se cobra.
-  const preview = await stripe.invoices.createPreview({
-    subscription: String(active.stripeSubscriptionId),
-    subscription_details: {
-      items: [{ id: itemId, price: String(plan.stripePriceId) }],
-      proration_behavior: 'always_invoice',
-    },
-  })
+  let preview: Stripe.Invoice
+  try {
+    preview = await stripe.invoices.createPreview({
+      subscription: String(active.stripeSubscriptionId),
+      subscription_details: {
+        items: [{ id: itemId, price: String(plan.stripePriceId) }],
+        proration_behavior: 'always_invoice',
+      },
+    })
+  } catch (e) {
+    // #339: acá no hay plata en juego —el preview no cobra ni escribe— pero un price que Stripe no
+    // conoce o una caída de su API salían como 500 sin motivo. Sube como 502 con lo que dijo Stripe.
+    throw fallaDelProveedor(deps.logger, 'calcular el cambio de plan', e, {
+      hotelId, planId: String(plan.id), stripeSubscriptionId: String(active.stripeSubscriptionId),
+    })
+  }
 
   return {
     planId: String(plan.id),
@@ -143,12 +169,15 @@ export async function applyUpgrade(
   // "card_declined" crudo no le dice a nadie que su plan siguió intacto. El motivo de Stripe NO se
   // tapa —es lo único que explica QUÉ falló— y queda además en el log con hotel y plan.
   //
-  // SÓLO el error de cobro se traduce. Un price inválido, un timeout, un rate limit o una caída de
-  // la API no son problemas de la tarjeta del hotel: disfrazarlos de "revisá tu método de pago"
-  // manda a la persona a revisar una tarjeta que está bien y esconde un fallo de infraestructura
-  // detrás de un `warn`. Esos suben TAL CUAL —sin envolver, conservando tipo y stack— y se loguean
-  // en `error`. Mismo criterio de detección que `payment-requests/usecases/live-session.ts`: el
-  // `type` del error de Stripe; acá el caso de cobro es `StripeCardError`.
+  // SÓLO el error de cobro se traduce a problema de tarjeta. Un price inválido, un timeout, un
+  // rate limit o una caída de la API no son problemas de la tarjeta del hotel: disfrazarlos de
+  // "revisá tu método de pago" manda a la persona a revisar una tarjeta que está bien y esconde un
+  // fallo de infraestructura detrás de un `warn`. Esos salen como `PaymentProviderError` (502) con
+  // el motivo de Stripe y se loguean en `error` con hotel, plan y el `type`/`code` del error
+  // (#339: antes subían crudos y el router los tapaba con un 500 "Error interno del servidor" que
+  // no decía qué pasó ni que el plan siguió intacto). Mismo criterio de detección que
+  // `payment-requests/usecases/live-session.ts`: el `type` del error de Stripe; acá el caso de
+  // cobro es `StripeCardError`.
   let updated: Stripe.Subscription
   try {
     updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
@@ -192,11 +221,13 @@ export async function applyUpgrade(
         ...contexto, errorAlMarcar: (errorAlMarcar as Error)?.message ?? 'error desconocido',
       })
     }
-    // Sólo el error de COBRO se traduce; el del sistema sube tal cual (ver el comentario de
-    // arriba). La marca de más arriba ya se hizo para los dos.
+    // Sólo el error de COBRO se traduce a tarjeta; el del sistema sale como error del proveedor
+    // (ver el comentario de arriba). La marca de más arriba ya se hizo para los dos.
     if (!isStripeCardError(e)) {
-      logger.error('El cambio de plan falló por un error del sistema, no del método de pago', contexto)
-      throw e
+      throw fallaDelProveedor(logger, 'aplicar el cambio de plan', e, {
+        hotelId, planId: String(plan.id), currentPlanId: contexto.currentPlanId,
+        stripeSubscriptionId: contexto.stripeSubscriptionId,
+      })
     }
     logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
     throw new ValidationError(
@@ -352,7 +383,14 @@ async function loadUpgrade(deps: UpgradePlanDeps, hotelId: string, planId: strin
   const stripe = await StripeService.getClient()
   if (!stripe) throw new ValidationError('Stripe no está configurado en la plataforma')
 
-  const stripeSub = await stripe.subscriptions.retrieve(String(active.stripeSubscriptionId))
+  let stripeSub: Stripe.Subscription
+  try {
+    stripeSub = await stripe.subscriptions.retrieve(String(active.stripeSubscriptionId))
+  } catch (e) {
+    throw fallaDelProveedor(deps.logger, 'leer tu suscripción en Stripe', e, {
+      hotelId, planId: String(plan.id), stripeSubscriptionId: String(active.stripeSubscriptionId),
+    })
+  }
   const itemId = stripeSub.items?.data?.[0]?.id
   // Este producto vende un plan = un ítem. Sin ítem no hay nada que reemplazar y mandar el update
   // igual crearía una línea nueva en vez de migrar el plan.
@@ -366,6 +404,30 @@ async function loadUpgrade(deps: UpgradePlanDeps, hotelId: string, planId: strin
  *  `StripeConnectionError`, `StripeRateLimitError`— es un fallo del sistema. */
 function isStripeCardError(e: unknown): boolean {
   return (e as { type?: string } | null)?.type === 'StripeCardError'
+}
+
+/**
+ * Traduce un fallo de Stripe (no de la tarjeta) al error que se le devuelve al hotel, y lo deja en
+ * el log con el contexto que hace falta para investigarlo. DEVUELVE el error en vez de lanzarlo
+ * para que el `throw` quede visible en cada call site (y TypeScript sepa que ahí no se sigue).
+ *
+ * Un `ErrorContract` propio (ValidationError, ConflictError…) se devuelve tal cual: ya viene con
+ * su status y su mensaje y envolverlo lo convertiría en un 502 que no es. `etapa` va en infinitivo
+ * porque completa la frase "No pudimos …".
+ */
+function fallaDelProveedor(
+  logger: Logger, etapa: string, e: unknown, contexto: Record<string, unknown>,
+): Error {
+  if (e instanceof ErrorContract) return e
+  const err = e as { type?: string, code?: string, message?: string } | null
+  const motivo = err?.message ?? 'error desconocido'
+  logger.error(`${etapa} falló por un error de Stripe, no del método de pago`, {
+    ...contexto, stripeType: err?.type ?? null, stripeCode: err?.code ?? null, error: motivo,
+  })
+  return new PaymentProviderError(
+    `No pudimos ${etapa}: ${motivo}. `
+    + 'Tu plan actual no cambió — probá de nuevo en un momento y, si sigue, escribinos.',
+  )
 }
 
 /** La factura del prorrateo. `expand` normalmente la trae entera; el retrieve es el defensivo. */
