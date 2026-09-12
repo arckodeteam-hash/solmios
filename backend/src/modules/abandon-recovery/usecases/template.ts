@@ -36,10 +36,34 @@ export function buildRecoveryLink(publicBaseUrl: string, hotelSlug: string, rese
   return base ? `${base}${path}${q}` : `${path}${q}`
 }
 
+/** Minutos por hora — para expresar TTLs "redondos" (múltiplos de 60 desde 2h) como horas. */
+const MINUTES_PER_HOUR = 60
+
+/** TTL por defecto (minutos) cuando el caller no lo pasa. Mismo valor que
+ *  `bookingengine/usecases/config.ts` (DEFAULT_PENDING_TTL_MINUTES) — duplicado a propósito:
+ *  no se importa entre módulos. */
+const DEFAULT_TTL_MINUTES = 60
+
+/**
+ * Texto humano del TTL de pago (#266): "60 minutos", "90 minutos", "2 horas". Sólo pasa a
+ * horas cuando es múltiplo exacto de 60 y ≥ 2h; el resto queda en minutos (simple y sin
+ * ambigüedad para el huésped). Valores inválidos (NaN, ≤ 0) caen al default (60 min).
+ */
+export function formatPendingTtl(pendingTtlMinutes: number): string {
+  const m = Number.isFinite(pendingTtlMinutes) && pendingTtlMinutes > 0 ? Math.round(pendingTtlMinutes) : DEFAULT_TTL_MINUTES
+  if (m >= 2 * MINUTES_PER_HOUR && m % MINUTES_PER_HOUR === 0) {
+    return `${m / MINUTES_PER_HOUR} horas`
+  }
+  return `${m} minutos`
+}
+
 /** Template HTML inline del email. Mantenemos inline (no depende de un archivo externo ni
- *  de AutoMessages). Si el hotel quiere customizar, F4 puede moverlo a auto_messages. */
-export function renderAbandonEmailHtml(opts: { link: string; reservationId: string }): string {
+ *  de AutoMessages). Si el hotel quiere customizar, F4 puede moverlo a auto_messages.
+ *  `pendingTtlMinutes` (#266) es el TTL real de pago del hotel (booking_config.pendingTtlMinutes)
+ *  para que el texto "vence en N minutos" coincida con lo que hace el cron de vencimiento. */
+export function renderAbandonEmailHtml(opts: { link: string; reservationId: string; pendingTtlMinutes?: number }): string {
   const c = EMAIL_PALETTE
+  const pendingTtl = formatPendingTtl(opts.pendingTtlMinutes ?? DEFAULT_TTL_MINUTES)
   return [
     '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -55,7 +79,7 @@ export function renderAbandonEmailHtml(opts: { link: string; reservationId: stri
     'Completar mi reserva</a>',
     `<p style="margin:24px 0 0; color:${c.textMuted}; font-size:12px; line-height:1.5;">`,
     'Si no querés continuar, ignorá este correo. El link caduca cuando la reserva',
-    ' vence automáticamente (24 h desde su creación).',
+    ` vence automáticamente si no se completa el pago en ${pendingTtl}.`,
     '</p>',
     '</div></body></html>',
   ].join('')
