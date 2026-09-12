@@ -25,8 +25,10 @@ export const BookingConfigModel: ModelDefinition = {
     instantConfirmation: { type: 'boolean', default: true },
     stripeAccountId: { type: 'string', default: '' },
     allowedCountries: { type: 'json', default: [] },
-    // #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence).
-    pendingPaymentTtlHours: { type: 'number', default: 24 },
+    // #266 — Minutos para completar el pago de una reserva web (15–1440, default 60).
+    // Reemplaza `pendingPaymentTtlHours` de #248: la columna vieja queda huérfana en DB
+    // (RUN_MIGRATE no borra columnas) y ya no se lee.
+    pendingTtlMinutes: { type: 'number', default: 60 },
   },
 }
 

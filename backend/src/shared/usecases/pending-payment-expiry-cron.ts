@@ -1,8 +1,10 @@
 // shared/usecases/pending-payment-expiry-cron.ts — Cron de vencimiento de reservas web sin pago
-// (#248, REQ-RWP-05). Mismo molde que abandon-recovery-cron.
+// (#248 REQ-RWP-05, #266 MR-01). Mismo molde que abandon-recovery-cron.
 //
-// Schedule: cada 30 min. Primer tick a los 60 s: deja que arranquen todos los módulos y no pisa el
-// arranque (el sweep cancela reservas y dispara sockets/emails; no queremos eso durante el boot).
+// Schedule: cada 5 min (el TTL se mide en minutos desde #266: `booking_config.pendingTtlMinutes`,
+// mínimo 15, así que 5 min de resolución alcanza). Primer tick a los 20 s: deja que arranquen
+// todos los módulos y no pisa el arranque (el sweep cancela reservas y dispara sockets/emails;
+// no queremos eso durante el boot).
 //
 // Flag global `BOOKING_PENDING_TTL_DISABLED=1`: kill-switch operativo para frenar el vencimiento en
 // TODOS los hoteles sin tocar `booking_config` (el TTL por hotel sigue siendo la configuración
@@ -14,10 +16,10 @@
 import type { Logger } from 'arckode-framework'
 import type { PendingPaymentExpiryResult } from './pending-payment-expiry'
 
-/** Tick del cron: 30 min (el TTL se mide en horas; 30 min de resolución alcanza de sobra). */
-export const PENDING_PAYMENT_EXPIRY_TICK_MS = 30 * 60 * 1000
-/** Primer tick a los 60 s: que arranquen todos los módulos antes de cancelar nada. */
-export const PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS = 60_000
+/** Tick del cron: 5 min (#266: el TTL mínimo por hotel es 15 min). */
+export const PENDING_PAYMENT_EXPIRY_TICK_MS = 5 * 60 * 1000
+/** Primer tick a los 20 s: que arranquen todos los módulos antes de cancelar nada. */
+export const PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS = 20_000
 
 export function isPendingPaymentExpiryDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.BOOKING_PENDING_TTL_DISABLED === '1'

@@ -4,8 +4,8 @@ import type { RepositoryAdapter, Logger, CacheAdapter } from 'arckode-framework'
 import { NotFoundError } from 'arckode-framework'
 import type { BookingConfigDTO, UpdateBookingConfigDTO } from '../types'
 
-/** #248 REQ-RWP-05 — Horas para pagar una reserva web. 0 = nunca vence. */
-export const DEFAULT_PENDING_PAYMENT_TTL_HOURS = 24
+/** #266 — Minutos para completar el pago de una reserva web (15–1440). */
+export const DEFAULT_PENDING_TTL_MINUTES = 60
 
 export class ConfigUseCase {
   constructor(
@@ -32,13 +32,13 @@ export class ConfigUseCase {
         instantConfirmation: true,
         stripeAccountId: '',
         allowedCountries: [],
-        pendingPaymentTtlHours: DEFAULT_PENDING_PAYMENT_TTL_HOURS,
+        pendingTtlMinutes: DEFAULT_PENDING_TTL_MINUTES,
       } as any)
     }
     const config = items[0]
-    // Filas anteriores a #248 no tienen la columna: se normaliza la salida, sin persistir.
-    if (config.pendingPaymentTtlHours === null || config.pendingPaymentTtlHours === undefined) {
-      return { ...config, pendingPaymentTtlHours: DEFAULT_PENDING_PAYMENT_TTL_HOURS }
+    // Filas anteriores a #266 no tienen la columna: se normaliza la salida, sin persistir.
+    if (config.pendingTtlMinutes === null || config.pendingTtlMinutes === undefined) {
+      return { ...config, pendingTtlMinutes: DEFAULT_PENDING_TTL_MINUTES }
     }
     return config
   }

@@ -95,6 +95,20 @@ describe('getPublicReservation — IDOR cerrado (F0 0.14)', () => {
     expect(res.body.reservation.childrenAges).toEqual([])
   })
 
+  // #266 — `cancellationReason` es texto libre del panel: al público sale sólo el código
+  // 'payment_timeout' (lo que la pantalla de confirmación necesita para decir "venció").
+  it('cancellationReason: expone payment_timeout y oculta cualquier otro motivo', async () => {
+    const base = { hotelId: 'h1', guestId: 'g1', roomId: 'r1', accessToken: VALID_TOKEN, status: 'cancelled', checkIn: '2026-08-10', checkOut: '2026-08-12', totalAmount: 200 }
+    const { orm } = makeOrm({ reservations: [
+      { ...base, id: 'res-exp', cancellationReason: 'payment_timeout' },
+      { ...base, id: 'res-int', cancellationReason: 'Huésped conflictivo, no volver a aceptar' },
+      { ...base, id: 'res-nul' },
+    ] })
+    expect((await getPublicReservation(orm, 'res-exp', VALID_TOKEN)).body.reservation.cancellationReason).toBe('payment_timeout')
+    expect((await getPublicReservation(orm, 'res-int', VALID_TOKEN)).body.reservation.cancellationReason).toBeNull()
+    expect((await getPublicReservation(orm, 'res-nul', VALID_TOKEN)).body.reservation.cancellationReason).toBeNull()
+  })
+
   it('accessToken=null (reserva creada desde panel) → 404', async () => {
     const { orm } = makeOrm({
       reservations: [

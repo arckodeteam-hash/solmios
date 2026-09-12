@@ -58,6 +58,7 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
@@ -316,12 +317,26 @@ export async function createPublicBookingDirect(
     // validateSchema los descartaba en el controller en silencio.
     estimatedArrival,
     specialRequests,
+    // #266 — clave de idempotencia del widget (opcional). Ver `normalizeIdempotencyKey`.
+    idempotencyKey: rawIdempotencyKey,
   } = body
 
   if (!hotelId || (!roomId && !roomType) || !guestName || !guestEmail || !checkIn || !checkOut) {
     return { status: 400, body: { error: 'Campos requeridos: hotelId, guestName, guestEmail, checkIn, checkOut, y roomId o roomType' } }
   }
   if (checkIn >= checkOut) return { status: 400, body: { error: 'checkIn debe ser anterior a checkOut' } }
+
+  // ─── #266 — Idempotencia: la MISMA key en el MISMO hotel devuelve la reserva ya creada ─────
+  // Un reintento del widget (doble click, red que cortó la respuesta, F5 sobre el POST) no puede
+  // crear dos reservas pending sobre dos habitaciones. Se busca ANTES de cualquier lectura
+  // pesada y de la tx: si ya existe, no se crea nada y se responde 200 con la misma
+  // reservationId/accessToken (ver `replayPublicBooking`). La carrera entre dos POST simultáneos
+  // con la misma key la cierra el índice único (hotelId, idempotencyKey) — ver el catch de la tx.
+  const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey)
+  if (idempotencyKey) {
+    const existing = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+    if (existing) return replayPublicBooking(orm, existing, stripe, logger, stripeUrls)
+  }
 
   // Techo DURO de noches, igual que `/rates` (ver `MAX_STAY_NIGHTS`). Va acá arriba, ANTES de
   // `stayNights` y de las tres lecturas de abajo: todo lo que sigue —bloqueos por noche,
@@ -818,6 +833,12 @@ export async function createPublicBookingDirect(
         // públicas — una reserva cargada a mano por el hotel no necesita que el hotel se
         // apruebe a sí mismo (ver `reservas/usecases/create.ts`, sin tocar).
         approvalStatus: bookingConfig?.instantConfirmation === false ? 'pending' : undefined,
+        // #266 — Límite para pagar: ahora + booking_config.pendingTtlMinutes (default 60). El cron
+        // `shared/usecases/pending-payment-expiry.ts` cancela con `payment_timeout` lo que siga
+        // pending pasado este instante; `null` (reservas del panel) nunca vence.
+        paymentDeadlineAt: resolvePaymentDeadlineAt(bookingConfig),
+        // #266 — Clave de idempotencia del widget (única por hotel, ver migrate-db.ts).
+        idempotencyKey: idempotencyKey ?? undefined,
       })
 
       // F2 2.5 — Incremento atómico de promo.uses DENTRO de la tx. Re-lectura para detectar
@@ -857,6 +878,16 @@ export async function createPublicBookingDirect(
       logger?.warn(`Promo ${promoCode} agotado concurrentemente para hotel ${hotelId}`, { reservationId: reservation?.id })
       return { status: 409, body: { error: 'promo_invalid', promoReason: 'max_uses_reached' } }
     }
+    // #266 — Dos POST simultáneos con la misma key: el primero commiteó entre nuestra búsqueda
+    // inicial y este insert, y el índice único (hotelId, idempotencyKey) rechazó al segundo.
+    // No es un error del huésped: se relee la fila ganadora y se responde el mismo replay 200.
+    if (idempotencyKey && isUniqueViolation(e)) {
+      const existing = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+      if (existing) {
+        logger?.warn('Reserva pública duplicada por idempotencyKey concurrente — replay', { hotelId, reservationId: existing.id })
+        return replayPublicBooking(orm, existing, stripe, logger, stripeUrls)
+      }
+    }
     // Otros errores de la tx: relanzar como antes (el controller pasa a 500 si no se atrapa).
     throw e
   }
@@ -866,27 +897,82 @@ export async function createPublicBookingDirect(
   // F0 0.16 — Cableo del checkoutUrl. ROBUSTEZ: si Stripe falla (no configurado, gateway
   // caído), la reserva SE CREÓ igual. Devolvemos 201 con checkoutUrl:null + paymentError.
   // El huésped al menos tiene su reserva; el panel la ve como "pending".
-  let checkoutUrl: string | null = null
-  let paymentError: string | null = null
-  if (stripe && stripeUrls) {
-    try {
-      const session = await stripe.createReservationCheckout(
-        reservation.id, totalAmount, stripeUrls.successUrl, stripeUrls.cancelUrl,
-      )
-      checkoutUrl = session.url || null
-    } catch (e: any) {
-      // NO relanzar — robustez F0. La reserva ya está creada; lo peor que podemos hacer es
-      // tirar 500 y que el huésped crea que la reserva no se hizo (cuando sí se hizo).
-      paymentError = e?.message || 'payment_gateway_unavailable'
-      logger?.warn(
-        `Reserva ${reservation.id} creada pero Stripe falló — checkoutUrl null, paymentError="${paymentError}"`,
-        { hotelId, reservationId: reservation.id },
-      )
-    }
-  }
+  const { checkoutUrl, paymentError } = await createCheckoutSafely(
+    stripe, stripeUrls, reservation.id, totalAmount, hotelId, logger,
+  )
 
+  return publicBookingResponse(201, reservation, guest, checkoutUrl, totalBreakdown, paymentError)
+}
+
+/**
+ * F0 0.16 — Crea la Checkout Session sin dejar que un fallo de Stripe tumbe la respuesta: la
+ * reserva YA existe; lo peor que podemos hacer es tirar 500 y que el huésped crea que no se hizo.
+ * Devuelve `checkoutUrl: null` + `paymentError` cuando la pasarela falla o no está cableada.
+ */
+async function createCheckoutSafely(
+  stripe: PublicBookingStripeDeps | undefined,
+  stripeUrls: { successUrl: string; cancelUrl: string } | undefined,
+  reservationId: string,
+  amount: number,
+  hotelId: string,
+  logger?: PublicBookingLogger,
+): Promise<{ checkoutUrl: string | null; paymentError: string | null }> {
+  if (!stripe || !stripeUrls) return { checkoutUrl: null, paymentError: null }
+  try {
+    const session = await stripe.createReservationCheckout(reservationId, amount, stripeUrls.successUrl, stripeUrls.cancelUrl)
+    return { checkoutUrl: session.url || null, paymentError: null }
+  } catch (e: any) {
+    // NO relanzar — robustez F0.
+    const paymentError: string = e?.message || 'payment_gateway_unavailable'
+    logger?.warn(
+      `Reserva ${reservationId} creada pero Stripe falló — checkoutUrl null, paymentError="${paymentError}"`,
+      { hotelId, reservationId },
+    )
+    return { checkoutUrl: null, paymentError }
+  }
+}
+
+/**
+ * #266 — Replay idempotente: la reserva ya existe para esta (hotelId, idempotencyKey). No se crea
+ * nada; se devuelve la MISMA forma que el 201 con `status: 200` y `replayed: true`, para que el
+ * widget siga su flujo normal (guardar reservationId/accessToken y redirigir a `checkoutUrl`).
+ *
+ * `checkoutUrl` se vuelve a pedir a Stripe con el mismo reservationId: `createReservationCheckout`
+ * manda `Idempotency-Key: reservationId`, así que Stripe devuelve la MISMA sesión del primer POST
+ * (no cobra dos veces). Si esa sesión ya expiró en Stripe, no hay forma de forzar una nueva sin
+ * variar la key (el service no lo admite hoy): el cron vence la reserva por `paymentDeadlineAt`
+ * y el huésped vuelve a reservar. Una reserva ya `cancelled` (vencida por el cron o por
+ * `checkout.session.expired`) no se "revive": 409 `reservation_expired`.
+ */
+async function replayPublicBooking(
+  orm: any,
+  existing: any,
+  stripe?: PublicBookingStripeDeps,
+  logger?: PublicBookingLogger,
+  stripeUrls?: { successUrl: string; cancelUrl: string },
+): Promise<any> {
+  if (existing.status === 'cancelled') return { status: 409, body: { error: 'reservation_expired' } }
+  const guest = existing.guestId
+    ? await Promise.resolve(orm.findById?.('Guests', existing.guestId)).catch(() => null) ?? null
+    : null
+  const { checkoutUrl, paymentError } = await createCheckoutSafely(
+    stripe, stripeUrls, existing.id, Number(existing.totalAmount) || 0, String(existing.hotelId ?? ''), logger,
+  )
+  const totalBreakdown = safeParse(existing.priceBreakdown) ?? null
+  return publicBookingResponse(200, existing, guest, checkoutUrl, totalBreakdown, paymentError, true)
+}
+
+function publicBookingResponse(
+  status: 200 | 201,
+  reservation: any,
+  guest: any,
+  checkoutUrl: string | null,
+  totalBreakdown: TotalBreakdown | null,
+  paymentError: string | null,
+  replayed = false,
+): any {
   return {
-    status: 201,
+    status,
     body: {
       // B-6/H-4 (auditoría 2026-08-19): allow-list estricta — las filas crudas arrastraban
       // campos internos (ownerNotes, otaNotes, card*, snapshot financiero, document del
@@ -919,6 +1005,9 @@ export async function createPublicBookingDirect(
       // en 0) para que el frontend tenga un contrato estable.
       totalBreakdown,
       ...(paymentError !== null ? { paymentError } : {}),
+      // #266 — solo en el replay idempotente (misma key, mismo hotel): el widget puede distinguir
+      // "te devolví la que ya tenías" de "creé una nueva" sin cambiar el resto del contrato.
+      ...(replayed ? { replayed: true } : {}),
     },
   }
 }
@@ -927,4 +1016,43 @@ export async function createPublicBookingDirect(
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+/** #266 — Tope de la clave de idempotencia (columna TEXT; el índice único la indexa entera). */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 128
+
+/**
+ * #266 — Normaliza `body.idempotencyKey`: string no vacía, recortada a 128 chars. Cualquier otra
+ * cosa (número, objeto, vacío) se ignora → `null` = la reserva se crea sin key (comportamiento
+ * previo: cada POST crea una reserva nueva).
+ */
+export function normalizeIdempotencyKey(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return trimmed.slice(0, IDEMPOTENCY_KEY_MAX_LENGTH)
+}
+
+/**
+ * #266 — `paymentDeadlineAt` (ISO) = ahora + `booking_config.pendingTtlMinutes`. Config ausente,
+ * `null` o inválida (filas previas a #266, mocks de tests) → `DEFAULT_PENDING_TTL_MINUTES`.
+ */
+export function resolvePaymentDeadlineAt(bookingConfig: any, now: Date = new Date()): string {
+  const raw = Number(bookingConfig?.pendingTtlMinutes)
+  const ttl = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PENDING_TTL_MINUTES
+  return new Date(now.getTime() + ttl * 60_000).toISOString()
+}
+
+/**
+ * #266 — Violación del índice único (hotelId, idempotencyKey) en SQLite ("UNIQUE constraint
+ * failed") o Postgres (código 23505 / "duplicate key"). Mismo criterio que
+ * `folios/usecases/folio-entries.ts#isDuplicateError`.
+ */
+export function isUniqueViolation(e: unknown): boolean {
+  const code = String((e as any)?.code ?? '')
+  const msg = String((e as any)?.message ?? e).toLowerCase()
+  return code === '23505'
+    || msg.includes('unique constraint')
+    || msg.includes('duplicate key')
+    || msg.includes('idx_reservations_hotel_idempotency')
 }

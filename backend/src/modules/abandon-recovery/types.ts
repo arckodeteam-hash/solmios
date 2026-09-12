@@ -46,7 +46,13 @@ const MS_PER_HOUR = 60 * MS_PER_MINUTE
 export const DEFAULT_ABANDON_MIN_AGE_MS = MS_PER_HOUR          // 1h
 export const DEFAULT_ABANDON_MAX_AGE_MS = 4 * MS_PER_HOUR      // 4h
 
-/** TTL de pago por defecto (horas) cuando el hotel no tiene fila en booking_config o la
- *  columna `pendingPaymentTtlHours` es null (filas previas a #248). Mismo valor que
- *  `bookingengine/usecases/config.ts` — se duplica a propósito: no se importa entre módulos. */
-export const DEFAULT_PENDING_PAYMENT_TTL_HOURS = 24
+/** TTL de pago por defecto (minutos) cuando el hotel no tiene fila en booking_config o la
+ *  columna `pendingTtlMinutes` es null (filas previas a #266). Mismo valor que
+ *  `DEFAULT_PENDING_TTL_MINUTES` de `bookingengine/usecases/config.ts` — se duplica a
+ *  propósito: no se importa entre módulos. Rango válido del admin: 15–1440. */
+export const DEFAULT_PENDING_TTL_MINUTES = 60
+
+/** Check de pasarela de pago del hotel (#266). Inyectado post-init desde composition-root
+ *  (mismo patrón que el EmailService): si devuelve false, el hotel no puede cobrar online y
+ *  el link "completá tu reserva" no lleva a ningún checkout → el sweep no encola el correo. */
+export type GatewayConfiguredCheck = (hotelId: string) => Promise<boolean>
