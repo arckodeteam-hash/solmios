@@ -134,6 +134,7 @@ watch(() => [props.open, props.reservationId] as const, ([isOpen]) => {
 watch(allTypes, () => { if (props.open) void load() })
 
 let loadSeq = 0
+let assignSeq = 0
 async function load() {
   if (!props.reservationId) return
   const seq = ++loadSeq
@@ -160,18 +161,24 @@ async function assign(room: AssignableRoom) {
     if (!window.confirm('La habitación es de otro tipo. ¿Asignar igual?')) return
     allowTypeChange = true
   }
+  // El host reutiliza la misma instancia cambiando `reservationId` entre filas: una respuesta que
+  // llega cuando el modal ya muestra OTRA reserva no puede emitir ni tocar el estado de ésta.
+  const seq = ++assignSeq
+  const reservationId = props.reservationId
   assigningId.value = room.id
   try {
-    const res = await ReservationService.assignRoom(props.reservationId, room.id, allowTypeChange)
+    const res = await ReservationService.assignRoom(reservationId, room.id, allowTypeChange)
+    if (seq !== assignSeq || reservationId !== props.reservationId) return
     toast.success(`Habitación ${room.number} asignada`)
     emit('assigned', res)
     emit('close')
   } catch (e: unknown) {
+    if (seq !== assignSeq || reservationId !== props.reservationId) return
     toast.error(assignErrorMessage(e))
     // La lista que se veía ya no es cierta (alguien la ocupó / la bloquearon): se vuelve a pedir.
     void load()
   } finally {
-    assigningId.value = null
+    if (seq === assignSeq) assigningId.value = null
   }
 }
 </script>
