@@ -19,8 +19,8 @@ export interface BookingConfigDTO {
   instantConfirmation: boolean
   stripeAccountId: string
   allowedCountries: string[]
-  /** #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence). */
-  pendingPaymentTtlHours: number
+  /** #266 — Minutos para completar el pago de una reserva web (15–1440, default 60). */
+  pendingTtlMinutes: number
   createdAt: string
   updatedAt: string
 }
@@ -40,7 +40,7 @@ export interface UpdateBookingConfigDTO {
   instantConfirmation?: boolean
   stripeAccountId?: string
   allowedCountries?: string[]
-  pendingPaymentTtlHours?: number
+  pendingTtlMinutes?: number
 }
 
 // ─── Availability ──────────────────────────────────────

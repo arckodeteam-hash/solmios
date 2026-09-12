@@ -1200,8 +1200,24 @@ async function createTablesBlock3(): Promise<void> {
   await addColumnIfMissing("reservations", "abandonEmailSent", "INTEGER DEFAULT 0")
   // F0 0.13 — AccessToken público anti-IDOR (reserva creada por flujo público).
   await addColumnIfMissing("reservations", "accessToken", "TEXT")
-  // #248 REQ-RWP-05 — TTL de pago de reservas web por hotel (horas; NULL → 24 en el usecase; 0 = nunca vence).
+  // #266 — Vencimiento de pago (ISO; NULL = no vence) y clave de idempotencia del widget.
+  await addColumnIfMissing("reservations", "paymentDeadlineAt", "TEXT")
+  await addColumnIfMissing("reservations", "idempotencyKey", "TEXT")
+  // #266 — La misma idempotencyKey no puede crear dos reservas en el mismo hotel. El ORM no crea
+  // UNIQUE compuesto: índice único idempotente, identificadores SIN comillas (portable SQLite + PG,
+  // mismo criterio que idx_configuration_hotel_key). Los NULL (reservas del panel / previas a #266)
+  // no chocan entre sí ni en SQLite ni en Postgres. Si la tabla todavía no existe (RUN_MIGRATE no
+  // corrió), el índice entra en la próxima corrida sin abortar el resto de la migración.
+  try {
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_hotel_idempotency ON reservations(hotelId, idempotencyKey)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'idx_reservations_hotel_idempotency', missingTable: 'reservations', consequence: 'Sin el UNIQUE (hotelId, idempotencyKey), un reintento del widget puede crear la misma reserva dos veces.' })
+  }
+  // #248 REQ-RWP-05 — TTL de pago de reservas web por hotel (horas). Reemplazada por
+  // pendingTtlMinutes en #266; la columna vieja queda huérfana (no se borra ni se lee).
   await addColumnIfMissing('booking_config', 'pendingPaymentTtlHours', 'INTEGER')
+  // #266 — Minutos para completar el pago (15–1440; NULL → 60 en el usecase).
+  await addColumnIfMissing('booking_config', 'pendingTtlMinutes', 'INTEGER')
 
   // CREATE: reservation_addons (F3 match-misterplan — otros servicios y descuentos por reserva).
   await exec(`CREATE TABLE IF NOT EXISTS reservation_addons (
