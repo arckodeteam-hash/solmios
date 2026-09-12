@@ -141,16 +141,17 @@ describe('useGuestComposer — maxChildAgeOptions (Requerimiento 4)', () => {
   })
 })
 
-// ─── Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292 cuna por habitación ────
-// La cuna se ofrece si el TIPO publica la amenidad `custom:cuna` (`store.roomAmenitiesFor`) —
-// ya no hay interruptor global en la política. El detalle (precio, key en roomAmenityKeys,
-// checklist genérico sin la cuna) vive en useGuestComposer.crib.test.ts; acá queda el Sí/No y el
-// gateo al agregar.
-describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)', () => {
+// ─── Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292; #341 ───────────────────
+// Desde #341 la cuna es una amenidad MÁS del checklist genérico del tipo (`custom:cuna` en
+// `store.roomAmenitiesFor`): se tilda con `toggleRoomAmenity`, sin pregunta aparte ni gate por
+// bebé, y `needsCrib` es espejo de esa key. El detalle (listado, precio, alias) vive en
+// useGuestComposer.crib.test.ts y useGuestComposer.crib-alias.test.ts; acá queda el Sí/No
+// derivado y lo que viaja al agregar.
+describe('useGuestComposer — cuna (Sí/No derivado de la key custom:cuna tildada)', () => {
   const CRIB_POLICY = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
   const CRIB_CATALOG = { double: [{ key: 'custom:cuna', name: 'Cuna', price: 15 }] }
   function withBaby() {
-    // maxBabyAge=1: edad 0-1 es bebé. El tipo `double` publica `custom:cuna` — ofrece cuna.
+    // maxBabyAge=1: edad 0-1 es bebé. El tipo `double` publica `custom:cuna` en su catálogo.
     useBookingStore().childPolicy = { ...CRIB_POLICY }
     useBookingStore().roomAmenities = { ...CRIB_CATALOG }
     const { setChildrenCount, setChildAge, ...rest } = useGuestComposer()
@@ -165,62 +166,66 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
     expect(babiesCount(room)).toBe(1)
   })
 
-  it('shouldOfferCrib: false sin bebé, false si el tipo no publica custom:cuna, true solo con AMBOS', () => {
+  it('la cuna se ofrece apenas el tipo publica custom:cuna, con o sin bebé (no hay gate por composición)', () => {
     useBookingStore().childPolicy = { ...CRIB_POLICY }
-    const { setChildrenCount, setChildAge, shouldOfferCrib } = useGuestComposer()
+    const { setChildrenCount, setChildAge, offeredRoomAmenities } = useGuestComposer()
     const room = rt()
-    expect(shouldOfferCrib(room)).toBe(false) // sin bebé todavía
-    setChildrenCount(room, 1)
-    setChildAge(room, 0, 0) // bebé, pero el tipo sigue sin custom:cuna
-    expect(shouldOfferCrib(room)).toBe(false)
+    expect(offeredRoomAmenities(room)).toEqual([]) // el tipo todavía no publica nada
     useBookingStore().roomAmenities = { ...CRIB_CATALOG }
-    expect(shouldOfferCrib(room)).toBe(true)
+    expect(offeredRoomAmenities(room).map((a) => a.key)).toEqual(['custom:cuna']) // sin bebé
+    setChildrenCount(room, 1)
+    setChildAge(room, 0, 0) // con bebé: exactamente lo mismo
+    expect(offeredRoomAmenities(room).map((a) => a.key)).toEqual(['custom:cuna'])
   })
 
-  it('setNeedsCrib(true)/(false) — Sí/No puro, sin cantidad en el estado', () => {
-    const { room, setNeedsCrib, composer } = withBaby()
-    setNeedsCrib(room, true)
+  it('toggleRoomAmenity(custom:cuna) — Sí/No puro, sin cantidad en el estado: needsCrib sigue a la key', () => {
+    const { room, toggleRoomAmenity, composer } = withBaby()
+    toggleRoomAmenity(room, 'custom:cuna')
     expect(composer(room).needsCrib).toBe(true)
-    setNeedsCrib(room, false)
+    toggleRoomAmenity(room, 'custom:cuna')
     expect(composer(room).needsCrib).toBe(false)
   })
 
-  it('bajar la edad del único bebé por debajo del umbral limpia la cuna (defensa en profundidad)', () => {
-    const { room, setNeedsCrib, setChildAge, composer } = withBaby()
-    setNeedsCrib(room, true)
+  it('bajar la edad del único bebé por debajo del umbral NO limpia la cuna (#341: sin flujo especial por bebé)', () => {
+    const { room, toggleRoomAmenity, setChildAge, composer } = withBaby()
+    toggleRoomAmenity(room, 'custom:cuna')
     expect(composer(room).needsCrib).toBe(true)
     setChildAge(room, 0, 8) // 8 > maxFreeAge=3 → deja de ser bebé (y de ser libre)
-    expect(composer(room).needsCrib).toBe(false)
+    expect(composer(room).needsCrib).toBe(true)
+    expect(composer(room).roomAmenityKeys).toEqual(['custom:cuna'])
   })
 
-  it('bajar la CANTIDAD de niños a 0 (se va el único bebé) también limpia la cuna', () => {
-    const { room, setNeedsCrib, setChildrenCount, composer } = withBaby()
-    setNeedsCrib(room, true)
+  it('bajar la CANTIDAD de niños a 0 (se va el único bebé) tampoco limpia la cuna', () => {
+    const { room, toggleRoomAmenity, setChildrenCount, composer } = withBaby()
+    toggleRoomAmenity(room, 'custom:cuna')
     setChildrenCount(room, 0)
-    expect(composer(room).needsCrib).toBe(false)
+    expect(composer(room).needsCrib).toBe(true)
+    expect(composer(room).roomAmenityKeys).toEqual(['custom:cuna'])
   })
 
   it('varios bebés: sigue siendo Sí/No — no hay cantidad que escale con la cantidad de bebés', () => {
     useBookingStore().childPolicy = { ...CRIB_POLICY }
-    const { setChildrenCount, setChildAge, setNeedsCrib, composer, babiesCount } = useGuestComposer()
+    useBookingStore().roomAmenities = { ...CRIB_CATALOG }
+    const { setChildrenCount, setChildAge, toggleRoomAmenity, composer, babiesCount } = useGuestComposer()
     const room = rt()
     setChildrenCount(room, 2)
     setChildAge(room, 0, 0)
     setChildAge(room, 1, 1)
     expect(babiesCount(room)).toBe(2)
-    setNeedsCrib(room, true)
+    toggleRoomAmenity(room, 'custom:cuna')
     expect(composer(room).needsCrib).toBe(true)
+    expect(composer(room).roomAmenityKeys).toEqual(['custom:cuna'])
   })
 
-  it('addComposedRoom: CON bebé y el tipo publicando custom:cuna, manda needsCrib/cribCount:1 al carrito (y la key con su precio)', async () => {
+  it('addComposedRoom: con la cuna tildada y el tipo publicando custom:cuna, manda needsCrib/cribCount:1 al carrito (y la key con su precio)', async () => {
     const store = useBookingStore()
     store.ratesResponse = {
       currency: 'USD', chargeCurrency: 'USD', nights: 2, checkIn: '2026-09-10', checkOut: '2026-09-12',
       taxes: [], cancellationPolicy: null, cancellationSummary: null,
       roomTypes: [{ id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null }],
     }
-    const { room, setNeedsCrib, addComposedRoom } = withBaby()
-    setNeedsCrib(room, true)
+    const { room, toggleRoomAmenity, addComposedRoom } = withBaby()
+    toggleRoomAmenity(room, 'custom:cuna')
     await addComposedRoom(room)
 
     expect(store.cart).toHaveLength(1)
@@ -231,7 +236,7 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
     expect(store.roomAmenitiesTotal).toBe(15)
   })
 
-  it('addComposedRoom: tipo SIN custom:cuna, needsCrib NUNCA llega al carrito aunque el huésped haya tildado "Sí"', async () => {
+  it('addComposedRoom: tipo SIN custom:cuna, la key no se puede tildar y needsCrib no llega al carrito', async () => {
     const store = useBookingStore()
     store.childPolicy = { ...CRIB_POLICY }
     store.roomAmenities = {}
@@ -240,19 +245,20 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
       taxes: [], cancellationPolicy: null, cancellationSummary: null,
       roomTypes: [{ id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null }],
     }
-    const { setChildrenCount, setChildAge, setNeedsCrib, addComposedRoom } = useGuestComposer()
+    const { setChildrenCount, setChildAge, toggleRoomAmenity, composer, addComposedRoom } = useGuestComposer()
     const room = rt('double')
     setChildrenCount(room, 1)
     setChildAge(room, 0, 0) // bebé
-    setNeedsCrib(room, true) // el composer interno lo tiene en true...
+    toggleRoomAmenity(room, 'custom:cuna') // el tipo no la ofrece: se ignora
+    expect(composer(room).needsCrib).toBe(false)
     await addComposedRoom(room)
 
     expect(store.cart).toHaveLength(1)
-    expect(store.cart[0]!.needsCrib).toBeUndefined() // ...pero el tipo no ofrece cuna, no se manda
+    expect(store.cart[0]!.needsCrib).toBeUndefined()
     expect(store.cart[0]!.roomAmenities).toBeUndefined()
   })
 
-  it('addComposedRoom: SIN bebé, needsCrib NUNCA llega al carrito aunque el estado interno lo tenga', async () => {
+  it('addComposedRoom: SIN bebé y con la cuna tildada, needsCrib/cribCount:1 y la key viajan igual (#341)', async () => {
     const store = useBookingStore()
     store.childPolicy = { ...CRIB_POLICY }
     store.roomAmenities = { ...CRIB_CATALOG }
@@ -261,13 +267,36 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
       taxes: [], cancellationPolicy: null, cancellationSummary: null,
       roomTypes: [{ id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null }],
     }
-    const { setAdults, addComposedRoom } = useGuestComposer()
+    const { setAdults, toggleRoomAmenity, addComposedRoom } = useGuestComposer()
     const room = rt('double')
     setAdults(room, 2) // sin niños → sin bebé
+    toggleRoomAmenity(room, 'custom:cuna')
+    await addComposedRoom(room)
+
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.needsCrib).toBe(true)
+    expect(store.cart[0]!.cribCount).toBe(1)
+    expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15 }])
+  })
+
+  it('addComposedRoom: SIN cuna tildada, needsCrib no viaja (aunque haya bebé y el tipo la publique)', async () => {
+    const store = useBookingStore()
+    store.childPolicy = { ...CRIB_POLICY }
+    store.roomAmenities = { ...CRIB_CATALOG }
+    store.ratesResponse = {
+      currency: 'USD', chargeCurrency: 'USD', nights: 2, checkIn: '2026-09-10', checkOut: '2026-09-12',
+      taxes: [], cancellationPolicy: null, cancellationSummary: null,
+      roomTypes: [{ id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null }],
+    }
+    const { setChildrenCount, setChildAge, addComposedRoom } = useGuestComposer()
+    const room = rt('double')
+    setChildrenCount(room, 1)
+    setChildAge(room, 0, 0) // bebé
     await addComposedRoom(room)
 
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]!.needsCrib).toBeUndefined()
+    expect(store.cart[0]!.roomAmenities).toBeUndefined()
   })
 
   it('dos habitaciones con la MISMA composición pero DISTINTA cuna quedan en líneas separadas del carrito', async () => {
@@ -279,13 +308,13 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
     }
     store.childPolicy = { ...CRIB_POLICY }
     store.roomAmenities = { ...CRIB_CATALOG }
-    const { setChildrenCount, setChildAge, setNeedsCrib, addComposedRoom } = useGuestComposer()
+    const { setChildrenCount, setChildAge, toggleRoomAmenity, addComposedRoom } = useGuestComposer()
     const room = rt('double')
 
     // 1ª habitación: 1 adulto + bebé (edad 0), CON cuna.
     setChildrenCount(room, 1)
     setChildAge(room, 0, 0)
-    setNeedsCrib(room, true)
+    toggleRoomAmenity(room, 'custom:cuna')
     await addComposedRoom(room)
 
     // 2ª habitación: MISMA composición (adultos default 1, bebé edad 0), SIN cuna.
@@ -424,8 +453,8 @@ describe('useGuestComposer — composedPrice con el descuento infantil porcentua
 
 // ─── REQ-02 (#234) — Editar una habitación agregada recupera los mismos datos ───────────────────
 describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al composer de su tarjeta', () => {
-  // maxFreeAge=3, maxBabyAge=1, hotel acepta niños. La cuna (#292) la publica el tipo `suite`
-  // vía `custom:cuna`; `double` ofrece una cama extra.
+  // maxFreeAge=3, maxBabyAge=1, hotel acepta niños. La cuna (#292/#341: una amenidad más del
+  // checklist) la publica el tipo `suite` vía `custom:cuna`; `double` ofrece una cama extra.
   const EDIT_POLICY = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
   const ROOM_TYPES = [
     { id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null },
@@ -447,13 +476,13 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
 
   it('recupera adults/ages/needsCrib (con la key custom:cuna) en composer(rt) y quita la línea (quantity 1)', async () => {
     const store = setupStore()
-    const { setAdults, setChildrenCount, setChildAge, setNeedsCrib, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const { setAdults, setChildrenCount, setChildAge, toggleRoomAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
     const room = rt('suite')
     setAdults(room, 2)
     setChildrenCount(room, 2)
     setChildAge(room, 0, 0) // bebé
     setChildAge(room, 1, 7) // con plaza
-    setNeedsCrib(room, true)
+    toggleRoomAmenity(room, 'custom:cuna')
     await addComposedRoom(room)
     expect(store.cart).toHaveLength(1)
     // Tras agregar la tarjeta quedó limpia — el dato solo vive en la línea del carrito.
@@ -512,7 +541,7 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
 
   it('con dos líneas de tipos distintos, editar una NO cambia la otra ni el composer de la otra tarjeta', async () => {
     const store = setupStore()
-    const { setAdults, setChildrenCount, setChildAge, setNeedsCrib, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const { setAdults, setChildrenCount, setChildAge, toggleRoomAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
     const double = rt('double')
     const suite = rt('suite')
     // double: 2 adultos + niño de 8.
@@ -523,7 +552,7 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
     // suite: 1 adulto + bebé con cuna.
     setChildrenCount(suite, 1)
     setChildAge(suite, 0, 1)
-    setNeedsCrib(suite, true)
+    toggleRoomAmenity(suite, 'custom:cuna')
     await addComposedRoom(suite)
     expect(store.cart).toHaveLength(2)
     const suiteLine = store.cart.find((l) => l.roomType === 'suite')!

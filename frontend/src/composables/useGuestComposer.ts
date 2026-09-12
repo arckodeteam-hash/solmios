@@ -31,20 +31,19 @@ export interface MealPlanOption {
 interface ComposerState {
   adults: number
   ages: number[]
-  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — por TARJETA, igual que adults/ages:
-  // cada habitación pide su propia cuna para SU bebé, no la del carrito entero. Sí/No únicamente
-  // (el pedido de corrección es explícito: "no preguntar si desea una, dos o más cunas") — no
-  // existe una cantidad en el estado, `addComposedRoom` la deriva SIEMPRE en 1/0 al enviar.
-  // #292 — `needsCrib:true` va SIEMPRE acompañado de `CRIB_AMENITY_KEY` en `roomAmenityKeys`
-  // (`setNeedsCrib` los mueve juntos): así el precio de la cuna viaja por el mecanismo de
-  // amenidades de habitación, sin un camino de cobro aparte.
+  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09; #292; #341 — por TARJETA, igual que
+  // adults/ages. Desde #341 la cuna es UNA AMENIDAD MÁS del checklist genérico (ya no existe la
+  // pregunta "¿Necesita cuna?" ni el gate por bebé): `needsCrib` es un ESPEJO derivado de
+  // `roomAmenityKeys` — true exactamente cuando hay una key cuna (`isCribAmenityKey`) tildada.
+  // `toggleRoomAmenity` lo recalcula en cada cambio; nadie lo escribe a mano. Sí/No únicamente:
+  // no existe una cantidad en el estado, `addComposedRoom` deriva `cribCount` SIEMPRE en 1/0.
   needsCrib: boolean
   // REQ-01 (#290, amenidades de la habitación) — keys del catálogo por tipo
-  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta. Opcional y ausente en el estado
-  // fresco (se crea recién al primer toggle): el estado inicial sigue siendo exactamente
-  // `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan. Sin relación
-  // con la composición salvo la cuna (ver `syncCribToBabies`): una cama extra no se limpia al
-  // cambiar edades. Leer vía `roomAmenityKeys(rt)`.
+  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta, cuna incluida (#341). Opcional y
+  // ausente en el estado fresco (se crea recién al primer toggle): el estado inicial sigue siendo
+  // exactamente `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan.
+  // Sin relación con la composición: ni una cama extra ni la cuna se limpian al cambiar edades o
+  // cantidad de niños. Leer vía `roomAmenityKeys(rt)`.
   roomAmenityKeys?: string[]
   // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
   // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);
@@ -85,27 +84,16 @@ export function useGuestComposer() {
     const n = Math.max(0, Math.floor(count))
     if (n > c.ages.length) c.ages.push(...Array(n - c.ages.length).fill(0))
     else c.ages.length = n
-    syncCribToBabies(rt)
   }
 
   function setChildAge(rt: RoomTypeRate, index: number, age: number): void {
     const c = composer(rt)
     if (index >= 0 && index < c.ages.length) c.ages[index] = age
-    syncCribToBabies(rt)
   }
 
   /** Tarea 21 — cuántos bebés hay AHORA MISMO en esta composición (subconjunto de "sin plaza"). */
   function babiesCount(rt: RoomTypeRate): number {
     return composition(rt).babies
-  }
-
-  /** Tarea 22 — si el último cambio de edad/cantidad de niños dejó la composición sin bebés, la
-   *  cuna queda "pedida" para algo que ya no corresponde: se limpia sola (`needsCrib` Y la key
-   *  `custom:cuna` de `roomAmenityKeys`, para que no quede un "+ $X" fantasma en la tarjeta), en
-   *  vez de depender solo del gateo silencioso al enviar (defensa en profundidad, mismo criterio
-   *  que el backend). */
-  function syncCribToBabies(rt: RoomTypeRate): void {
-    if (!shouldOfferCrib(rt)) setNeedsCrib(rt, false)
   }
 
   /** Tarea 21 (Identificar bebés, 2026-09-08) — clasificación EN VIVO de un niño puntual, con la
@@ -124,64 +112,34 @@ export function useGuestComposer() {
     return resolveChildComposition(composer(rt).adults, composer(rt).ages, store.childPolicy)
   }
 
-  /** #292 — la fila "cuna" del catálogo del tipo (`custom:cuna`, `custom:crib`, "Cuna para
-   *  bebé"… — `isCribAmenityKey`), si el tipo la publica. Su `key` REAL es la que viaja. */
-  function cribAmenity(rt: RoomTypeRate) {
-    return store.roomAmenitiesFor(rt.id).find((a) => isCribAmenityKey(a.key, a.name)) ?? null
-  }
-
-  /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09; #292 cuna por habitación — ¿corresponde
-   *  ofrecer "¿Necesita cuna?" para ESTA tarjeta ahora mismo? Sí solo si hay al menos un bebé en
-   *  la composición Y el tipo publica la amenidad `custom:cuna` (`CRIB_AMENITY_KEY`, configurada
-   *  por el hotel en las habitaciones del tipo). Ya no existe un interruptor global en la
-   *  política de niños (dado de baja en #292). Centralizado acá para que RoomsStep.vue y
-   *  BookingModal.vue nunca puedan mostrar la pregunta en un caso y ocultarla en el otro. */
-  function shouldOfferCrib(rt: RoomTypeRate): boolean {
-    return babiesCount(rt) > 0 && cribAmenity(rt) !== null
-  }
-
-  /** #292 — precio "desde" de la cuna para ESTA tarjeta (el de `custom:cuna` en el catálogo del
-   *  tipo), para mostrarlo junto a la pregunta. 0 si el tipo no la ofrece o es sin cargo. */
-  function cribPrice(rt: RoomTypeRate): number {
-    return Number(cribAmenity(rt)?.price) || 0
-  }
-
-  /** Sí/No — sin cantidad. Mueve `needsCrib` Y la key de la cuna (la REAL del catálogo del tipo,
-   *  ver `cribAmenity`) de `roomAmenityKeys` juntos: "Sí" la agrega (el "+ $X" de la tarjeta, el
-   *  carrito y el payload la cobran por el mecanismo de amenidades de habitación), "No" quita
-   *  cualquier key cuna. "No" también limpia el estado por si se reactiva sin querer. */
-  function setNeedsCrib(rt: RoomTypeRate, value: boolean): void {
-    const c = composer(rt)
-    c.needsCrib = value
-    const current = c.roomAmenityKeys ?? []
-    const cribKey = cribAmenity(rt)?.key
-    if (value) {
-      if (cribKey && !current.some((k) => isCribAmenityKey(k))) c.roomAmenityKeys = [...current, cribKey]
-    } else if (current.some((k) => isCribAmenityKey(k))) {
-      const rest = current.filter((k) => !isCribAmenityKey(k))
-      if (rest.length > 0) c.roomAmenityKeys = rest
-      else delete c.roomAmenityKeys
-    }
-  }
-
-  // ─── REQ-01 (#290) — amenidades DE la habitación (cama extra…), POR TARJETA ─────────────────
+  // ─── REQ-01 (#290) — amenidades DE la habitación (cama extra, cuna…), POR TARJETA ───────────
 
   /** Keys tildadas en esta tarjeta (siempre un array, aunque el estado todavía no lo tenga).
-   *  Incluye la key de la cuna cuando se pidió cuna (ver `setNeedsCrib`). */
+   *  Incluye la key de la cuna cuando está tildada en el checklist (#341). */
   function roomAmenityKeys(rt: RoomTypeRate): string[] {
     return composer(rt).roomAmenityKeys ?? []
   }
 
-  /** #292 — catálogo del tipo para el checklist genérico: TODO menos la cuna (`isCribAmenityKey`),
-   *  que se ofrece únicamente vía "¿Necesita cuna?" (con bebé en la tarjeta). RoomsStep.vue y
-   *  BookingModal.vue iteran esta lista, nunca `store.roomAmenitiesFor` directo. */
+  /** #341 — ¿hay una key cuna tildada en ESTA tarjeta? Se reconoce por `isCribAmenityKey` contra
+   *  la fila REAL del catálogo VIVO del tipo (key y nombre: "Cuna", "Cuna para bebé", "Crib"…),
+   *  nunca comparando el literal `custom:cuna` a mano. Una key que el tipo ya no publica no
+   *  cuenta: `needsCrib` es espejo de la línea cuna que el store/backend van a resolver, y esa
+   *  key se descarta (mismo criterio que `store.addToCart`). */
+  function hasCribKeySelected(rt: RoomTypeRate, keys: string[]): boolean {
+    return store.roomAmenitiesFor(rt.id).some((a) => keys.includes(a.key) && isCribAmenityKey(a.key, a.name))
+  }
+
+  /** Catálogo del tipo para el checklist genérico: TODO lo que publica `store.roomAmenitiesFor`,
+   *  cuna incluida (#341 — antes se filtraba y se ofrecía aparte vía "¿Necesita cuna?", gateada
+   *  por bebé; ya no). RoomsStep.vue y BookingModal.vue iteran esta lista, nunca
+   *  `store.roomAmenitiesFor` directo. */
   function offeredRoomAmenities(rt: RoomTypeRate) {
-    return store.roomAmenitiesFor(rt.id).filter((a) => !isCribAmenityKey(a.key, a.name))
+    return store.roomAmenitiesFor(rt.id)
   }
 
   /** ¿Corresponde mostrar el checklist de amenidades de la habitación en ESTA tarjeta? Sí apenas
    *  el tipo tenga catálogo (alguna habitación del tipo con una amenidad personalizada activa,
-   *  sin contar la cuna) — NO depende de la composición ni de la política de niños. Centralizado
+   *  cuna incluida) — NO depende de la composición ni de la política de niños. Centralizado
    *  acá para que RoomsStep.vue y BookingModal.vue no diverjan. */
   function shouldOfferRoomAmenities(rt: RoomTypeRate): boolean {
     return offeredRoomAmenities(rt).length > 0
@@ -191,15 +149,19 @@ export function useGuestComposer() {
     return roomAmenityKeys(rt).includes(key)
   }
 
-  /** Tilda/destilda una amenidad del catálogo del tipo para esta tarjeta. Keys que el tipo no
-   *  ofrece se ignoran (nunca se guarda algo que el hotel no publicó para ese tipo), y la cuna
-   *  también: sólo entra por `setNeedsCrib`. */
+  /** Tilda/destilda una amenidad del catálogo del tipo para esta tarjeta — la cuna incluida
+   *  (#341: entra y sale por acá como cualquier otra). Keys que el tipo no ofrece se ignoran
+   *  (nunca se guarda algo que el hotel no publicó para ese tipo). Tras cada cambio `needsCrib`
+   *  se recalcula como espejo de las keys: true sólo con una key cuna tildada. Destildar la
+   *  última key deja el estado exactamente como el fresco (sin `roomAmenityKeys: []` colgando). */
   function toggleRoomAmenity(rt: RoomTypeRate, key: string): void {
-    if (isCribAmenityKey(key)) return
     if (!store.roomAmenitiesFor(rt.id).some((a) => a.key === key)) return
     const c = composer(rt)
     const current = c.roomAmenityKeys ?? []
-    c.roomAmenityKeys = current.includes(key) ? current.filter((x) => x !== key) : [...current, key]
+    const next = current.includes(key) ? current.filter((x) => x !== key) : [...current, key]
+    if (next.length > 0) c.roomAmenityKeys = next
+    else delete c.roomAmenityKeys
+    c.needsCrib = hasCribKeySelected(rt, next)
   }
 
   /** Σ precio de las amenidades de habitación tildadas en esta tarjeta (para el "+ $X"), cuna
@@ -350,15 +312,13 @@ export function useGuestComposer() {
   async function addComposedRoom(rt: RoomTypeRate): Promise<void> {
     if (!canAddComposition(rt)) return
     const c = composer(rt)
-    // Tarea 22 — mismo gateo que el backend (defensa en profundidad EN LOS DOS LADOS): sin bebé
-    // en la composición final, o sin que el tipo ofrezca `custom:cuna`, no se manda nada, sin
-    // importar qué haya quedado tildado. Sí/No únicamente: `cribCount` es siempre 1 o 0, nunca
-    // una cantidad elegida por el huésped.
-    const needsCrib = shouldOfferCrib(rt) && c.needsCrib
-    // REQ-01 (#290) — viaja lo tildado (el store descarta keys que el tipo ya no ofrezca). La key
-    // de la cuna sigue a `needsCrib`: sin cuna pedida no viaja, aunque haya quedado en el estado
-    // (#292, espejo de lo que el backend fuerza/quita según su propio `needsCrib`).
-    const roomAmenityKeysToSend = roomAmenityKeys(rt).filter((k) => !isCribAmenityKey(k) || needsCrib)
+    // REQ-01 (#290) — viaja lo tildado, cuna incluida (#341: sin gate por bebé, igual que el
+    // backend; el store descarta keys que el tipo ya no ofrezca).
+    const roomAmenityKeysToSend = roomAmenityKeys(rt)
+    // #341 — `needsCrib` es espejo de la key cuna tildada (contra el catálogo VIVO del tipo: si
+    // la cuna dejó de ofrecerse entre medio, tampoco viaja `needsCrib`). Sí/No únicamente:
+    // `cribCount` es siempre 1 o 0, nunca una cantidad elegida por el huésped.
+    const needsCrib = hasCribKeySelected(rt, roomAmenityKeysToSend)
     // MR-03 (#268) — si el código elegido ya no está activo (catálogo cambiado entre medio), viaja
     // 'room_only': nunca se agrega una línea con un régimen que el backend rechazaría.
     const chosenMealPlan = mealPlanCode(rt)
@@ -385,9 +345,10 @@ export function useGuestComposer() {
    *
    * Devuelve `false` sin tocar nada si el tipo ya no está en `ratesResponse` (cotización vieja) o
    * si la línea es del flujo legacy de ocupación plana (sin `adults`/`childrenAges`): no hay
-   * composición que recuperar. `roomAmenityKeys` (#290: cama extra; #292: `custom:cuna` cuando la
-   * línea pidió cuna) se omite cuando está vacío para que el estado siga siendo exactamente
-   * `{adults, ages, needsCrib}` (mismo criterio que `freshComposerState`).
+   * composición que recuperar. `roomAmenityKeys` (#290: cama extra; #292/#341: la key cuna
+   * cuando la línea la tenía tildada) se omite cuando está vacío para que el estado siga siendo
+   * exactamente `{adults, ages, needsCrib}` (mismo criterio que `freshComposerState`). `needsCrib`
+   * vuelve como espejo: de `line.needsCrib` o de la key cuna en el snapshot de la línea.
    */
   function editCartLine(line: CartLine): boolean {
     const rt = (store.ratesResponse?.roomTypes ?? []).find((r) => r.id === line.roomType)
@@ -396,7 +357,7 @@ export function useGuestComposer() {
     composerState[rt.id] = {
       adults: line.adults,
       ages: [...line.childrenAges],
-      needsCrib: !!line.needsCrib,
+      needsCrib: !!line.needsCrib || (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name)),
       ...(keys.length > 0 ? { roomAmenityKeys: keys } : {}),
       // MR-03 (#268) — el régimen elegido vuelve al composer: si no, al re-agregar la línea se
       // perdía en silencio (y con él su cobro). `room_only` se omite, igual que los otros opcionales.
@@ -410,12 +371,10 @@ export function useGuestComposer() {
     composer, setAdults, setChildrenCount, setChildAge,
     composition, matchedRow, composedPrice, composedPricePerNight,
     canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
-    childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
-    // #292 — precio de `custom:cuna` del tipo, para "¿Necesita cuna? (+ $X)".
-    cribPrice,
+    childAgeClassification, babiesCount,
     // REQ-02 (#234)
     editCartLine,
-    // REQ-01 (#290)
+    // REQ-01 (#290); #341 — la cuna entra por acá como una amenidad más.
     roomAmenityKeys, offeredRoomAmenities, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity,
     composedRoomAmenitiesTotal,
     // MR-03 (#268) — régimen por habitación.

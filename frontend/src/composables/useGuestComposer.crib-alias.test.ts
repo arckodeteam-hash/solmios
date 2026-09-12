@@ -1,8 +1,9 @@
-// useGuestComposer.crib-alias.test.ts — #292 (revisión del PR #329): la cuna se reconocía SOLO por
-// el literal `custom:cuna`. El slug lo deriva el backend del NOMBRE que cargó el hotel, así que un
-// tipo que publica "Cuna para bebé" (`custom:cuna_para_bebe`), "Crib" (`custom:crib`) o "Berço"
-// (`custom:berco`) no ofrecía "¿Necesita cuna?" y esa fila caía al checklist genérico. Ahora
-// `isCribAmenityKey` (utils/crib-amenity.ts) decide, y la key que viaja es la REAL del catálogo.
+// useGuestComposer.crib-alias.test.ts — #292 (revisión del PR #329) / #341: la cuna se reconocía
+// SOLO por el literal `custom:cuna`. El slug lo deriva el backend del NOMBRE que cargó el hotel,
+// así que un tipo que publica "Cuna para bebé" (`custom:cuna_para_bebe`), "Crib" (`custom:crib`)
+// o "Berço" (`custom:berco`) tiene que reconocerse igual (`isCribAmenityKey`, utils/crib-amenity.ts)
+// para que `needsCrib` sea espejo de esa key. Desde #341 la cuna entra por el checklist genérico
+// como cualquier otra amenidad y la key que viaja es la REAL del catálogo.
 // Mismo setup que useGuestComposer.crib.test.ts.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -37,62 +38,69 @@ function seedStore(catalog: Record<string, PublicRoomAmenity[]>) {
   }
   return store
 }
-function withBaby(composer: ReturnType<typeof useGuestComposer>, room: RoomTypeRate) {
-  composer.setChildrenCount(room, 1)
-  composer.setChildAge(room, 0, 0)
-}
 
 beforeEach(() => { setActivePinia(createPinia()) })
 
-describe('useGuestComposer — la cuna por alias de nombre/slug (#292, revisión)', () => {
-  it('"Cuna para bebé" ($12) + bebé → se ofrece con SU precio y no aparece en el checklist genérico', () => {
+describe('useGuestComposer — la cuna por alias de nombre/slug (#292 revisión, #341 checklist)', () => {
+  it('"Cuna para bebé" ($12) SIN bebé → se lista en el checklist con la cama extra y se tilda con su key real', () => {
     seedStore({ double: [CRIB_ALIAS, EXTRA_BED] })
     const c = useGuestComposer()
     const room = rt('double')
-    withBaby(c, room)
-    expect(c.shouldOfferCrib(room)).toBe(true)
-    expect(c.cribPrice(room)).toBe(12)
-    expect(c.offeredRoomAmenities(room).map((a) => a.key)).toEqual(['custom:cama_extra'])
-    // El toggle genérico no la tilda: sólo entra por setNeedsCrib.
+    expect(c.offeredRoomAmenities(room).map((a) => a.key)).toEqual(['custom:cuna_para_bebe', 'custom:cama_extra'])
     c.toggleRoomAmenity(room, 'custom:cuna_para_bebe')
-    expect(c.roomAmenityKeys(room)).toEqual([])
+    expect(c.roomAmenityKeys(room)).toEqual(['custom:cuna_para_bebe'])
+    expect(c.composedRoomAmenitiesTotal(room)).toBe(12)
+    expect(c.composer(room).needsCrib).toBe(true) // reconocida como cuna por el nombre/slug
   })
 
-  it('setNeedsCrib(true) agrega la key REAL del catálogo (custom:crib) y la suma; (false) la quita', () => {
+  it("toggleRoomAmenity('custom:crib') tilda la key REAL del catálogo y la suma; destildar la quita y needsCrib vuelve a false", () => {
     seedStore({ double: [CRIB_EN] })
     const c = useGuestComposer()
     const room = rt('double')
-    withBaby(c, room)
-    c.setNeedsCrib(room, true)
+    c.toggleRoomAmenity(room, 'custom:crib')
     expect(c.roomAmenityKeys(room)).toEqual(['custom:crib'])
     expect(c.composedRoomAmenitiesTotal(room)).toBe(8)
-    c.setNeedsCrib(room, false)
+    expect(c.composer(room).needsCrib).toBe(true)
+    c.toggleRoomAmenity(room, 'custom:crib')
     expect(c.roomAmenityKeys(room)).toEqual([])
     expect(c.composedRoomAmenitiesTotal(room)).toBe(0)
+    expect(c.composer(room).needsCrib).toBe(false)
   })
 
-  it('addComposedRoom: la línea lleva needsCrib y el snapshot con la key real "Cuna para bebé" a 12', async () => {
+  it("el literal 'custom:cuna' NO sirve para tildar un alias: la key tiene que ser la del catálogo", () => {
+    seedStore({ double: [CRIB_ALIAS] })
+    const c = useGuestComposer()
+    const room = rt('double')
+    c.toggleRoomAmenity(room, 'custom:cuna')
+    expect(c.roomAmenityKeys(room)).toEqual([])
+    expect(c.composer(room).needsCrib).toBe(false)
+  })
+
+  it('addComposedRoom: la línea lleva needsCrib/cribCount:1 y el snapshot con la key real "Cuna para bebé" a 12', async () => {
     const store = seedStore({ double: [CRIB_ALIAS] })
     const c = useGuestComposer()
     const room = rt('double')
-    withBaby(c, room)
-    c.setNeedsCrib(room, true)
+    c.toggleRoomAmenity(room, 'custom:cuna_para_bebe')
     await c.addComposedRoom(room)
     expect(store.cart[0]!.needsCrib).toBe(true)
+    expect(store.cart[0]!.cribCount).toBe(1)
     expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cuna_para_bebe', name: 'Cuna para bebé', price: 12 }])
     expect(store.roomAmenitiesTotal).toBe(12)
     expect(store.subtotal).toBe(112)
     // editCartLine la devuelve a la tarjeta con la misma key real.
     expect(c.editCartLine(store.cart[0]!)).toBe(true)
-    expect(c.composer(room)).toEqual({ adults: 1, ages: [0], needsCrib: true, roomAmenityKeys: ['custom:cuna_para_bebe'] })
+    expect(c.composer(room)).toEqual({ adults: 1, ages: [], needsCrib: true, roomAmenityKeys: ['custom:cuna_para_bebe'] })
   })
 
-  it('un tipo sin ninguna amenidad cuna (sólo "Cunas" o "Cama extra") no la ofrece', () => {
+  it('un tipo sin ninguna amenidad cuna (sólo "Cunas" o "Cama extra") las lista igual pero tildarlas no enciende needsCrib', () => {
     seedStore({ double: [{ key: 'custom:cunas', name: 'Cunas', price: 1 }, EXTRA_BED] })
     const c = useGuestComposer()
     const room = rt('double')
-    withBaby(c, room)
-    expect(c.shouldOfferCrib(room)).toBe(false)
     expect(c.offeredRoomAmenities(room)).toHaveLength(2)
+    c.toggleRoomAmenity(room, 'custom:cunas')
+    c.toggleRoomAmenity(room, 'custom:cama_extra')
+    expect(c.roomAmenityKeys(room)).toEqual(['custom:cunas', 'custom:cama_extra'])
+    expect(c.composedRoomAmenitiesTotal(room)).toBe(21)
+    expect(c.composer(room).needsCrib).toBe(false)
   })
 })
