@@ -224,7 +224,8 @@ export class ReservasController {
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
       if (e.name === 'AuthError') return { status: 403, body: { error: e.message } }
       if (e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
-      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      // `details.reason` (p. ej. `no_room_assigned`, #258) viaja como en assign-room: el panel decide qué ofrecer.
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message, details: e.details ?? null } }
       return { status: 500, body: { error: e.message } }
     }
   }
