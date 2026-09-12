@@ -326,6 +326,32 @@ describe('REQ-HAC-05 — createPublicBookingGroup crea N filas del TIPO sin unid
     expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'familiar')).toBe(true)
   })
 
+  // Revisión #260 — el pool de capacidad arranca con las unidades físicamente LIBRES en las
+  // fechas: una unidad con reserva ASIGNADA que solapa (o bloqueada) no vende su capacidad.
+  it('(h7) la grande OCUPADA por una reserva asignada que solapa → línea "para 4" ×1 → 409 (sólo queda la chica)', async () => {
+    const { orm, tables } = makeDb({
+      rooms: familiarChicaYGrande(),
+      reservations: [{ ...unassigned('a1', 'familiar'), roomId: 'f-grande' }],
+    })
+    const res = await createPublicBookingGroup(orm, { ...BASE_BODY, rooms: [{ roomType: 'familiar', adults: 4, quantity: 1 }] })
+    expect(res.status).toBe(409)
+    expect(res.body.available).toBe(0)
+    expect(res.body.error).toContain('con capacidad para 4 huésped(es)')
+    expect(tables.Reservations).toHaveLength(1) // sólo la preexistente
+    expect(tables.Groups).toHaveLength(0)
+  })
+
+  it('(h8) espejo: la grande ocupada por una reserva asignada de fechas que NO solapan → "para 4" ×1 → 201', async () => {
+    const { orm, tables } = makeDb({
+      rooms: familiarChicaYGrande(),
+      reservations: [{ ...unassigned('a1', 'familiar'), roomId: 'f-grande', checkIn: '2026-09-12', checkOut: '2026-09-14' }],
+    })
+    const res = await createPublicBookingGroup(orm, { ...BASE_BODY, rooms: [{ roomType: 'familiar', adults: 4, quantity: 1 }] })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations.filter((r: any) => r.id !== 'a1')).toHaveLength(1)
+    expect(tables.Reservations.find((r: any) => r.id !== 'a1').roomId).toBeNull()
+  })
+
   it('tipo inexistente en el hotel → 404, nada creado', async () => {
     const { orm, tables } = makeDb({ rooms: threeDeluxe() })
     const res = await createPublicBookingGroup(orm, { ...BASE_BODY, rooms: [{ roomType: 'suite', adults: 2, quantity: 1 }] })

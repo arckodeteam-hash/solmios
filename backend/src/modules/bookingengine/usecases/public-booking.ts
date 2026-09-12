@@ -71,7 +71,7 @@
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
-import { availableOfType, typeAvailabilityPortFromOrm } from '../../../shared/usecases/type-availability'
+import { availableOfType, typeAvailabilityPortFromOrm, unoccupiedSellableRooms } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
@@ -547,13 +547,19 @@ export async function createPublicBookingDirect(
     return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
   }
 
-  // Perfil del tipo (a partir de sus unidades VENDIBLES): capacidad = la MAYOR entre ellas (la
-  // reserva entra si entra en alguna; recepción elige cuál al asignar), `maxAdults`/`maxChildren`
-  // ídem, y el precio de fallback = el MÍNIMO `basePrice` — mismo agregado que `/rates`
-  // (`availability.ts#groupByType`). La política `room_type_capacity` del hotel, si existe, pisa
-  // los tres campos de capacidad (`effectiveRoomCapacity`).
+  // Perfil del tipo (a partir de sus unidades VENDIBLES): el precio de fallback = el MÍNIMO
+  // `basePrice` — mismo agregado que `/rates` (`availability.ts#groupByType`).
   const typeProfile = roomTypeProfile(roomType, typeAvail.sellableRooms, totalGuests)
-  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, typeProfile)
+  // Revisión #260 — la CAPACIDAD, en cambio, se valida contra las unidades del tipo que están
+  // físicamente LIBRES para estas fechas (`unoccupiedSellableRooms`: sin reserva bloqueante
+  // ASIGNADA que solape ni bloqueo): capacidad = la MAYOR entre ellas (la reserva entra si entra
+  // en alguna; recepción elige cuál al asignar), `maxAdults`/`maxChildren` ídem. Calcularla sobre
+  // TODAS las vendibles vendía capacidad de una unidad ya ocupada (unidad de 2 libre + unidad de
+  // 6 con reserva asignada → 5 adultos pasaban con 201 y nadie los podía alojar). Las reservas
+  // SIN asignar no pinean unidad y no descuentan de acá: ya las contó `available`. La política
+  // `room_type_capacity` del hotel, si existe, pisa los tres campos (`effectiveRoomCapacity`).
+  const capacityProfile = roomTypeProfile(roomType, unoccupiedSellableRooms(typeAvail), totalGuests)
+  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, capacityProfile)
   if (!fitsRoomCapacity(roomCapacity, childComposition)) {
     return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }
   }

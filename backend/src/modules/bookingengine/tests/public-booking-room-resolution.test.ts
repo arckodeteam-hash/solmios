@@ -20,7 +20,9 @@
 //      `roomType` → 404 "Habitación no encontrada".
 //  (e) 400 cuando no viene ni `roomId` ni `roomType`.
 //  (f) capacidad contra el PERFIL del tipo (la mayor unidad vendible): no entra → 409; entra en
-//      alguna → 201 sin unidad; sin `capacity` en la fila no bloquea.
+//      alguna → 201 sin unidad; sin `capacity` en la fila no bloquea. Revisión #260 (f5-f9): el
+//      perfil se calcula sólo sobre las unidades físicamente LIBRES en las fechas — una unidad
+//      con reserva asignada que solapa o bloqueada no vende su capacidad; una sin asignar no pinea.
 //  (g) precio: fallback = MÍNIMO `basePrice` entre las unidades vendibles del tipo.
 //  (h) carrera: el re-chequeo por tipo dentro de la tx rebota con 409 si el tipo se agotó.
 import { describe, it, expect } from 'bun:test'
@@ -253,6 +255,58 @@ describe('createPublicBookingDirect — alta por TIPO sin unidad (REQ-HAC-05 #26
     const { orm } = makeOrm({ rooms: [double('r1')] })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 6, children: 0 })
     expect(res.status).toBe(201)
+  })
+
+  // Revisión #260 — el perfil de CAPACIDAD se calcula sobre las unidades del tipo físicamente
+  // libres para las fechas, no sobre todas las vendibles: la capacidad de una unidad ocupada
+  // (reserva ASIGNADA que solapa, o bloqueo) no se vende.
+  const familiar = [
+    { id: 'r-chica', hotelId: 'h1', type: 'familiar', basePrice: 80, capacity: 2, status: 'available' },
+    { id: 'r-grande', hotelId: 'h1', type: 'familiar', basePrice: 120, capacity: 6, status: 'available' },
+  ]
+  const assignedToGrande = (over: any = {}) => active({ roomType: 'familiar', roomId: 'r-grande', checkIn: '2026-08-10', checkOut: '2026-08-12', ...over })
+
+  it('(f5) unidad chica libre + unidad grande OCUPADA por reserva asignada que solapa → 5 adultos → 409, no crea nada', async () => {
+    const { orm, created } = makeOrm({ rooms: familiar, reservations: [assignedToGrande()] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('admite hasta 2')
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
+  })
+
+  it('(f6) espejo: la grande ocupada por una reserva de fechas que NO solapan → 5 adultos → 201 sin unidad', async () => {
+    const { orm } = makeOrm({
+      rooms: familiar,
+      reservations: [assignedToGrande({ checkIn: '2026-08-12', checkOut: '2026-08-14' })],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
+    expect(res.status).toBe(201)
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('familiar')
+  })
+
+  it('(f7) la grande ocupada por una reserva asignada cancelled/no_show no descuenta capacidad → 201', async () => {
+    const { orm } = makeOrm({ rooms: familiar, reservations: [assignedToGrande({ status: 'cancelled' })] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
+    expect(res.status).toBe(201)
+  })
+
+  it('(f8) una reserva SIN asignar del tipo no pinea unidad: 5 adultos entran (la grande sigue libre) → 201', async () => {
+    const { orm } = makeOrm({ rooms: familiar, reservations: [assignedToGrande({ roomId: null })] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
+    expect(res.status).toBe(201)
+    expect(res.body.reservation.roomId).toBeNull()
+  })
+
+  it('(f9) la grande BLOQUEADA (room_blocks) en una noche de la estadía tampoco vende su capacidad → 409', async () => {
+    const { orm, created } = makeOrm({
+      rooms: familiar,
+      blocks: [{ id: 'b1', hotelId: 'h1', roomId: 'r-grande', startDate: '2026-08-11', endDate: '2026-08-11' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('admite hasta 2')
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
   })
 
   // ─── Precio ────────────────────────────────────────────────────────────────────────────────

@@ -53,7 +53,7 @@
 import type { RepositoryAdapter } from 'arckode-framework'
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { readHotelTaxes, taxLinesOn, sumTaxLines } from './hotel-taxes'
-import { availableOfType, countAvailableOfType, typeAvailabilityPortFromOrm } from '../../../shared/usecases/type-availability'
+import { availableOfType, countAvailableOfType, typeAvailabilityPortFromOrm, unoccupiedSellableRooms } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
@@ -280,7 +280,8 @@ export async function createPublicBookingGroup(
   // + Deluxe para 4 ×1"): la disponibilidad por tipo se lee de la DB una vez por línea y no ve
   // lo que las líneas previas todavía no escribieron.
   const claimedByType = new Map<string, number>()
-  // Revisión #260 — pool en memoria de unidades vendibles del tipo (copia de `sellableRooms`) del
+  // Revisión #260 — pool en memoria de unidades vendibles del tipo que están físicamente LIBRES
+  // para las fechas (`unoccupiedSellableRooms`: sin reserva asignada que solape ni bloqueo) del
   // que cada línea "reclama" `quantity` unidades por capacidad (smallest-fit, ver más abajo).
   // NO se persiste nada por unidad: sólo evita que dos líneas del mismo POST cuenten la misma
   // unidad "grande" dos veces. El techo de unidades reclamables sigue siendo `typeFree`.
@@ -438,7 +439,11 @@ export async function createPublicBookingGroup(
     // de 2 y una de 4 entra en cualquier orden (la de 2 consume primero la chica), y dos líneas
     // "para 4" con una sola unidad de 4 rebotan con 409 aunque el tipo tenga 2 unidades libres.
     // `perUnitPrice`/fallback siguen saliendo del perfil del TIPO, no de la unidad reclamada.
-    const capacityPool = capacityPoolByType.get(typeKey) ?? [...typeAvail.sellableRooms]
+    // El pool arranca con las unidades físicamente LIBRES para las fechas (no todas las
+    // vendibles): una unidad con reserva asignada que solapa o bloqueada no puede recibir la
+    // asignación después, así que su capacidad no se vende. Las reservas sin asignar no pinean
+    // unidad y ya las descontó `typeFree`.
+    const capacityPool = capacityPoolByType.get(typeKey) ?? unoccupiedSellableRooms(typeAvail)
     const effectiveCapacityOf = (r: any) => effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuestsForLine), maxAdults: r.maxAdults, maxChildren: r.maxChildren })
     const fittingRooms = capacityPool
       .filter((r: any) => fitsRoomCapacity(effectiveCapacityOf(r), composition))

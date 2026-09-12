@@ -96,6 +96,12 @@ export interface TypeAvailabilityResult {
    * `excludeReservationId`). Sólo para los callers que aún eligen unidad física; NO decide venta.
    */
   busyRoomIds: Set<string>
+  /**
+   * Revisión #260 — ids de unidades del tipo con un bloqueo (`room_blocks`) que toca alguna noche
+   * de la estadía. Como `busyRoomIds`: informa qué unidades NO están físicamente libres; no
+   * decide venta (eso ya lo cuenta `available`).
+   */
+  blockedRoomIds: Set<string>
 }
 
 /** Bloqueo de una unidad (`room_blocks`): `[startDate, endDate]` inclusivo. */
@@ -166,7 +172,32 @@ export function countAvailableOfType(
     if (r.roomId && typeRoomIds.has(String(r.roomId)) && stayOverlaps(r, checkIn, checkOut)) busyRoomIds.add(String(r.roomId))
   }
 
-  return { rooms: sellableRooms.length, booked, available, perNight, sellableRooms, busyRoomIds }
+  // Bloqueo `[startDate, endDate]` inclusivo vs. estadía `[checkIn, checkOut)`: toca alguna noche
+  // si empieza antes del check-out y termina en o después del check-in.
+  const blockedRoomIds = new Set<string>()
+  const stayStart = day(checkIn)
+  const stayEnd = day(checkOut)
+  for (const b of relBlocks) {
+    if (b.startDate < stayEnd && b.endDate >= stayStart) blockedRoomIds.add(String(b.roomId))
+  }
+
+  return { rooms: sellableRooms.length, booked, available, perNight, sellableRooms, busyRoomIds, blockedRoomIds }
+}
+
+/**
+ * Revisión #260 — unidades VENDIBLES del tipo que están físicamente libres TODA la estadía: sin
+ * reserva bloqueante ASIGNADA que solape (`busyRoomIds`) ni bloqueo (`blockedRoomIds`). Es el
+ * conjunto sobre el que hay que calcular el perfil de CAPACIDAD de un alta por tipo
+ * (`roomTypeProfileOf`): una reserva sin unidad se asignará después a una de ÉSTAS, así que si
+ * ninguna admite la composición pedida, no hay asignación posible aunque `available ≥ 1` (el
+ * ejemplo: unidad de 2 libre + unidad de 6 ocupada → 5 adultos no entran). Las reservas SIN
+ * asignar no pinean unidad y por eso no descuentan de acá — ya las cuenta `available`.
+ */
+export function unoccupiedSellableRooms(result: Pick<TypeAvailabilityResult, 'sellableRooms' | 'busyRoomIds' | 'blockedRoomIds'>): any[] {
+  return (result.sellableRooms ?? []).filter((r) => {
+    const id = String(r?.id)
+    return !result.busyRoomIds.has(id) && !result.blockedRoomIds.has(id)
+  })
 }
 
 /** Unidades tomadas la noche `d` (misma regla que `computeDailyAvailability`, sin el clamp). */
