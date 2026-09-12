@@ -69,6 +69,10 @@ export const CreatePublicBookingSchema: Record<string, ValidationRule> = {
   // Tarea 22 (Cuna, 2026-09-09) — escalares simples, el framework los valida sin problema.
   needsCrib: { type: 'boolean' as const },
   cribCount: { type: 'number' as const, min: 0 },
+  // MR-03 (#268) — código del régimen elegido ('room_only' | 'breakfast' | 'half_board' |
+  // 'all_inclusive'); el usecase lo resuelve contra `meal_plans` del hotel (precio del server).
+  // En el flujo de grupo va DENTRO de `rooms[]` (se normaliza en el usecase, no acá).
+  mealPlan: { type: 'string' as const, max: 40 },
 }
 
 // ─── Eventos ────────────────────────────────────────────

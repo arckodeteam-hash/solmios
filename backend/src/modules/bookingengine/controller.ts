@@ -406,7 +406,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, mealPlans: this.mealPlanRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -453,7 +453,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, mealPlans: this.mealPlanRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -497,6 +497,8 @@ export class BookingengineController {
         // otro para las mismas fechas en cualquier hotel con temporadas cargadas.
         seasonAssignments: this.seasonAssignmentsRepo, roomRates: this.roomRatesRepo,
         rateOverrides: this.rateOverridesRepo, seasons: this.seasonsCatalogRepo,
+        // MR-03 (#268) — regímenes activos con `totalForStay` para el widget.
+        mealPlans: this.mealPlanRepo,
       },
       String(req.params?.slug || ''),
       {

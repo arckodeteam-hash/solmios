@@ -157,7 +157,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     const b = res.body.totalBreakdown
     // 100 × 2 noches = 200 subtotal, 0 descuento, 0 upsells, 18% tax sobre 200 = 36, total 236.
-    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
+    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
   })
 
   it('#88: dos impuestos → una línea por impuesto (nombre, %, importe), taxes = suma exacta, y la reserva guarda el desglose', async () => {
@@ -200,7 +200,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 10% = 20, taxable 180, tax 18% × 180 = 32.4, total 212.4.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
+      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
     })
     // B2 fix — uses fue incrementado atómicamente vía updateMany (optimistic lock).
     const promoUpdate = updateManyCalls.find((u) => u.model === 'PromoCodes')
@@ -228,7 +228,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 50, taxable 150, tax 0%, total 150.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
+      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
     })
     expect(updateManyCalls.find((u) => u.model === 'PromoCodes')?.changes.uses).toBe(1)
   })
@@ -300,7 +300,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // room: 100×2=200, upsells: 15×2 + 30×1 = 60, subtotal 260, tax 10% × 260 = 26, total 286.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 260, promoDiscount: 0, upsellsTotal: 60, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
+      subtotal: 260, promoDiscount: 0, upsellsTotal: 60, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
     })
   })
 
@@ -324,7 +324,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200 + 15 = 215, no tax, total 215.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 215, promoDiscount: 0, upsellsTotal: 15, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
+      subtotal: 215, promoDiscount: 0, upsellsTotal: 15, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
     })
   })
 
@@ -410,7 +410,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(reservation.row.promoCode).toBe('ANYTHING')
     // No se aplica descuento (no se procesó) → total = subtotal + tax sobre subtotal.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
+      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
     })
   })
 })

@@ -42,7 +42,8 @@ import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from '.
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
-import { normalizeChildAmenityIds, resolveChildAmenityLines } from './public-booking'
+import { normalizeChildAmenityIds, resolveChildAmenityLines, mealPlanNote } from './public-booking'
+import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
@@ -80,6 +81,10 @@ export interface RoomLineInput {
    *  por línea. Se prefieren las unidades del tipo que las ofrecen y cada unidad física elegida
    *  resuelve precio contra SUS filas `RoomAmenities` (snapshot propio por fila). */
   roomAmenities?: Array<{ key: string }>
+  /** MR-03 (#268) — código del régimen de ESTA línea (cada habitación del grupo elige el suyo).
+   *  Se resuelve contra `meal_plans` del hotel (precio del server) con las personas de la línea;
+   *  cada unidad física de la línea lo lleva (total de la línea = unitario × quantity). */
+  mealPlan?: string
 }
 
 class RoomTakenConcurrentlyError extends Error {
@@ -112,12 +117,16 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     const childAmenities = normalizeChildAmenityIds(r?.childAmenities).map((id) => ({ id }))
     // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
     const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities).map((key) => ({ key }))
+    // MR-03 (#268) — escalar por línea (mismo `max: 40` que el schema del flujo de 1 habitación);
+    // la resolución contra el catálogo va más abajo, con la composición de la línea.
+    const mealPlan = typeof r?.mealPlan === 'string' ? r.mealPlan.trim().slice(0, 40) : ''
     if (!roomType) continue
     out.push({
       roomType, adults, children, quantity, ...(childrenAges.length > 0 ? { childrenAges } : {}),
       ...(needsCrib ? { needsCrib } : {}),
       ...(childAmenities.length > 0 ? { childAmenities } : {}),
       ...(roomAmenities.length > 0 ? { roomAmenities } : {}),
+      ...(mealPlan ? { mealPlan } : {}),
     })
   }
   return out.length > 0 ? out : null
@@ -236,6 +245,11 @@ export async function createPublicBookingGroup(
     // cobra el precio de SUS filas `RoomAmenities`); `roomAmenitiesTotal` es la Σ de la línea.
     roomAmenitiesByRoom: Map<string, RoomAmenityLine[]>
     roomAmenitiesTotal: number
+    // MR-03 (#268) — régimen de la LÍNEA (`null` = solo alojamiento): `mealPlan.total` es el de
+    // UNA unidad (persons de la línea × noches); `mealPlanTotal` es × quantity. Cada fila física
+    // persiste el snapshot unitario.
+    mealPlan: MealPlanLine | null
+    mealPlanTotal: number
   }
   const resolvedLines: ResolvedLine[] = []
 
@@ -252,6 +266,19 @@ export async function createPublicBookingGroup(
     childAmenitiesCatalog = ((await extraDeps.childAmenities.findMany({ hotelId })) as any[]) ?? []
   } else if (anyLineHasChildAmenities && !extraDeps?.childAmenities) {
     logger?.warn('createPublicBookingGroup: childAmenities en rooms[] sin extraDeps.childAmenities cableado — se ignoran (no se puede validar ni cotizar)', { hotelId })
+  }
+
+  // MR-03 (#268) — catálogo de regímenes del hotel, UNA lectura para todo el grupo. Solo si alguna
+  // línea pidió uno distinto de `room_only`; sin repo cableado no se puede validar → se rechaza
+  // (a diferencia de las amenidades: el régimen cambia el precio que el huésped vio).
+  const anyLineHasMealPlan = lines.some((l) => !!l.mealPlan && l.mealPlan !== ROOM_ONLY_CODE)
+  let mealPlansCatalog: any[] = []
+  if (anyLineHasMealPlan) {
+    if (!extraDeps?.mealPlans) {
+      logger?.warn('createPublicBookingGroup: mealPlan en rooms[] sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId })
+      return { status: 400, body: { error: 'meal_plan_unavailable' } }
+    }
+    mealPlansCatalog = ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? []
   }
 
   for (const [lineIndex, line] of lines.entries()) {
@@ -287,6 +314,21 @@ export async function createPublicBookingGroup(
     // línea declaró edades, o `line.adults` tal cual para un caller legacy — mismo criterio que
     // `public-booking.ts`.
     const pricingOccupancy = hasAges ? composition.chargeableOccupancy : line.adults
+
+    // ─── MR-03 (#268) — Régimen POR LÍNEA: persons = adultos + niños con plaza (bebés y libres
+    // no pagan), mismo criterio que public-booking.ts. Cualquier línea inválida corta ANTES de
+    // la tx (todo o nada, igual que el resto del grupo).
+    let lineMealPlan: MealPlanLine | null = null
+    if (line.mealPlan && line.mealPlan !== ROOM_ONLY_CODE) {
+      const resolved = resolveMealPlanLine(
+        mealPlansCatalog, line.mealPlan, hotelId, composition.effectiveAdults + composition.payingChildren, nights,
+      )
+      if (!resolved.ok) {
+        return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: line.mealPlan, roomType: line.roomType } }
+      }
+      lineMealPlan = resolved.line
+    }
+    const lineMealPlanTotal = round2((lineMealPlan?.total ?? 0) * line.quantity)
 
     const closedForOccupancy = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, pricingOccupancy)
     if (isRoomTypeClosed(closedForOccupancy, line.roomType)) {
@@ -401,6 +443,7 @@ export async function createPublicBookingGroup(
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
       childAmenities: lineChildAmenities, childAmenitiesTotal: lineChildAmenitiesTotal,
       roomAmenitiesByRoom, roomAmenitiesTotal: round2(lineRoomAmenitiesTotal),
+      mealPlan: lineMealPlan, mealPlanTotal: lineMealPlanTotal,
     })
   }
 
@@ -411,6 +454,8 @@ export async function createPublicBookingGroup(
   const childAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.childAmenitiesTotal, 0))
   // REQ-01 (#290) — Σ de las amenidades de habitación de TODAS las unidades de todas las líneas.
   const roomAmenitiesTotal = round2(resolvedLines.reduce((s, l) => s + l.roomAmenitiesTotal, 0))
+  // MR-03 (#268) — Σ del régimen de TODAS las líneas (cada una ya × su quantity).
+  const mealPlanTotal = round2(resolvedLines.reduce((s, l) => s + l.mealPlanTotal, 0))
 
   // ─── Upsells (mismo criterio que el flujo de 1 habitación: Σ price × qty, por GRUPO no por línea) ──
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
@@ -437,7 +482,7 @@ export async function createPublicBookingGroup(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
+    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal + mealPlanTotal
     const result = await validatePromoCode({ promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal)
     if (!result.valid) {
       return { status: 400, body: { error: 'promo_invalid', promoReason: result.reason ?? 'not_found' } }
@@ -448,7 +493,7 @@ export async function createPublicBookingGroup(
   }
 
   // Tarea 24 (#88): mismo lector y misma cuenta que public-booking.ts (impuesto por impuesto).
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal + mealPlanTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -462,6 +507,7 @@ export async function createPublicBookingGroup(
     upsellsTotal: round2(upsellsTotal),
     childAmenitiesTotal,
     roomAmenitiesTotal,
+    mealPlanTotal,
     taxes,
     taxBreakdown,
     total: totalAmount,
@@ -493,6 +539,11 @@ export async function createPublicBookingGroup(
       return `${l.roomType}: ${Array.from(byKey.entries()).map(([name, t]) => `${name}=${t.toFixed(2)}`).join(', ')}`
     })
   if (roomAmenitiesSummary.length > 0) notesParts.push(`Amenidades habitación: ${roomAmenitiesSummary.join('; ')}`)
+  // MR-03 (#268) — una entrada por línea con régimen (el snapshot vive en `mealPlan*` de CADA
+  // fila); el importe es el UNITARIO de la línea, como el resto del vistazo por tipo.
+  for (const l of resolvedLines) {
+    if (l.mealPlan) notesParts.push(`${l.roomType}: ${mealPlanNote(l.mealPlan)}`)
+  }
   // Tarea 22 — mismo criterio que el resto: el detalle estructurado vive en las columnas propias
   // de CADA fila (needsCrib/cribCount), esto es solo para el vistazo rápido. Sí/No únicamente
   // (2026-09-09) — se lista qué tipos la pidieron, sin cantidad.
@@ -564,6 +615,13 @@ export async function createPublicBookingGroup(
             // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
             roomAmenities: line.roomAmenitiesByRoom.get(roomId) ?? [],
             roomAmenitiesTotal: round2((line.roomAmenitiesByRoom.get(roomId) ?? []).reduce((s, a) => s + a.total, 0)),
+            // MR-03 (#268) — snapshot UNITARIO del régimen de la línea (persons de ESTA línea,
+            // quantity 1) + `regime` con el mismo código para el modal/listado del panel.
+            mealPlan: line.mealPlan?.code ?? ROOM_ONLY_CODE,
+            mealPlanPriceMode: line.mealPlan?.priceMode ?? null,
+            mealPlanUnitPrice: line.mealPlan?.unitPrice ?? 0,
+            mealPlanTotal: line.mealPlan?.total ?? 0,
+            regime: line.mealPlan?.code ?? ROOM_ONLY_CODE,
             // Cada fila lleva SU propio importe (para que folios/reportes sumen bien) — el
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,
