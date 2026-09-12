@@ -169,7 +169,7 @@ export class ReservasService {
 
   async getExtendedDetail(id: string, currentUser: any): Promise<any> {
     const messageLogs = requireMessageLogSource(this.orchestrationDeps.listMessageLogs)
-    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs, this.userRepo)
+    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs, this.userRepo, this.orchestrationDeps.listPaymentAttempts) // REQ-RWP-02
   }
 
   // ── AUDIT TRAIL ────────────────────────────────────────────────────────

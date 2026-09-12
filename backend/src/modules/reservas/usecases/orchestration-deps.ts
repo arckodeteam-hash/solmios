@@ -29,6 +29,8 @@ export interface ReservasOrchestrationDeps {
   promoCodes?: PromoCodePort // FIX 2026-07-31 — connectors/reservas-promocodes.ts
   /** STR-3 — connectors/reservas-marketing.ts: `message_logs` es del módulo marketing. */
   listMessageLogs?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
+  /** REQ-RWP-02 — connectors/reservas-payment-gateways.ts: `payment_attempts` es de payment-gateways. */
+  listPaymentAttempts?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
   moneyPort?: ReservationMoneyPort // connectors/reservas-money.ts (tablas de otros módulos)
   /** SEC3-2/SEC3-3/RTC-8.7 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
   paymentRequestsCeiling?: PaymentRequestsCeilingPort

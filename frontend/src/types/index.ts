@@ -562,6 +562,29 @@ export interface ReservationPaymentEntry {
   createdAt: string
 }
 
+export type PaymentAttemptKind = 'checkout_created' | 'paid' | 'failed' | 'expired' | 'refunded' | 'pending'
+
+/** REQ-RWP-02 — espejo de backend shared/usecases/payment-attempt-view.ts */
+export interface PaymentAttemptView {
+  id: string
+  kind: PaymentAttemptKind
+  source: string
+  provider: string
+  mode: 'test' | 'live' | ''
+  providerRef: string
+  /** Unidades mayores (`amountMinor / 100`, redondeado a 2 decimales). */
+  amount: number
+  currency: string
+  failureCode: string
+  failureMessage: string
+  cardBrand: string
+  cardLast4: string
+  receiptUrl: string
+  /** Link al pago en el dashboard del proveedor. `''` si no se puede armar. */
+  dashboardUrl: string
+  occurredAt: string
+}
+
 export interface ReservationDetail {
   id: string
   hotelId: string
@@ -644,6 +667,8 @@ export interface ReservationDetail {
   checkOutTime?: string | null
   /** Movimientos de dinero de la reserva: cobros y devoluciones, del más reciente al más viejo. */
   paymentHistory?: ReservationPaymentEntry[]
+  /** REQ-RWP-02: intentos de cobro del gateway, del más reciente al más viejo. */
+  paymentAttempts?: PaymentAttemptView[]
   // F3 MisterPlan: condiciones + otros cobros + código de check-in digital
   gdprAccepted?: boolean
   marketingAccepted?: boolean

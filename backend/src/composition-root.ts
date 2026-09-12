@@ -432,6 +432,7 @@ import { reservasBookingengineConnector } from './connectors/reservas-bookingeng
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
 import { reservasMarketingConnector } from './connectors/reservas-marketing'
+import { reservasPaymentGatewaysConnector } from './connectors/reservas-payment-gateways'
 import { reservasDepositsConnector } from './connectors/reservas-deposits'
 // F3 3.8 (solmi-direct-booking) — Wallet pass al confirmar: bookingengine emite onBookingPaid
 // (mismo socket que ya cablea `bookingengine-payments`) → wallet-pass.generatePass orquesta
@@ -604,6 +605,9 @@ system.addConnector('reservas-opiniones', reservasOpinionesConnector)
 // DT-18: on_reservation (reserva confirmada) + post_checkout, en tiempo real — antes de este
 // connector NINGÚN código disparaba estos 2 de los 5 triggerEvent del enum de auto-messages.
 system.addConnector('reservas-marketing', reservasMarketingConnector)
+// REQ-RWP-02: el bloque "Pasarela de pago" del detalle de la reserva lee `payment_attempts` por
+// el puerto de payment-gateways (dueño de la tabla), nunca por import directo. Best-effort.
+system.addConnector('reservas-payment-gateways', reservasPaymentGatewaysConnector)
 // Libera el depósito/garantía en el checkout: reservas emite onReservationCheckedOut → payments
 // libera los holds 'held' de la reserva. Cierra el bug CONFIRMADO "el hold queda colgando" (el
 // checkout no tocaba deposits). Best-effort, no pisa a reservas-opiniones (sockets se componen).

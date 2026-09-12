@@ -6,6 +6,7 @@ import { reservationPaymentHistory, type PaymentHistoryEntry } from '../../../sh
 import { toMessageLogViews, type MessageLogSource } from './message-log'
 import { toReservationInvoiceViews, type ReservationInvoiceView } from './reservation-invoices'
 import { resolveChildPolicy, describeChildrenAges, type ChildAgeDescription } from '../../../shared/usecases/child-composition'
+import { toPaymentAttemptViews, type PaymentAttemptView } from '../../../shared/usecases/payment-attempt-view'
 
 export async function getExtendedDetail(
   repo: any, guestRepo: any, roomRepo: any, queries: ReservasQueries, id: string, currentUser: any,
@@ -13,6 +14,8 @@ export async function getExtendedDetail(
   listMessageLogs: MessageLogSource,
   /** Repo `Users` — resuelve quién registró cada cobro. Opcional: sin él el nombre va vacío. */
   userRepo?: { findMany(filter: Record<string, unknown>): Promise<any[]> },
+  /** REQ-RWP-02 — puerto a payment-gateways (dueño de `payment_attempts`). Opcional: sin él, `[]`. */
+  listPaymentAttempts?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>,
 ): Promise<any> {
   const r = await repo.findById(id) as any
   if (!r) throw new NotFoundError('Reserva no encontrada')
@@ -49,6 +52,16 @@ export async function getExtendedDetail(
     paymentHistory = history.entries
   } catch {
     // Se devuelve vacío: el modal muestra "sin movimientos" en vez de romperse.
+  }
+  // REQ-RWP-02 — Intentos de cobro en la pasarela (bloque "Pasarela de pago"). Es BITÁCORA, no
+  // dinero: no entra en `paid` ni en el pendiente. Best-effort a propósito: el detalle de la
+  // reserva no puede caerse porque payment-gateways no responda o el puerto no esté cableado.
+  let paymentAttempts: PaymentAttemptView[] = []
+  try {
+    const attempts = listPaymentAttempts ? await listPaymentAttempts(r.hotelId, r.id) : []
+    paymentAttempts = toPaymentAttemptViews(attempts as any[])
+  } catch {
+    // Vacío: el modal no muestra el bloque en vez de romper el detalle entero.
   }
   // REQ-FDR-01 (issue #252): el modal muestra e imprime la factura de la reserva. Se lee por el
   // MISMO puerto reserva→facturas con el que `paid` llega a `invoices` (`money-port.ts`), no
@@ -105,6 +118,8 @@ export async function getExtendedDetail(
     paymentState: paymentState(r, addons, paid),
     /** Movimientos de dinero de la reserva: cobros y devoluciones, con método y referencia. */
     paymentHistory,
+    /** REQ-RWP-02 — intentos de cobro en la pasarela (más reciente primero), proyectados. */
+    paymentAttempts,
     /** REQ-FDR-01 (#252) — facturas de la reserva, de la más reciente a la más vieja, proyectadas
      *  (número, estado, total, saldo, NCF). [] si no hay o si el puerto falló. */
     invoices,

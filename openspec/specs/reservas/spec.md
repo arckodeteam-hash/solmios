@@ -348,6 +348,29 @@ re-evalúa en vivo al cambiar la edad de un menor.
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
 
+### Requirement: Intentos de la pasarela en el detalle de la reserva (REQ-RWP-02)
+
+El detalle extendido (`GET /api/reservations/:id`) MUST devolver `paymentAttempts[]`: la
+bitácora `payment_attempts` (dueña: `payment-gateways`, REQ-RWP-01) proyectada a
+`PaymentAttemptView` (`shared/usecases/payment-attempt-view.ts`, función pura: `amount` en
+unidades mayores, `dashboardUrl` de Stripe según `mode`, `''` para otros proveedores), del
+más reciente al más viejo. `reservas` NO importa el módulo de pasarelas: lee por el puerto
+`orchestrationDeps.listPaymentAttempts` que cablea `connectors/reservas-payment-gateways.ts`.
+La lectura es best-effort: es bitácora, no dinero — un fallo del puerto NUNCA tumba el detalle.
+
+#### Scenario: El puerto de intentos falla
+
+- GIVEN una reserva y un puerto `listPaymentAttempts` que lanza (o no está cableado)
+- WHEN se pide `GET /api/reservations/:id`
+- THEN responde 200 con `paymentAttempts: []` y el resto del detalle intacto
+
+#### Scenario: Reserva web con un rechazo y un cobro
+
+- GIVEN `payment_attempts` con un `failed` (Stripe test, `failureMessage`) y un `paid` posterior
+- WHEN se pide el detalle
+- THEN `paymentAttempts[0]` es el `paid` y `[1]` el `failed` con su motivo, y el de Stripe test
+  trae `dashboardUrl` `https://dashboard.stripe.com/test/payments/<providerRef>`
+
 ### Requirement: Registrar pago manual con evidencia (REQ-RWP-06)
 
 `POST /api/reservas/:id/mark-paid` (permiso `billing:create` — con `POST /:id/invoice`, los dos únicos endpoints
