@@ -80,6 +80,57 @@ disponibilidad y esquema que la creación manual.
 - THEN se crea con `status:'pending'`, `channel:'direct'`, `currency:'USD'` (defaults)
 - AND se dispara el email de confirmación (`lifecycle-email.ts`)
 
+### Requirement: Un huésped = una ficha al crear la reserva (MR-08, #273)
+
+Toda creación de reserva que trae datos del huésped en lugar de un `guestId` MUST resolver
+la ficha con el helper compartido `shared/usecases/find-or-create-guest.ts`, nunca con un
+`create` directo en `Guests`: busca por `(hotelId, email lower/trim)`, después por
+`(hotelId, teléfono E.164)` (`shared/utils/phone-e164.ts`, comparando también los teléfonos
+guardados en cualquier formato) y sólo crea si no hay ninguna. Si la encuentra, reusa su id
+y completa `name`/`phone`/`email` SOLO cuando estaban vacíos — nunca pisa lo que el hotel
+cargó. El aislamiento es por `hotelId`: el mismo email en otro hotel es otra ficha.
+
+Lo usan los dos POST públicos del motor (`bookingengine/usecases/public-booking.ts`,
+`public-booking-group.ts`) DENTRO de su `orm.transaction`, y `POST /api/reservas`
+(`reservas/usecases/crud.ts` `createReservation`) cuando el panel manda `guestEmail`
+(opcionalmente `guestName`/`guestPhone`) sin `guestId`; esos tres campos NO se persisten en
+`reservations`. Con `guestId` presente `guestEmail` se ignora.
+
+Concurrencia: antes de buscar, el helper toma un lock de fila sobre `Hotels` del hotel
+(`tx.updateMany('Hotels', {id}, {updatedAt})`) dentro de la tx del motor, después del lock
+de `Rooms` (orden fijo Rooms → Hotels). En Postgres eso serializa las altas de huésped del
+hotel hasta el COMMIT y la segunda tx ve la ficha de la primera; en SQLite la tx entera ya
+está serializada. No hay índice único porque las bases existentes tienen duplicados
+históricos: `idx_guests_hotel_email` (`migrate-db.ts`) es no único y
+`scripts/merge-duplicate-guests.ts --dry|--apply [--hotel <id>]` los fusiona como paso
+post-deploy opcional (canónica = la más antigua; reapunta `guestId` en todas las tablas que
+lo tienen y `groups.leadGuestId`, suma `totalStays`/`totalSpent`/`loyaltyPoints`, borra las
+demás; idempotente).
+
+#### Scenario: Dos reservas públicas con el mismo email
+
+- GIVEN una reserva web creada con `guestEmail:'Ana@Mail.com '`
+- WHEN llega otra con `guestEmail:'ana@mail.com'` (mismo hotel)
+- THEN hay UNA fila en `guests` (email `ana@mail.com`) y dos en `reservations` con el mismo `guestId`
+
+#### Scenario: Mismo teléfono en formatos distintos, sin email coincidente
+
+- GIVEN una ficha con `phone:'809-555-0000'`
+- WHEN llega una reserva con otro email y `phone:'+1 809 555 0000'`
+- THEN se reusa esa ficha (match por E.164) y su `phone` no cambia
+
+#### Scenario: El panel crea con guestEmail sin guestId
+
+- GIVEN el panel manda `{roomId, checkIn, checkOut, totalAmount, guestEmail}` sin `guestId`
+- WHEN existe una ficha con ese email en el hotel
+- THEN la reserva nace con ese `guestId` y no se crea ninguna ficha; si no existe, se crea una
+
+#### Scenario: Dos POST concurrentes con el mismo email nuevo
+
+- GIVEN dos transacciones simultáneas con `guestEmail` que todavía no existe
+- WHEN ambas toman el lock de `Hotels` antes de buscar
+- THEN sólo la primera crea; la segunda relee y reusa → una sola ficha
+
 ### Requirement: Check-in atómico con folio y código de cerradura
 
 `POST /api/reservas/:id/checkin` (permiso `reservations:checkin`) MUST ejecutarse como
