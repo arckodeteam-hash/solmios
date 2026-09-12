@@ -272,6 +272,10 @@ describe('rooms — amenidades personalizadas y con precio (#290)', () => {
     // La sugerencia "+ Cuna" ya existe → deshabilitada, no duplica filas.
     const suggestCuna = q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!
     expect(suggestCuna.disabled).toBe(true)
+    // #292 (revisión) — la única regla no evidente del bloque, dicha en "usted": la cuna se reconoce
+    // por el nombre y el motor la ofrece sólo con bebé.
+    expect(q<HTMLElement>('custom-amenity-crib-hint')[0]?.textContent?.trim())
+      .toBe('Si el nombre contiene «cuna», el motor la ofrece solo a huéspedes con bebé.')
   })
 
   it('guardar al editar conserva la key de las filas cargadas (upsert sobre la misma fila)', async () => {

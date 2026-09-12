@@ -10,7 +10,8 @@
 import { computed, reactive } from 'vue'
 import { useBookingStore, type CartLine } from './useBooking'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
-import { CRIB_AMENITY_KEY, type RoomOccupancyRate, type RoomTypeRate } from '@/types/booking'
+import type { RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
+import { isCribAmenityKey } from '@/utils/crib-amenity'
 
 /** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
  *  import cruzado solo por esto. Espejo de `shared/utils/money.ts` del backend. */
@@ -110,9 +111,10 @@ export function useGuestComposer() {
     return resolveChildComposition(composer(rt).adults, composer(rt).ages, store.childPolicy)
   }
 
-  /** #292 — la fila `custom:cuna` del catálogo del tipo, si el tipo la publica. */
+  /** #292 — la fila "cuna" del catálogo del tipo (`custom:cuna`, `custom:crib`, "Cuna para
+   *  bebé"… — `isCribAmenityKey`), si el tipo la publica. Su `key` REAL es la que viaja. */
   function cribAmenity(rt: RoomTypeRate) {
-    return store.roomAmenitiesFor(rt.id).find((a) => a.key === CRIB_AMENITY_KEY) ?? null
+    return store.roomAmenitiesFor(rt.id).find((a) => isCribAmenityKey(a.key, a.name)) ?? null
   }
 
   /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09; #292 cuna por habitación — ¿corresponde
@@ -131,18 +133,19 @@ export function useGuestComposer() {
     return Number(cribAmenity(rt)?.price) || 0
   }
 
-  /** Sí/No — sin cantidad. Mueve `needsCrib` Y la key `custom:cuna` de `roomAmenityKeys` juntos:
-   *  "Sí" la agrega (el "+ $X" de la tarjeta, el carrito y el payload la cobran por el mecanismo
-   *  de amenidades de habitación), "No" la quita. "No" también limpia el estado por si se
-   *  reactiva sin querer. */
+  /** Sí/No — sin cantidad. Mueve `needsCrib` Y la key de la cuna (la REAL del catálogo del tipo,
+   *  ver `cribAmenity`) de `roomAmenityKeys` juntos: "Sí" la agrega (el "+ $X" de la tarjeta, el
+   *  carrito y el payload la cobran por el mecanismo de amenidades de habitación), "No" quita
+   *  cualquier key cuna. "No" también limpia el estado por si se reactiva sin querer. */
   function setNeedsCrib(rt: RoomTypeRate, value: boolean): void {
     const c = composer(rt)
     c.needsCrib = value
     const current = c.roomAmenityKeys ?? []
+    const cribKey = cribAmenity(rt)?.key
     if (value) {
-      if (!current.includes(CRIB_AMENITY_KEY)) c.roomAmenityKeys = [...current, CRIB_AMENITY_KEY]
-    } else if (current.includes(CRIB_AMENITY_KEY)) {
-      const rest = current.filter((k) => k !== CRIB_AMENITY_KEY)
+      if (cribKey && !current.some((k) => isCribAmenityKey(k))) c.roomAmenityKeys = [...current, cribKey]
+    } else if (current.some((k) => isCribAmenityKey(k))) {
+      const rest = current.filter((k) => !isCribAmenityKey(k))
       if (rest.length > 0) c.roomAmenityKeys = rest
       else delete c.roomAmenityKeys
     }
@@ -151,16 +154,16 @@ export function useGuestComposer() {
   // ─── REQ-01 (#290) — amenidades DE la habitación (cama extra…), POR TARJETA ─────────────────
 
   /** Keys tildadas en esta tarjeta (siempre un array, aunque el estado todavía no lo tenga).
-   *  Incluye `custom:cuna` cuando se pidió cuna (ver `setNeedsCrib`). */
+   *  Incluye la key de la cuna cuando se pidió cuna (ver `setNeedsCrib`). */
   function roomAmenityKeys(rt: RoomTypeRate): string[] {
     return composer(rt).roomAmenityKeys ?? []
   }
 
-  /** #292 — catálogo del tipo para el checklist genérico: TODO menos `custom:cuna`, que se ofrece
-   *  únicamente vía "¿Necesita cuna?" (con bebé en la tarjeta). RoomsStep.vue y BookingModal.vue
-   *  iteran esta lista, nunca `store.roomAmenitiesFor` directo. */
+  /** #292 — catálogo del tipo para el checklist genérico: TODO menos la cuna (`isCribAmenityKey`),
+   *  que se ofrece únicamente vía "¿Necesita cuna?" (con bebé en la tarjeta). RoomsStep.vue y
+   *  BookingModal.vue iteran esta lista, nunca `store.roomAmenitiesFor` directo. */
   function offeredRoomAmenities(rt: RoomTypeRate) {
-    return store.roomAmenitiesFor(rt.id).filter((a) => a.key !== CRIB_AMENITY_KEY)
+    return store.roomAmenitiesFor(rt.id).filter((a) => !isCribAmenityKey(a.key, a.name))
   }
 
   /** ¿Corresponde mostrar el checklist de amenidades de la habitación en ESTA tarjeta? Sí apenas
@@ -176,10 +179,10 @@ export function useGuestComposer() {
   }
 
   /** Tilda/destilda una amenidad del catálogo del tipo para esta tarjeta. Keys que el tipo no
-   *  ofrece se ignoran (nunca se guarda algo que el hotel no publicó para ese tipo), y
-   *  `custom:cuna` también: sólo entra por `setNeedsCrib`. */
+   *  ofrece se ignoran (nunca se guarda algo que el hotel no publicó para ese tipo), y la cuna
+   *  también: sólo entra por `setNeedsCrib`. */
   function toggleRoomAmenity(rt: RoomTypeRate, key: string): void {
-    if (key === CRIB_AMENITY_KEY) return
+    if (isCribAmenityKey(key)) return
     if (!store.roomAmenitiesFor(rt.id).some((a) => a.key === key)) return
     const c = composer(rt)
     const current = c.roomAmenityKeys ?? []
@@ -288,9 +291,9 @@ export function useGuestComposer() {
     // una cantidad elegida por el huésped.
     const needsCrib = shouldOfferCrib(rt) && c.needsCrib
     // REQ-01 (#290) — viaja lo tildado (el store descarta keys que el tipo ya no ofrezca). La key
-    // `custom:cuna` sigue a `needsCrib`: sin cuna pedida no viaja, aunque haya quedado en el estado
+    // de la cuna sigue a `needsCrib`: sin cuna pedida no viaja, aunque haya quedado en el estado
     // (#292, espejo de lo que el backend fuerza/quita según su propio `needsCrib`).
-    const roomAmenityKeysToSend = roomAmenityKeys(rt).filter((k) => k !== CRIB_AMENITY_KEY || needsCrib)
+    const roomAmenityKeysToSend = roomAmenityKeys(rt).filter((k) => !isCribAmenityKey(k) || needsCrib)
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
       needsCrib, cribCount: needsCrib ? 1 : 0,

@@ -170,6 +170,9 @@ export async function getPublicReservation(
         // Ausente/default en reservas de antes de esta feature.
         needsCrib: reservation.needsCrib ?? false,
         cribCount: reservation.cribCount ?? 0,
+        // Revisión #292 — pidió cuna y la habitación asignada no la ofrece: la confirmación le
+        // avisa que el hotel se pondrá en contacto. Es SU pedido, no un dato interno.
+        cribUnavailable: reservation.cribUnavailable === true || reservation.cribUnavailable === 1 || reservation.cribUnavailable === '1',
         totalAmount: reservation.totalAmount,
         // Tarea 24 (#88): el desglose que vio en el paso de pago (subtotal, extras, promo, cada
         // impuesto con nombre/%/importe, total). Es SUYO — lo aceptó él. `null` en reservas

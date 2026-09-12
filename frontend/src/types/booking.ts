@@ -42,12 +42,15 @@ export interface CreateBookingRoomAmenity {
   key: string
 }
 
-/** #292 — la cuna de una habitación ES su amenidad personalizada `custom:cuna` (RoomAmenities,
- *  con precio por habitación). El motor público ofrece "¿Necesita cuna?" sólo si la tarjeta tiene
- *  un bebé Y el tipo publica esta key en `/public/hotels/:slug/room-amenities`; "Sí" la agrega a
- *  `roomAmenityKeys` y se cobra por el mecanismo de amenidades de habitación. Espejo de
- *  `CRIB_AMENITY_KEY` en `backend/src/modules/bookingengine/usecases/public-room-amenities.ts`. */
-export const CRIB_AMENITY_KEY = 'custom:cuna'
+/** #292 — la cuna de una habitación ES una amenidad personalizada (RoomAmenities, con precio por
+ *  habitación) que `isCribAmenityKey` reconoce (`utils/crib-amenity.ts`: `custom:cuna`,
+ *  `custom:crib`, o cualquier `custom:*` cuyo nombre diga "cuna"/"crib"/"berço" — el slug sale del
+ *  nombre, así que "Cuna para bebé" NO es `custom:cuna`). El motor público ofrece "¿Necesita cuna?"
+ *  sólo si la tarjeta tiene un bebé Y el tipo publica una amenidad así en
+ *  `/public/hotels/:slug/room-amenities`; "Sí" agrega SU key a `roomAmenityKeys` y se cobra por el
+ *  mecanismo de amenidades de habitación. `CRIB_AMENITY_KEY` es la key canónica (sugerencia del
+ *  panel); espejo de `backend/src/shared/usecases/crib-amenity.ts`. */
+export { CRIB_AMENITY_KEY } from '@/utils/crib-amenity'
 
 /** DTO friendly que recibe `BookingService.createBooking`. El service resuelve slug→hotelId,
  *  mapea `guest` → `guestName/guestEmail/guestPhone`, y postea al backend con el shape del
@@ -114,6 +117,9 @@ export interface CreateBookingResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  /** Revisión #292 — `true` sólo si se pidió cuna (había bebé) y la habitación asignada no la
+   *  ofrece: la reserva se creó sin cuna y el hotel se pondrá en contacto. */
+  cribUnavailable?: boolean
 }
 
 // ─── POST /api/public/booking/group (Tarea 10, QA 2026-08-20/21) ──────────────────────────
@@ -580,6 +586,9 @@ export interface PublicReservation {
    *  para que la pantalla de confirmación pueda mostrárselo (no un dato interno del hotel). */
   needsCrib?: boolean
   cribCount?: number
+  /** Revisión #292 — pidió cuna y la habitación asignada no la ofrece: la confirmación le avisa
+   *  que el hotel se pondrá en contacto. Ausente/false en el resto. */
+  cribUnavailable?: boolean
   totalAmount?: number
   /** Tarea 24 (#88): el desglose que el huésped aceptó en el paso de pago. `null` en reservas
    *  viejas o creadas desde el panel — entonces se muestra solo el total. */

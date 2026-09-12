@@ -39,6 +39,12 @@
         <p class="text-sm font-bold text-navy">{{ t('confirm.pendingApprovalNotice') }}</p>
       </div>
 
+      <!-- Revisión #292 — pidió cuna (había bebé) y la habitación asignada no la ofrece: la reserva
+           se creó sin cuna y el hotel lo tiene anotado; acá se le dice al huésped, no se esconde. -->
+      <div v-if="cribUnavailable" class="mt-4 rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left" data-testid="confirm-crib-unavailable">
+        <p class="text-sm font-bold text-navy">{{ t('confirm.cribUnavailableNotice') }}</p>
+      </div>
+
       <div v-if="reservation" class="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm space-y-1">
         <div class="flex justify-between">
           <span class="text-text-muted">{{ t('confirm.checkIn') }}</span>
@@ -122,6 +128,8 @@ let attempts = 0
 
 /** Tarea 3.4 (corrección 2026-08-25) — mismo criterio que booking-confirmation.vue. */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
+/** Revisión #292 — mismo criterio que booking-confirmation.vue. */
+const cribUnavailable = computed(() => reservation.value?.reservation?.cribUnavailable === true)
 
 /** Cuerpo del mensaje de éxito con el email embebido. Como el email viene del backend y
  *  ya pasó validación de formato ahí, no sanitizamos más acá (es textotrusted dentro de un

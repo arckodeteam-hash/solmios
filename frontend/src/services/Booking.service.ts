@@ -5,7 +5,6 @@
 //   - GET  /api/public/hotels/:slug/rates          → tarifa derivada + availableCount (D11)
 //   - GET  /api/public/hotels/:slug/upsells         → upsells activos
 //   - GET  /api/public/hotels/:slug/meal-plans      → regímenes activos (tasks.md 2.2/2.4)
-//   - GET  /api/public/hotels/:slug/child-amenities → amenidades niños/bebés activas (REQ-01 #233)
 //   - POST /api/public/hotels/:slug/promo/validate  → {valid, discount, reason?}
 //   - POST /api/public/booking                      → crea reserva pending + redirige a Stripe
 //   - GET  /api/public/reservations/:id             → polling post-redirect (valida token HMAC)
@@ -60,6 +59,8 @@ interface RawCreateBookingResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  /** Revisión #292 — sólo viene (true) si se pidió cuna y la unidad asignada no la ofrece. */
+  cribUnavailable?: boolean
 }
 
 /** Respuesta cruda de `POST /api/public/booking/group` (`createPublicBookingGroup`) — YA plana
@@ -70,6 +71,7 @@ interface RawCreateBookingGroupResponse {
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
+  cribUnavailable?: boolean
 }
 
 export const BookingService = {
@@ -132,6 +134,7 @@ export const BookingService = {
       totalBreakdown: raw.totalBreakdown,
     }
     if (raw.paymentError) response.paymentError = raw.paymentError
+    if (raw.cribUnavailable === true) response.cribUnavailable = true
     return response
   },
 
@@ -182,6 +185,7 @@ export const BookingService = {
       totalBreakdown: raw.totalBreakdown,
     }
     if (raw.paymentError) response.paymentError = raw.paymentError
+    if (raw.cribUnavailable === true) response.cribUnavailable = true
     return response
   },
 

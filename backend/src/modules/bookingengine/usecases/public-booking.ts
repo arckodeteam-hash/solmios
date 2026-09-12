@@ -72,6 +72,8 @@ import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
+import { round2 } from '../../../shared/utils/money'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
@@ -430,12 +432,13 @@ export async function createPublicBookingDirect(
 
   // REQ-01 (#290) — keys `custom:*` pedidas. Sin keys (ni cuna pedida), NADA de lo que sigue lee
   // `RoomAmenities` (cero cambio de comportamiento para un caller que no las manda).
-  // #292 — `custom:cuna` NO entra por el body: se saca de las keys y se vuelve a poner sólo si
-  // la pidió el gate de bebé (`cribRequested`). Que quede o no en el snapshot lo decide
-  // `resolveRoomAmenityLines` contra la unidad asignada, y `needsCrib` se lee de AHÍ (más abajo):
-  // la línea de cuna existe si y sólo si `needsCrib`, nunca por una key suelta ni por un "sí"
-  // que la unidad asignada no puede cumplir.
-  const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities).filter((k) => k !== CRIB_AMENITY_KEY)
+  // #292 — la cuna NO entra por el body: toda key que `isCribAmenityKey` reconozca (`custom:cuna`,
+  // `custom:crib`, `custom:cuna_para_bebe`…) se saca de las keys y se vuelve a poner — como la key
+  // canónica — sólo si la pidió el gate de bebé (`cribRequested`). Que quede o no en el snapshot
+  // lo decide `resolveRoomAmenityLines` contra la unidad asignada (acepta cualquier fila cuna de
+  // esa unidad), y `needsCrib` se lee de AHÍ (más abajo): la línea de cuna existe si y sólo si
+  // `needsCrib`, nunca por una key suelta ni por un "sí" que la unidad asignada no puede cumplir.
+  const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities).filter((k) => !isCribAmenityKey(k))
   if (cribRequested) roomAmenityKeys.push(CRIB_AMENITY_KEY)
   const needsRoomAmenityCatalog = roomAmenityKeys.length > 0
   let amenitiesByRoom = new Map<string, any[]>()
@@ -514,7 +517,11 @@ export async function createPublicBookingDirect(
   // explícito sin cuna), se crea sin cuna con un warn claro.
   const needsCrib = cribRequested && hasCribLine(roomAmenityLines)
   const cribCount = needsCrib ? 1 : 0
-  if (cribRequested && !needsCrib) {
+  // Revisión #292 — si se pidió y NO se pudo cumplir, no alcanza con un warn en el log: queda
+  // escrito en `notes` (lo lee el recepcionista), persistido en `cribUnavailable` y expuesto en la
+  // respuesta pública para que el widget se lo diga al huésped. La asignación no cambia.
+  const cribUnavailable = cribRequested && !needsCrib
+  if (cribUnavailable) {
     logger?.warn('createPublicBookingDirect: cuna pedida pero la unidad asignada no la ofrece — se crea sin cuna', { hotelId, roomType, roomId: resolvedRoomId })
   }
 
@@ -735,6 +742,7 @@ export async function createPublicBookingDirect(
   // las notas, igual que el resto de los extras de esta reserva. Sí/No únicamente (2026-09-09) —
   // sin cantidad, `cribCount` es siempre 1 cuando `needsCrib` es true.
   if (needsCrib) notesParts.push('Cuna: solicitada')
+  if (cribUnavailable) notesParts.push(CRIB_UNAVAILABLE_NOTE)
   notesParts.push(`Total: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +
     `${promoDiscount > 0 ? ` - promo ${promoDiscount.toFixed(2)}` : ''} + tax ${taxes.toFixed(2)})`)
 
@@ -812,6 +820,8 @@ export async function createPublicBookingDirect(
         // gateados arriba contra `childComposition.babies` y la oferta de `custom:cuna` del tipo;
         // acá solo persisten como espejo de la línea de cuna en `roomAmenities`.
         needsCrib, cribCount,
+        // Revisión #292 — cuna pedida que la unidad asignada no ofrece (ver `cribUnavailable` arriba).
+        cribUnavailable,
         // #292 — el catálogo global de amenidades infantiles se dio de baja: las columnas quedan
         // (reservas históricas + lectores) pero una reserva nueva siempre las escribe vacías.
         childAmenities: [],
@@ -1009,6 +1019,9 @@ function publicBookingResponse(
         source: reservation.source ?? null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
+      // Revisión #292 — sólo cuando se pidió cuna y la unidad asignada no la ofrece: el widget lo
+      // muestra ("el hotel se pondrá en contacto"). Sale de la fila para que el replay también lo traiga.
+      ...(isOn(reservation.cribUnavailable) ? { cribUnavailable: true } : {}),
       // F0 0.16 — Contrato nuevo (spec booking-unification API). `checkoutUrl` SIEMPRE está:
       // null cuando no se intentó cobro (sin stripe deps / sin URLs) o cuando Stripe falló.
       // `paymentError` solo se incluye si realmente hubo un error de pasarela (para que el
@@ -1028,9 +1041,12 @@ function publicBookingResponse(
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
-}
+/** Revisión #292 — línea de `notes` cuando se pidió cuna y la unidad asignada no la ofrece.
+ *  Compartida con `public-booking-group.ts` (misma redacción para el recepcionista). */
+export const CRIB_UNAVAILABLE_NOTE = '⚠ El huésped pidió cuna y la habitación asignada no la ofrece'
+
+/** Booleano persistido (INTEGER 0/1 en la columna, `true`/`1`/`'1'` según el adapter). */
+const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
 /** #266 — Tope de la clave de idempotencia (columna TEXT; el índice único la indexa entera). */
 export const IDEMPOTENCY_KEY_MAX_LENGTH = 128

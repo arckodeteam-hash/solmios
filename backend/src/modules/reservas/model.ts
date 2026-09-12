@@ -53,6 +53,12 @@ export const ReservasModel: ModelDefinition = {
     // en lo que mande el cliente. `cribCount` es 1/0 espejo de `needsCrib`.
     needsCrib: { type: 'boolean', default: false },
     cribCount: { type: 'number', default: 0 },
+    // Revisión #292 — el huésped PIDIÓ cuna (había bebé) y la unidad asignada no la ofrece: la
+    // reserva se crea sin cuna, con esta marca, una línea en `notes` y el aviso en la
+    // confirmación pública ("el hotel se pondrá en contacto"). Distinto de `needsCrib=false`
+    // a secas (no la pidió). `ormMigrate` la agrega con ADD COLUMN; las filas viejas quedan en
+    // null = false, no hace falta backfill.
+    cribUnavailable: { type: 'boolean', default: false },
     // REQ-01 (#233) — Amenidades para niños/bebés elegidas para ESTA habitación (por fila, igual
     // que la cuna: cada unidad de un grupo lleva las suyas). Snapshot con precio congelado
     // [{id, name, price, quantity, total}]. `childAmenitiesTotal` es la Σ de `total` del snapshot
