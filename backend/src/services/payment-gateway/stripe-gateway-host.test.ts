@@ -19,8 +19,8 @@ function apiOf(gw: StripeGateway): { host: string; port: string | number; protoc
   return (gw as any).stripe._api
 }
 
-function build() {
-  return new StripeGateway({ secretKey: 'sk_test_dummy' }, 'test')
+function build(secretKey = 'sk_test_dummy') {
+  return new StripeGateway({ secretKey }, secretKey.startsWith('sk_live_') ? 'live' : 'test')
 }
 
 describe('StripeGateway — STRIPE_API_HOST (test-only)', () => {
@@ -33,6 +33,15 @@ describe('StripeGateway — STRIPE_API_HOST (test-only)', () => {
 
   it('sin la var apunta a api.stripe.com:443 por https (como hoy)', () => {
     const api = apiOf(build())
+    expect(api.host).toBe('api.stripe.com')
+    expect(String(api.port)).toBe('443')
+    expect(api.protocol).toBe('https')
+  })
+
+  it('con clave sk_live_ ignora STRIPE_API_HOST: la clave real nunca sale a otro host', () => {
+    process.env.STRIPE_API_HOST = '127.0.0.1'
+    process.env.STRIPE_API_PORT = '4242'
+    const api = apiOf(build('sk_live_dummy'))
     expect(api.host).toBe('api.stripe.com')
     expect(String(api.port)).toBe('443')
     expect(api.protocol).toBe('https')
