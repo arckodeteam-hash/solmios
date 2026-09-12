@@ -8,6 +8,8 @@ import type { BookingConfigDTO, UpdateBookingConfigDTO } from '../types'
 export const DEFAULT_PENDING_TTL_MINUTES = 60
 /** #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168). */
 export const DEFAULT_APPROVAL_DEADLINE_HOURS = 24
+/** #262 REQ-HAC-07 — Horas antes de la llegada para auto-asignar habitación (0–168; 0 = apagado). */
+export const DEFAULT_AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS = 0
 
 export class ConfigUseCase {
   constructor(
@@ -36,6 +38,7 @@ export class ConfigUseCase {
         allowedCountries: [],
         pendingTtlMinutes: DEFAULT_PENDING_TTL_MINUTES,
         approvalDeadlineHours: DEFAULT_APPROVAL_DEADLINE_HOURS,
+        autoAssignBeforeArrivalHours: DEFAULT_AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS,
       } as any)
     }
     let config = items[0]
@@ -46,6 +49,10 @@ export class ConfigUseCase {
     // #271 MR-06 — mismo criterio para filas anteriores a `approvalDeadlineHours`.
     if (config.approvalDeadlineHours === null || config.approvalDeadlineHours === undefined) {
       config = { ...config, approvalDeadlineHours: DEFAULT_APPROVAL_DEADLINE_HOURS }
+    }
+    // #262 REQ-HAC-07 — mismo criterio para filas anteriores a `autoAssignBeforeArrivalHours`.
+    if (config.autoAssignBeforeArrivalHours === null || config.autoAssignBeforeArrivalHours === undefined) {
+      config = { ...config, autoAssignBeforeArrivalHours: DEFAULT_AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS }
     }
     return config
   }

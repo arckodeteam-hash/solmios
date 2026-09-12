@@ -12,6 +12,9 @@ import type { NotificationEvent, NotificationLanguage } from '../../../services/
 import type { TriggerDeps } from '../service'
 import type { MarketingSockets } from '../sockets'
 
+/** #262 REQ-HAC-07: texto de {room_number} cuando la reserva aún no tiene habitación (roomId nulo hasta el check-in). */
+export const ROOM_PENDING_LABEL = 'por asignar'
+
 /** Todo lo que el trigger necesita del service, explícito. */
 export interface TriggerContext {
   triggerDeps?: TriggerDeps
@@ -60,7 +63,7 @@ params: {
     hotel_name: hotel?.name || 'Hotel',
     hotel_phone: hotel?.phone || '',
     hotel_address: hotel?.address || '',
-    room_number: room?.number || '',
+    room_number: room?.number || ROOM_PENDING_LABEL, // #262: sin habitación (roomId nulo o no encontrada) → 'por asignar'
     room_type: room?.type || '',
     logo_url: (hotel as any)?.logo || '',
     ...extraVars,

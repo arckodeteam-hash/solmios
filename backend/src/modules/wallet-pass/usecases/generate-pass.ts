@@ -17,8 +17,14 @@
 //
 // Best-effort total: este usecase NO lanza. Cualquier fallo parcial (Apple, Google,
 // lockCode, email) se loguea y se persiste lo que haya. Si el lockCode no se puede obtener
-// (reserva sin roomId / TTLock no configurado), NO se persiste la fila — no tiene sentido
+// (reserva sin roomId / TTLock no configurado), ACÁ no se persiste la fila — no tiene sentido
 // un pass sin código de acceso (spec.md "lockCode REQUIRED").
+//
+// Pase PARCIAL (#262, REQ-HAC-07): con HAC-01 la reserva nace sin habitación y el cron de
+// pre-llegada puede mandar un pase parcial (`partial-pass.ts`), que persiste la fila con
+// `lockCode: ''`. Esa fila NO corta la idempotencia: cuando se asigna la habitación
+// (connector `reservas-wallet` onRoomAssigned) este usecase la COMPLETA in-place con
+// `update` (lockCode + URLs, `emailSentAt: null` para que el cron mande el pase completo).
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { StorageService } from 'arckode-framework/modules/storage'
 import type { EmailService } from '../../../services/email-service'
@@ -49,6 +55,8 @@ export interface ReservationInfo {
   checkInTime: string
   checkOutTime: string
   roomNumber?: string
+  /** Tipo vendido (`reservations.roomType`, o `rooms.type` si ya hay habitación). */
+  roomType?: string
 }
 
 /** Deps inyectadas por el service. */
@@ -102,6 +110,7 @@ export async function resolveReservationInfo(
     checkInTime: effectiveCheckInTime(r, hotel),
     checkOutTime: effectiveCheckOutTime(r, hotel),
     roomNumber: room?.number ? String(room.number) : undefined,
+    roomType: r.roomType ? String(r.roomType) : (room?.type ? String(room.type) : undefined),
   }
 }
 
@@ -156,8 +165,10 @@ export async function generatePass(
 
   // 0) Idempotencia previa a trabajo costoso: si ya existe pass para esta reserva, devolverlo.
   // UNIQUE(reservationId) en DB es la red de seguridad; este pre-check evita re-generar Apple/Google.
+  // Excepción (#262): una fila PARCIAL (`lockCode: ''`, creada por `partial-pass.ts` cuando la
+  // reserva no tenía habitación) se completa in-place más abajo en vez de devolverse.
   const existing = await deps.walletPassRepo.findOne({ reservationId }).catch(() => null)
-  if (existing) {
+  if (existing && existing.lockCode) {
     log.info('wallet-pass: pass ya existe, devolviendo idempotente', { reservationId })
     return { pass: existing, alreadyExisted: true, emailQueued: false }
   }
@@ -169,7 +180,8 @@ export async function generatePass(
     return null
   }
 
-  // 2) Resolver lockCode. Sin lockCode, NO se persiste (spec.md lockCode REQUIRED).
+  // 2) Resolver lockCode. Sin lockCode, NO se persiste (spec.md lockCode REQUIRED). Si había
+  // fila parcial, queda como está: se reintenta cuando se asigne la habitación.
   const lockCode = await resolveLockCode(deps, info.hotelId, reservationId)
   if (!lockCode) {
     log.info('wallet-pass: sin lockCode disponible (¿ttlock desactivado o reserva sin room?), se omite pass', {
@@ -221,18 +233,34 @@ export async function generatePass(
     generatedAt: new Date().toISOString(),
   }
   let pass: WalletPassDTO
-  try {
-    // `repo.create` espera `Omit<T, 'id'>` — el ORM autocompleta createdAt/updatedAt vía
-    // `timestamps: true` del modelo. El cast `as Omit<T, 'id'>` es el patrón canónico
-    // (ver external-reviews/service.ts create() y facturas/folio-entries).
-    pass = await deps.walletPassRepo.create(payload as Omit<WalletPassDTO, 'id'>)
-  } catch (e: unknown) {
-    if (!isDuplicateError(e)) throw e
-    // Race: otra txn insertó la misma (reservationId) entre el pre-check y ahora. Recoger.
-    const refetch = await deps.walletPassRepo.findOne({ reservationId }).catch(() => null)
-    if (!refetch) throw e
-    log.info('wallet-pass: race detectada, devolviendo fila pre-existente', { reservationId })
-    return { pass: refetch, alreadyExisted: true, emailQueued: false }
+  if (existing) {
+    // Fila parcial (#262): se completa in-place. `emailSentAt: null` porque el correo parcial
+    // ya salió y ahora corresponde el completo (habitación + código) — lo manda el cron de
+    // pre-llegada, o abajo mismo si el llamador pidió `sendEmail`.
+    const patch: Partial<WalletPassDTO> = {
+      appleUrl: payload.appleUrl,
+      googleUrl: payload.googleUrl,
+      lockCode,
+      generatedAt: payload.generatedAt,
+      emailSentAt: null,
+    }
+    const updated = await deps.walletPassRepo.update(existing.id, patch)
+    pass = { ...existing, ...(updated ?? {}), ...patch }
+    log.info('wallet-pass: fila parcial completada con lockCode', { reservationId, id: existing.id })
+  } else {
+    try {
+      // `repo.create` espera `Omit<T, 'id'>` — el ORM autocompleta createdAt/updatedAt vía
+      // `timestamps: true` del modelo. El cast `as Omit<T, 'id'>` es el patrón canónico
+      // (ver external-reviews/service.ts create() y facturas/folio-entries).
+      pass = await deps.walletPassRepo.create(payload as Omit<WalletPassDTO, 'id'>)
+    } catch (e: unknown) {
+      if (!isDuplicateError(e)) throw e
+      // Race: otra txn insertó la misma (reservationId) entre el pre-check y ahora. Recoger.
+      const refetch = await deps.walletPassRepo.findOne({ reservationId }).catch(() => null)
+      if (!refetch) throw e
+      log.info('wallet-pass: race detectada, devolviendo fila pre-existente', { reservationId })
+      return { pass: refetch, alreadyExisted: true, emailQueued: false }
+    }
   }
 
   // 5) Encolar email. Si no hay EmailService, no hay guest email, o el envío se difirió
@@ -253,6 +281,7 @@ export async function generatePass(
         checkInTime: info.checkInTime,
         checkOutTime: info.checkOutTime,
         roomNumber: info.roomNumber,
+        roomType: info.roomType,
         lockCode,
         appleUrl: pass.appleUrl,
         googleUrl: pass.googleUrl,

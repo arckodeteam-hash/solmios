@@ -33,6 +33,10 @@ export const BookingConfigModel: ModelDefinition = {
     // "confirmación instantánea" apagada (1–168, default 24). La pantalla pública se lo
     // muestra al huésped y el cron de recordatorio lo usa como plazo.
     approvalDeadlineHours: { type: 'number', default: 24 },
+    // #262 REQ-HAC-07 — Horas antes de la llegada a partir de las cuales el cron de pase
+    // pre-llegada asigna automáticamente la habitación sugerida a una reserva sin habitación
+    // (0–168; 0 = apagado, manda pase parcial "por asignar").
+    autoAssignBeforeArrivalHours: { type: 'number', default: 0 },
   },
 }
 
