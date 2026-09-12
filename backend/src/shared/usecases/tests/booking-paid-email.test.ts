@@ -17,17 +17,37 @@ const RESERVA = {
 }
 const GUEST = { id: 'g1', hotelId: 'h1', name: 'E2E Huésped', email: 'huesped@example.com' }
 
-function harness(over: { reserva?: any; guest?: any; hotel?: any } = {}) {
+interface HarnessOver {
+  reserva?: any; guest?: any; hotel?: any
+  /** Hermanas del grupo (lo que devuelve findMany({ groupId })). */
+  siblings?: any[]
+  rooms?: Record<string, any>
+  configRow?: any
+  receiptPdf?: (id: string) => Promise<Buffer | null>
+  publicUrl?: string
+  enqueue?: (i: any) => Promise<string>
+}
+
+function harness(over: HarnessOver = {}) {
   const sent: any[] = []
+  const notifications: any[] = []
   const repo = (row: any) => ({ findById: async () => row, findMany: async () => (row ? [row] : []) })
+  const reserva = over.reserva === undefined ? RESERVA : over.reserva
   const deps: any = {
-    emailSender: { enqueueNotification: async (i: any) => { sent.push(i); return 'q1' } },
-    reservationsRepo: repo(over.reserva === undefined ? RESERVA : over.reserva),
+    emailSender: { enqueueNotification: over.enqueue ?? (async (i: any) => { sent.push(i); return 'q1' }) },
+    reservationsRepo: { findById: async () => reserva, findMany: async () => over.siblings ?? (reserva ? [reserva] : []) },
     hotelRepo: repo(over.hotel === undefined ? HOTEL : over.hotel),
     guestRepo: repo(over.guest === undefined ? GUEST : over.guest),
     logger: silentLogger(),
   }
-  return { sent, run: () => sendBookingPaidEmail(deps, RESERVA.id) }
+  // Deps opcionales (#270): sólo se inyectan si el test los pide, así los casos viejos siguen
+  // probando el contrato mínimo de 5 deps.
+  if (over.rooms) deps.roomsRepo = { findById: async (id: string) => over.rooms![id] ?? null }
+  if (over.configRow !== undefined) deps.configRepo = { findOne: async () => over.configRow }
+  if (over.receiptPdf) deps.receiptPdf = over.receiptPdf
+  if (over.publicUrl !== undefined) deps.publicUrl = over.publicUrl
+  deps.notificationsRepo = { create: async (row: any) => { notifications.push(row); return row } }
+  return { sent, notifications, run: () => sendBookingPaidEmail(deps, RESERVA.id) }
 }
 
 describe('correo de confirmación de pago', () => {
@@ -95,6 +115,155 @@ describe('correo de confirmación de pago', () => {
   it('reserva inexistente: no-op', async () => {
     const h = harness({ reserva: null })
     expect(await h.run()).toBe(false)
+  })
+})
+
+// #270: el correo es el recibo completo — desglose, ocupación, grupo, adjunto y aviso al hotel si falla.
+describe('recibo completo (#270)', () => {
+  const RESERVA_270 = {
+    ...RESERVA, accessToken: 'tok-abc', totalAmount: 406.2, deposit: 406.2,
+    adults: 2, children: 1, childrenAges: [6], needsCrib: true,
+    estimatedArrival: '18:00', specialRequests: 'Piso alto', promoCode: 'VERANO10',
+    childAmenities: [{ key: 'crib-kit', name: 'Kit bebé', price: 15, quantity: 1, total: 15 }],
+    roomAmenities: [],
+    priceBreakdown: {
+      subtotal: 300, promoDiscount: 10, upsellsTotal: 20,
+      upsellLines: [{ id: 'u1', name: 'Desayuno', price: 10, quantity: 2, total: 20 }],
+      childAmenitiesTotal: 15, roomAmenitiesTotal: 0,
+      // Impuestos sobre el alojamiento neto (300 − 10 = 290): 18% = 52.2 y 10% = 29.
+      // total = 290 + 20 + 15 + 81.2 = 406.2
+      taxes: 81.2,
+      taxBreakdown: [{ name: 'ITBIS', rate: 0.18, amount: 52.2 }, { name: 'Propina legal', rate: 0.10, amount: 29 }],
+      total: 406.2,
+    },
+  }
+  const HOTEL_270 = { ...HOTEL, slug: 'palma', logo: '/uploads/logo.png' }
+
+  it('(a) lleva el desglose completo con los importes exactos del priceBreakdown', async () => {
+    const h = harness({ reserva: RESERVA_270, hotel: HOTEL_270, publicUrl: 'https://app.test', configRow: null })
+    expect(await h.run()).toBe(true)
+    const v = h.sent[0].variables
+    expect(v.extras_lines).toContain('Desayuno × 2 = 20.00 USD')
+    expect(v.extras_lines.startsWith('<ul><li>')).toBe(true)
+    expect(v.child_amenities_lines).toContain('Kit bebé')
+    expect(v.child_amenities_lines).toContain('15.00 USD')
+    expect(v.room_amenities_lines).toBe('')
+    expect(v.tax_lines).toContain('ITBIS')
+    expect(v.tax_lines).toContain('18%')
+    expect(v.tax_lines).toContain('52.20 USD')
+    expect(v.tax_lines).toContain('Propina legal')
+    expect(v.tax_lines).toContain('10%')
+    expect(v.promo_code).toBe('VERANO10')
+    expect(v.promo_discount).toBe('10.00 USD')
+    expect(v.subtotal).toBe('300.00 USD')
+    expect(v.total_amount).toBe('406.20 USD')
+    expect(v.adults).toBe('2')
+    expect(v.children).toBe('1')
+    expect(v.children_ages).toBe('6')
+    expect(v.crib).toBe('Sí')
+    expect(v.meal_plan).toBe('Sólo alojamiento')
+    expect(v.estimated_arrival).toBe('18:00')
+    expect(v.special_requests).toBe('Piso alto')
+    expect(v.manage_url).toContain(`/h/palma/confirm?booking=${RESERVA.id}&token=tok-abc`)
+    expect(v.receipt_url).toBe(`https://app.test/api/public/reservations/${RESERVA.id}/receipt.pdf?token=tok-abc`)
+    expect(v.hotel_logo_url).toBe('https://app.test/uploads/logo.png')
+    expect(v.logo_url).toBe(v.hotel_logo_url)
+    expect(v.platform_name).toBe('SolmiOS')
+    expect(v.rooms_lines).toBe('')
+    expect(v.rooms_count).toBe('1')
+  })
+
+  it('(a bis) platform_name sale de la configuración de plataforma y los valores se escapan', async () => {
+    const h = harness({
+      reserva: { ...RESERVA_270, specialRequests: '<b>x</b>', priceBreakdown: { ...RESERVA_270.priceBreakdown, upsellLines: [{ id: 'u1', name: '<i>Spa</i>', price: 5, quantity: 1, total: 5 }] } },
+      configRow: { value: JSON.stringify({ platformName: 'HotelSoft' }) },
+    })
+    await h.run()
+    const v = h.sent[0].variables
+    expect(v.platform_name).toBe('HotelSoft')
+    expect(v.extras_lines).toContain('&lt;i&gt;Spa&lt;/i&gt;')
+    expect(v.manage_url).toBe('')   // sin publicUrl ni slug no hay link
+    expect(v.hotel_logo_url).toBe('')
+  })
+
+  it('sin datos nuevos las variables igual existen (vacías o con "—")', async () => {
+    const h = harness(); await h.run()
+    const v = h.sent[0].variables
+    expect(v.extras_lines).toBe('')
+    expect(v.tax_lines).toBe('')
+    expect(v.promo_code).toBe('')
+    expect(v.promo_discount).toBe('—')
+    expect(v.crib).toBe('No')
+    expect(v.estimated_arrival).toBe('—')
+    expect(v.special_requests).toBe('—')
+    expect(v.total_amount).toBe('76.70 USD')   // sin priceBreakdown cae a totalAmount
+  })
+
+  it('(b) grupo: total del grupo y una línea por habitación SIN el número', async () => {
+    const leader = { ...RESERVA_270, groupId: 'g1', roomId: 'r1', totalAmount: 300, deposit: 900, priceBreakdown: { ...RESERVA_270.priceBreakdown, total: 900 } }
+    const siblings = [
+      { ...leader, createdAt: '2026-09-01T10:00:00Z' },
+      { ...RESERVA, id: 'sib-2', groupId: 'g1', roomId: 'r2', totalAmount: 300, adults: 2, children: 0, createdAt: '2026-09-01T10:00:01Z' },
+      { ...RESERVA, id: 'sib-3', groupId: 'g1', roomId: 'r3', totalAmount: 300, adults: 1, children: 2, createdAt: '2026-09-01T10:00:02Z' },
+    ]
+    const rooms = {
+      r1: { id: 'r1', number: '101', type: 'Doble' },
+      r2: { id: 'r2', number: '102', type: 'Doble', name: 'Doble vista mar' },
+      r3: { id: 'r3', number: '201', type: 'Suite' },
+    }
+    const h = harness({ reserva: leader, siblings, rooms })
+    expect(await h.run()).toBe(true)
+    const v = h.sent[0].variables
+    expect(v.total_amount).toBe('900.00 USD')
+    expect(v.pending_amount).toBe('—')
+    expect(v.rooms_count).toBe('3')
+    expect((v.rooms_lines.match(/<li>/g) ?? []).length).toBe(3)
+    expect(v.rooms_lines).toContain('Doble')
+    expect(v.rooms_lines).toContain('Doble vista mar')
+    expect(v.rooms_lines).toContain('Suite')
+    expect(v.rooms_lines).toContain('300.00 USD')
+    for (const n of ['101', '102', '201']) expect(v.rooms_lines).not.toContain(n)
+  })
+
+  it('(c) si el envío falla avisa al hotel con una notificación system y devuelve false', async () => {
+    const h = harness({ enqueue: async () => { throw new Error('smtp down') } })
+    expect(await h.run()).toBe(false)
+    expect(h.notifications).toHaveLength(1)
+    const n = h.notifications[0]
+    expect(n.type).toBe('system')
+    expect(n.hotelId).toBe(RESERVA.hotelId)
+    expect(n.userId).toBeUndefined()   // broadcast a todo el hotel
+    expect(n.title).toContain('huesped@example.com')
+    expect(n.message).toContain('smtp down')
+    expect(n.metadata.reservationId).toBe(RESERVA.id)
+    expect(n.metadata.link).toBe(`/reservas/${RESERVA.id}`)
+    expect(typeof n.id).toBe('string')
+  })
+
+  it('(d) el recibo PDF viaja adjunto cuando el generador responde', async () => {
+    const pdf = Buffer.from('%PDF-1.4 fake')
+    const calls: string[] = []
+    const h = harness({ receiptPdf: async (id) => { calls.push(id); return pdf } })
+    expect(await h.run()).toBe(true)
+    expect(calls).toEqual([RESERVA.id])
+    expect(h.sent[0].attachments).toEqual([{
+      filename: `recibo-${RESERVA.id.slice(0, 8)}.pdf`,
+      contentType: 'application/pdf',
+      contentBase64: pdf.toString('base64'),
+    }])
+  })
+
+  it('(d bis) si el generador del PDF falla el correo sale igual, sin adjunto', async () => {
+    const h = harness({ receiptPdf: async () => { throw new Error('chromium no arranca') } })
+    expect(await h.run()).toBe(true)
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].attachments).toBeUndefined()
+    expect(h.notifications).toHaveLength(0)
+  })
+
+  it('sin generador (deps mínimos) no hay adjunto', async () => {
+    const h = harness(); await h.run()
+    expect(h.sent[0].attachments).toBeUndefined()
   })
 })
 

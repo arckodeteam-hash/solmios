@@ -6,6 +6,8 @@ import type { EmailSender } from '../services/email-sender'
 import type { Logger } from 'arckode-framework'
 import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
 import { resolvePlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
+import { buildReceiptHtmlFor } from '../modules/bookingengine/usecases/public-receipt'
+import { htmlToPdf } from '../modules/facturas/usecases/pdf'
 import type { ReservationEmailSender } from '../shared/usecases/notify-reservation-received'
 
 export interface EmailBootstrapResult {
@@ -165,8 +167,13 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
   //
   // Lleva plata, fechas CON hora, política y datos del hotel — SIN habitación ni código: la
   // habitación puede reasignarse hasta la víspera, y el pase lo manda `prearrival-pass-cron`.
+  //
+  // #270: el recibo PDF adjunto se genera ACÁ y no en el usecase porque `htmlToPdf` es puppeteer
+  // (infraestructura: navegador headless); el usecase sólo recibe un generador y sigue siendo
+  // testeable sin Chromium. El mismo HTML que sirve GET /api/public/reservations/:id/receipt.pdf.
   const bookingengineForEmail = resolveModule<{ setSockets(s: any): void }>('bookingengine')
   if (bookingengineForEmail && typeof bookingengineForEmail.setSockets === 'function') {
+    const configRepo = new OrmRepository<any>(orm, 'Configuration')
     bookingengineForEmail.setSockets({
       onBookingPaid: async (data: { id?: string }) => {
         const reservationId = data?.id
@@ -176,6 +183,15 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           reservationsRepo: new OrmRepository<any>(orm, 'Reservations'),
           hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
           guestRepo: new OrmRepository<any>(orm, 'Guests'),
+          roomsRepo: new OrmRepository<any>(orm, 'Rooms'),
+          notificationsRepo: new OrmRepository<any>(orm, 'Notificaciones'),
+          configRepo,
+          publicUrl: process.env.PUBLIC_URL || '',
+          receiptPdf: async (id: string) => {
+            const identity = await resolvePlatformIdentity(configRepo)
+            const html = await buildReceiptHtmlFor(orm, id, identity.platformName)
+            return html ? htmlToPdf(html) : null
+          },
           logger,
         }, reservationId)
       },
