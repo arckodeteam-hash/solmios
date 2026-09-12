@@ -54,6 +54,7 @@
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
@@ -846,10 +847,14 @@ export async function createPublicBookingDirect(
         r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn)
       if (takenNow) throw new RoomTakenConcurrentlyError()
 
-      guest = await tx.create('Guests', {
-        id: crypto.randomUUID(), hotelId, name: guestName, email: guestEmail, phone: guestPhone || '',
-        documentType: 'passport', documentNumber: '', nationality: '', address: '',
-      })
+      // MR-08 (#273) — un huésped = una ficha: se busca por email/teléfono normalizados y solo se
+      // crea si no existe. El lock de fila `Hotels` que toma el helper y la búsqueda van DENTRO de
+      // esta misma tx. Orden de locks: siempre Rooms (arriba) → Hotels (acá); nadie hace el inverso.
+      const guestMatch = await findOrCreateGuest(
+        { guests: guestsOnTx(tx), lockTx: tx },
+        { hotelId, name: guestName, email: guestEmail, phone: guestPhone },
+      )
+      guest = guestMatch.guest
       // F0 0.13 — AccessToken público (UUID). Solo el flujo público lo setea; las reservas
       // creadas desde `/api/panel/reservas` NO lo reciben → `accessToken=null` → 404 en el
       // endpoint público (anti-enumeración IDOR, spec booking-unification D4).

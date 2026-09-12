@@ -38,6 +38,7 @@ import type { RepositoryAdapter } from 'arckode-framework'
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { readHotelTaxes, taxLinesOn, sumTaxLines } from './hotel-taxes'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
@@ -611,10 +612,14 @@ export async function createPublicBookingGroup(
         }
       }
 
-      guest = await tx.create('Guests', {
-        id: crypto.randomUUID(), hotelId, name: guestName, email: guestEmail, phone: guestPhone || '',
-        documentType: 'passport', documentNumber: '', nationality: '', address: '',
-      })
+      // MR-08 (#273) — un huésped = una ficha: se busca por email/teléfono normalizados y solo se
+      // crea si no existe. El lock de fila `Hotels` que toma el helper y la búsqueda van DENTRO de
+      // esta misma tx. Orden de locks: siempre Rooms (arriba) → Hotels (acá); nadie hace el inverso.
+      const guestMatch = await findOrCreateGuest(
+        { guests: guestsOnTx(tx), lockTx: tx },
+        { hotelId, name: guestName, email: guestEmail, phone: guestPhone },
+      )
+      guest = guestMatch.guest
 
       // Reusa `Groups` (módulo `grupos`, YA EXISTE) — mismo mecanismo que el panel usa para
       // reservas de agencia armadas a mano. `Reservations.groupId` ya apunta acá.
