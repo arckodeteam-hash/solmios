@@ -495,7 +495,7 @@
                       <span class="text-[10px] text-text-muted whitespace-nowrap">0 = gratis</span>
                     </div>
                     <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input v-model="row.isActive" type="checkbox" data-testid="custom-amenity-active" class="w-4 h-4 rounded text-cyan" />
+                      <input v-model="row.isActive" type="checkbox" aria-label="Amenidad disponible" data-testid="custom-amenity-active" class="w-4 h-4 rounded text-cyan" />
                       <span class="text-[11px] font-bold text-navy">Disponible</span>
                     </label>
                     <button type="button" @click="removeCustomAmenityRow(i)" data-testid="custom-amenity-remove" aria-label="Quitar amenidad"
