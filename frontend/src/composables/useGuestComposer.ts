@@ -7,8 +7,14 @@
 // misma lógica de composición/cotización/capacidad y no diverjan con el tiempo (un fix en una no
 // se olvida en la otra). `useBookingStore()` es un store Pinia singleton, así que ambos
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
-import { computed, reactive } from 'vue'
-import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal, type CartLine } from './useBooking'
+//
+// #343 — el estado de cada tarjeta (`ComposerState`, keyed por `rt.id`) TAMBIÉN vive en el store
+// (`store.composerState`), no en un `reactive({})` de esta instancia: el widget desmonta
+// `RoomsStep` al cambiar de paso y cualquier remount de este composable reiniciaba todo a
+// 1 adulto / 0 niños / sin Cama mientras el carrito seguía sumando. Lo que el huésped ve en la
+// tarjeta permanece hasta que lo cambie explícitamente (o Edite una línea, o `store.reset()`).
+import { computed } from 'vue'
+import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal, type CartLine, type ComposerState } from './useBooking'
 // `round2` compartido del frontend (espejo de `shared/utils/money.ts` del backend) — nada de
 // copias locales por archivo.
 import { round2 } from '@/utils/cash-arqueo'
@@ -28,30 +34,9 @@ export interface MealPlanOption {
 }
 
 
-interface ComposerState {
-  adults: number
-  ages: number[]
-  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — por TARJETA, igual que adults/ages:
-  // cada habitación pide su propia cuna para SU bebé, no la del carrito entero. Sí/No únicamente
-  // (el pedido de corrección es explícito: "no preguntar si desea una, dos o más cunas") — no
-  // existe una cantidad en el estado, `addComposedRoom` la deriva SIEMPRE en 1/0 al enviar.
-  // #292 — `needsCrib:true` va SIEMPRE acompañado de `CRIB_AMENITY_KEY` en `roomAmenityKeys`
-  // (`setNeedsCrib` los mueve juntos): así el precio de la cuna viaja por el mecanismo de
-  // amenidades de habitación, sin un camino de cobro aparte.
-  needsCrib: boolean
-  // REQ-01 (#290, amenidades de la habitación) — keys del catálogo por tipo
-  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta. Opcional y ausente en el estado
-  // fresco (se crea recién al primer toggle): el estado inicial sigue siendo exactamente
-  // `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan. Sin relación
-  // con la composición salvo la cuna (ver `syncCribToBabies`): una cama extra no se limpia al
-  // cambiar edades. Leer vía `roomAmenityKeys(rt)`.
-  roomAmenityKeys?: string[]
-  // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
-  // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);
-  // ausente = 'room_only'. Se conserva al cambiar adultos/niños — solo cambia el importe. Leer vía
-  // `mealPlanCode(rt)`.
-  mealPlan?: MealPlanCode | 'room_only'
-}
+// #343 — la interfaz vive en `useBooking.ts` (junto al estado); re-export para que los imports
+// existentes (`import type { ComposerState } from './useGuestComposer'`) sigan funcionando.
+export type { ComposerState }
 
 function freshComposerState(): ComposerState {
   return { adults: 1, ages: [], needsCrib: false }
@@ -59,7 +44,9 @@ function freshComposerState(): ComposerState {
 
 export function useGuestComposer() {
   const store = useBookingStore()
-  const composerState = reactive<Record<string, ComposerState>>({})
+  // #343 — SIEMPRE leído del store en el momento (no capturado en una const): `store.reset()`
+  // reemplaza el objeto entero y una referencia vieja quedaría apuntando a un estado muerto.
+  const composerState = () => store.composerState
 
   /** Requerimiento 4 (Edad de los niños, 2026-09-03) — cantidad de `<option>` que debe ofrecer el
    *  desplegable de edad (0..maxChildAge, NO un rango fijo 0-17): si el hotel configuró
@@ -68,10 +55,12 @@ export function useGuestComposer() {
    *  da exactamente las opciones 0..maxChildAge. */
   const maxChildAgeOptions = computed(() => Math.max(0, Math.floor(store.childPolicy.maxChildAge)) + 1)
 
-  /** Estado del composer de una tarjeta — se crea con 1 adulto / 0 niños la primera vez que se lee. */
+  /** Estado del composer de una tarjeta — se crea con 1 adulto / 0 niños la primera vez que se lee
+   *  (y SOLO esa vez: después persiste en el store, ver #343). */
   function composer(rt: RoomTypeRate): ComposerState {
-    if (!composerState[rt.id]) composerState[rt.id] = freshComposerState()
-    return composerState[rt.id]!
+    const all = composerState()
+    if (!all[rt.id]) all[rt.id] = freshComposerState()
+    return all[rt.id]!
   }
 
   function setAdults(rt: RoomTypeRate, value: number): void {
@@ -369,8 +358,11 @@ export function useGuestComposer() {
       ...(roomAmenityKeysToSend.length > 0 ? { roomAmenityKeys: roomAmenityKeysToSend } : {}),
       ...(mealPlanToSend !== 'room_only' ? { mealPlan: mealPlanToSend } : {}),
     })
-    // Reset: la próxima habitación (misma tarjeta u otra) arranca de nuevo en 1 adulto/0 niños.
-    composerState[rt.id] = freshComposerState()
+    // #343 — NO se reinicia la tarjeta después de agregar: lo que el huésped ve (adultos, edades,
+    // cuna, amenidades, régimen) es exactamente lo que acaba de entrar al carrito, y un segundo
+    // click suma otra unidad a la MISMA línea (`store.addToCart` agrupa por composición). Antes
+    // volvía a 1 adulto / 0 niños / sin Cama mientras el total conservaba los importes, y el
+    // dueño lo reportó como "se pierde la selección". Cambia sólo cuando el huésped la toca.
   }
 
   /**
@@ -393,7 +385,7 @@ export function useGuestComposer() {
     const rt = (store.ratesResponse?.roomTypes ?? []).find((r) => r.id === line.roomType)
     if (!rt || line.adults === undefined || line.childrenAges === undefined) return false
     const keys = (line.roomAmenities ?? []).map((a) => a.key)
-    composerState[rt.id] = {
+    composerState()[rt.id] = {
       adults: line.adults,
       ages: [...line.childrenAges],
       needsCrib: !!line.needsCrib,

@@ -256,8 +256,8 @@ describe('useGuestComposer — cuna por habitación (#292): tarjetas independien
     expect(store.roomAmenityLines).toEqual([
       { lineKey: store.cart[0]!.key, roomName: 'double', key: CRIB_AMENITY_KEY, name: 'Cuna', price: 15, quantity: 1, total: 15 },
     ])
-    // La tarjeta quedó limpia para la próxima habitación.
-    expect(c.composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    // #343 — la tarjeta conserva exactamente lo agregado (bebé + cuna), no se reinicia.
+    expect(c.composer(room)).toEqual({ adults: 1, ages: [0], needsCrib: true, roomAmenityKeys: [CRIB_AMENITY_KEY] })
   })
 
   it('addComposedRoom: si la cuna quedó en el estado pero el tipo dejó de ofrecerla, no viaja ni needsCrib ni la key', async () => {

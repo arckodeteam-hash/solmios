@@ -97,14 +97,32 @@ async function bumpChildren(w: VueWrapper, times = 1): Promise<void> {
   }
 }
 
+/** Todos los "−" de la tarjeta, mismo orden que `plusButtons` (Adultos, Niños). #343 — la tarjeta
+ *  conserva lo agregado, así que bajar es la única forma de volver a 1 adulto / 0 niños. */
+function minusButtons(w: VueWrapper) {
+  return w.findAll('button').filter((b) => b.text() === '−')
+}
+
+async function lowerAdults(w: VueWrapper, times = 1): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await minusButtons(w)[0]!.trigger('click')
+  }
+}
+
+async function lowerChildren(w: VueWrapper, times = 1): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await minusButtons(w)[1]!.trigger('click')
+  }
+}
+
 function addRoomButton(w: VueWrapper) {
   return w.findAll('button').find((b) => b.text().includes('Agregar esta habitación'))!
 }
 
-/** `addComposedRoom` es async (`await store.addToCart(...)`) y recién después resetea el
- *  composer: `trigger('click')` solo espera un nextTick, no el resto de la cadena de promesas,
- *  así que hace falta `flushPromises()` para que el reset (y el alta al carrito) ya esté aplicado
- *  antes de la siguiente aserción o del próximo bump del composer. */
+/** `addComposedRoom` es async (`await store.addToCart(...)`): `trigger('click')` solo espera un
+ *  nextTick, no el resto de la cadena de promesas, así que hace falta `flushPromises()` para que
+ *  el alta al carrito ya esté aplicada antes de la siguiente aserción o del próximo bump del
+ *  composer (#343: la tarjeta NO se reinicia tras agregar — conserva lo agregado). */
 async function clickAddRoom(w: VueWrapper): Promise<void> {
   await addRoomButton(w).trigger('click')
   await flushPromises()
@@ -175,7 +193,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     const store = useBookingStore()
 
     await clickAddRoom(w) // 1 adulto → "para 1" → $210
-    await bumpAdults(w, 1) // el composer sigue vivo tras el reset → 1→2
+    await bumpAdults(w, 1) // la tarjeta conserva 1 adulto tras agregar (#343) → 1→2
     await clickAddRoom(w) // 2 adultos → "para 2" → $300
 
     expect(store.cart).toHaveLength(2)
@@ -184,14 +202,22 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     w.unmount()
   })
 
-  it('el composer se resetea a 1 adulto / 0 niños después de agregar', async () => {
+  it('el composer conserva la composición después de agregar — NO vuelve a 1 adulto / 0 niños (#343)', async () => {
     const w = render()
+    const store = useBookingStore()
     await bumpAdults(w, 1) // 2 adultos
     await clickAddRoom(w)
 
-    // Volvió a "para 1" ($210), no se quedó en 2.
-    expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('1')
-    expect(w.text()).toContain('210')
+    // Sigue en "para 2" ($300): la tarjeta muestra exactamente lo que se agregó.
+    expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('2')
+    expect(w.find('[aria-label="Familiar · Adultos: 2"]').exists()).toBe(true)
+    expect(w.text()).toContain('300')
+
+    // Un segundo click suma otra unidad a la MISMA línea y la tarjeta sigue igual.
+    await clickAddRoom(w)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.quantity).toBe(2)
+    expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('2')
     w.unmount()
   })
 
@@ -300,8 +326,10 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       await w.get('select').setValue('2')
       await clickAddRoom(w)
 
-      // Habitación 2: 1 adulto (default tras el reset) + niños de 6 y 10 (ambos con plaza).
-      await bumpChildren(w, 2)
+      // Habitación 2: 1 adulto + niños de 6 y 10 (ambos con plaza). #343 — la tarjeta conserva
+      // la habitación 1 (2 adultos + 1 niño): se baja un adulto y se suma un niño explícitamente.
+      await lowerAdults(w, 1)
+      await bumpChildren(w, 1)
       const selects = w.findAll('select')
       await selects[0]!.setValue('6')
       await selects[1]!.setValue('10')
@@ -325,7 +353,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       await w.get('select').setValue('5')
       await clickAddRoom(w)
 
-      await bumpChildren(w, 1) // otra vez 1 adulto + 1 niño, pero edad DISTINTA
+      // #343 — la tarjeta conserva 1 adulto + 1 niño: solo se cambia la edad (DISTINTA).
       await w.get('select').setValue('9')
       await clickAddRoom(w)
 
@@ -462,9 +490,9 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       await w.get('select').setValue('8')
       await clickAddRoom(w)
 
-      // El composer se resetea tras agregar — arma la segunda composición desde cero.
+      // #343 — la tarjeta conserva la habitación 1 (1 adulto + niño de 8): se suma un niño más.
       // Habitación 2: 1 adulto + niños de 1 (libre, ≤3) y 9 (con plaza) → chargeable 1+1=2.
-      await bumpChildren(w, 2)
+      await bumpChildren(w, 1)
       const selects = w.findAll('select')
       await selects[0]!.setValue('1')
       await selects[1]!.setValue('9')
@@ -616,8 +644,13 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       await composeBabyAndPaying(w) // 1 adulto + [1, 8]
       await clickAddRoom(w)
       expect(store.cart).toHaveLength(1)
-      // El composer se reseteó tras agregar (1 adulto / 0 niños).
+      // #343 — la tarjeta conserva lo agregado (2 niños). Para probar que Editar RESTAURA lo
+      // guardado, el huésped la cambia antes: quita los dos niños y sube a 2 adultos.
+      expect(w.findAll('select')).toHaveLength(2)
+      await lowerChildren(w, 2)
+      await bumpAdults(w, 1)
       expect(w.findAll('select')).toHaveLength(0)
+      expect(w.find('[aria-label="Familiar · Adultos: 2"]').exists()).toBe(true)
 
       await w.get('[data-testid="cart-edit"]').trigger('click')
       await flushPromises()
@@ -640,10 +673,12 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       const store = useBookingStore()
       await bumpAdults(w, 1) // 2 adultos, sin niños → "para 2"
       await clickAddRoom(w)
-      await bumpAdults(w, 1)
-      await clickAddRoom(w)
+      await clickAddRoom(w) // #343 — la tarjeta sigue en 2 adultos: misma línea, quantity 2
       expect(store.cart).toHaveLength(1)
       expect(store.cart[0]!.quantity).toBe(2)
+      // Se cambia la tarjeta antes de editar para probar que Editar RESTAURA los 2 adultos.
+      await lowerAdults(w, 1)
+      expect(w.find('[aria-label="Familiar · Adultos: 1"]').exists()).toBe(true)
 
       await w.get('[data-testid="cart-edit"]').trigger('click')
       await flushPromises()

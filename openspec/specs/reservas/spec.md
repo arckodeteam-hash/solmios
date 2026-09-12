@@ -467,6 +467,59 @@ re-evalúa en vivo al cambiar la edad de un menor.
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
 
+### Requirement: Composición visible del motor público = composición cotizada (#343)
+
+En el paso "Habitación" del motor público (widget `/book/:slug` → `RoomsStep.vue`, landing →
+`BookingModal.vue`, ambos vía `frontend/src/composables/useGuestComposer.ts`) lo que el huésped
+compone en cada tarjeta de tipo —adultos, cantidad y edad de cada niño (con su clasificación
+niño/bebé y consume/no consume plaza), cuna, amenidades de habitación tildadas y régimen— MUST
+persistir hasta que él lo cambie explícitamente. Ese estado (`ComposerState`, keyed por
+`roomTypeId`) vive en el store Pinia `booking-widget` (`useBooking.ts` → `composerState`), NO en
+la instancia del componente: un re-render, un recálculo de precio, un cambio de paso (el widget
+desmonta `RoomsStep`) o cerrar y reabrir el modal MUST NOT reiniciarlo. Sólo lo cambian el
+huésped, `editCartLine` (que devuelve una unidad de la línea al composer con exactamente lo
+guardado) y `store.reset()` (cambio de hotel / desmontaje del widget). Cada tipo de habitación
+tiene su propio estado, independiente del resto (reservas múltiples).
+
+"Agregar esta habitación" MUST guardar en el carrito exactamente la composición visible y MUST
+NOT reiniciar la tarjeta: después de agregar, la tarjeta sigue mostrando lo que acaba de entrar
+al carrito; un segundo click suma otra unidad a la misma línea (agrupación por composición).
+
+El resumen estimado previo al pago (`EstimatedTotals.vue`, montado en Habitación/Extras) MUST
+listar por separado: subtotal de alojamiento (`roomsSubtotal`), cada upsell, cada amenidad de
+habitación (`roomAmenityLines`, p.ej. "Cama"), cada régimen (`mealPlanLines`, "incluido" cuando
+`priceMode: included`), el descuento promo, cada impuesto con su nombre y % tal como lo publica
+`GET /api/public/hotels/:slug/rates` → `taxes` (origen: `configuration('taxes')` con fallback
+`hotels.taxRate`, `hotel-taxes.ts`; nunca hardcodeado en la interfaz) y el total estimado. Lo
+listado MUST cerrar: alojamiento + extras − descuento + impuestos = total, y una amenidad que
+aparece destildada MUST NOT quedar en el total.
+
+#### Scenario: Agregar y editar conserva la composición
+
+- GIVEN una tarjeta con 2 adultos, niños de 5 y 1 años y la amenidad "Cama" (US$200) tildada
+- WHEN el huésped pulsa "Agregar esta habitación"
+- THEN el carrito tiene una línea con `adults:2`, `childrenAges:[5,1]`, `roomAmenities:[Cama 200]`
+- AND la tarjeta sigue mostrando 2 adultos, edades 5 y 1 y Cama tildada
+- AND al pulsar "Editar" la línea vuelve al composer con esos mismos datos
+
+#### Scenario: El desglose cierra con la Cama a la vista
+
+- GIVEN alojamiento de 390 + Cama 200 en el carrito y un impuesto ITBIS 18% configurado
+- WHEN se muestra el resumen estimado
+- THEN aparecen Subtotal 390.00 · Cama 200.00 · ITBIS (18%) 106.20 · Total estimado 696.20
+
+#### Scenario: Destildar quita el importe
+
+- GIVEN la composición anterior
+- WHEN el huésped quita un niño, baja a 1 adulto y destilda Cama, y vuelve a agregar
+- THEN `roomAmenitiesTotal` es 0 y el total estimado es el alojamiento de 1 adulto más su impuesto
+
+#### Scenario: Cambiar de paso no reinicia la tarjeta
+
+- GIVEN una composición armada en una tarjeta (2 adultos, 2 niños, Cama)
+- WHEN el widget desmonta y vuelve a montar `RoomsStep` (otra instancia de `useGuestComposer()`)
+- THEN la tarjeta muestra la misma composición y las otras tarjetas conservan la suya
+
 ### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268)
 
 El hotel configura sus regímenes en `meal_plans` (`code` breakfast|half_board|all_inclusive,

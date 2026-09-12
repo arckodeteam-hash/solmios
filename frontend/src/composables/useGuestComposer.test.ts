@@ -288,9 +288,9 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
     setNeedsCrib(room, true)
     await addComposedRoom(room)
 
-    // 2ª habitación: MISMA composición (adultos default 1, bebé edad 0), SIN cuna.
-    setChildrenCount(room, 1)
-    setChildAge(room, 0, 0)
+    // 2ª habitación: MISMA composición (1 adulto, bebé edad 0), SIN cuna. #343 — la tarjeta
+    // conserva lo agregado (cuna incluida), así que el huésped la destilda explícitamente.
+    setNeedsCrib(room, false)
     await addComposedRoom(room)
 
     expect(store.cart).toHaveLength(2) // no se mezclaron en una sola línea "×2"
@@ -299,8 +299,8 @@ describe('useGuestComposer — cuna (Sí/No, gateada por custom:cuna del tipo)',
   })
 })
 
-describe('useGuestComposer — addComposedRoom resetea la tarjeta tras agregar', () => {
-  it('después de agregar, la tarjeta vuelve a 1 adulto / 0 niños (la próxima habitación arranca limpia)', async () => {
+describe('useGuestComposer — addComposedRoom conserva la tarjeta tras agregar (#343)', () => {
+  it('después de agregar, la tarjeta sigue mostrando exactamente la composición agregada (no vuelve a 1 adulto / 0 niños)', async () => {
     const store = useBookingStore()
     store.ratesResponse = {
       currency: 'USD', chargeCurrency: 'USD', nights: 2, checkIn: '2026-09-10', checkOut: '2026-09-12',
@@ -318,8 +318,15 @@ describe('useGuestComposer — addComposedRoom resetea la tarjeta tras agregar',
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]!.adults).toBe(2)
     expect(store.cart[0]!.childrenAges).toEqual([7])
-    // El composer de la tarjeta se reseteó — no arrastra la composición anterior.
-    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    // #343 — el composer de la tarjeta NO se reinicia: lo visible es lo que se guardó.
+    expect(composer(room)).toEqual({ adults: 2, ages: [7], needsCrib: false })
+
+    // Un segundo click suma otra unidad a la MISMA línea (misma composición) — no crea una línea
+    // nueva ni cambia lo que muestra la tarjeta.
+    await addComposedRoom(room)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.quantity).toBe(2)
+    expect(composer(room)).toEqual({ adults: 2, ages: [7], needsCrib: false })
   })
 })
 
@@ -456,7 +463,10 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
     setNeedsCrib(room, true)
     await addComposedRoom(room)
     expect(store.cart).toHaveLength(1)
-    // Tras agregar la tarjeta quedó limpia — el dato solo vive en la línea del carrito.
+    // #343 — la tarjeta conserva lo agregado. Para probar que Editar RESTAURA (y no que
+    // simplemente "quedó"), el huésped la cambia antes de editar.
+    setAdults(room, 1)
+    setChildrenCount(room, 0)
     expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
 
     expect(editCartLine(store.cart[0]!)).toBe(true)
@@ -467,13 +477,17 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
 
   it('recupera roomAmenityKeys (#290: cama extra de la habitación) — se perdían al editar', async () => {
     const store = setupStore()
-    const { setAdults, toggleRoomAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const { setAdults, toggleRoomAmenity, addComposedRoom, composer, editCartLine, roomAmenityKeys } = useGuestComposer()
     const room = rt('double')
     setAdults(room, 2)
     toggleRoomAmenity(room, 'custom:cama-extra')
     await addComposedRoom(room)
     expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cama-extra', name: 'Cama extra', price: 20 }])
-    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    // #343 — la tarjeta conserva lo agregado; se cambia antes de editar para probar la restauración.
+    setAdults(room, 1)
+    toggleRoomAmenity(room, 'custom:cama-extra')
+    expect(composer(room).adults).toBe(1)
+    expect(roomAmenityKeys(room)).toEqual([])
 
     expect(editCartLine(store.cart[0]!)).toBe(true)
 
@@ -528,15 +542,21 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
     expect(store.cart).toHaveLength(2)
     const suiteLine = store.cart.find((l) => l.roomType === 'suite')!
     const suiteBefore = JSON.parse(JSON.stringify(suiteLine))
-    // La tarjeta de la suite tiene algo a medio componer que NO debe pisarse.
+    // La tarjeta de la suite tiene algo a medio componer que NO debe pisarse (#343: conserva el
+    // bebé con cuna que agregó, más el cambio de adultos).
     setAdults(suite, 3)
+    const suiteComposerBefore = JSON.parse(JSON.stringify(composer(suite)))
+    // La tarjeta double se cambia antes de editar para probar que Editar RESTAURA lo guardado.
+    setAdults(double, 1)
+    setChildrenCount(double, 0)
 
     expect(editCartLine(store.cart.find((l) => l.roomType === 'double')!)).toBe(true)
 
     expect(composer(double)).toEqual({ adults: 2, ages: [8], needsCrib: false })
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]).toEqual(suiteBefore) // la línea de la suite quedó intacta
-    expect(composer(suite)).toEqual({ adults: 3, ages: [], needsCrib: false }) // la otra tarjeta tampoco se tocó
+    expect(composer(suite)).toEqual(suiteComposerBefore) // la otra tarjeta tampoco se tocó
+    expect(composer(suite)).toEqual({ adults: 3, ages: [1], needsCrib: true, roomAmenityKeys: ['custom:cuna'] })
   })
 
   it('roomType desconocido (ya no está en ratesResponse) devuelve false y el carrito queda igual', async () => {
@@ -551,7 +571,7 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
     expect(editCartLine({ ...store.cart[0]!, roomType: 'ghost' })).toBe(false)
 
     expect(store.cart).toEqual(before)
-    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    expect(composer(room)).toEqual({ adults: 2, ages: [], needsCrib: false }) // #343: sigue lo agregado
     expect(composer(rt('ghost'))).toEqual({ adults: 1, ages: [], needsCrib: false })
   })
 
