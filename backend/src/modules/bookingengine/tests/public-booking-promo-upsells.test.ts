@@ -60,7 +60,8 @@ function makeOrm(state: {
   const created: any[] = []
   const updated: any[] = []
   const updateManyCalls: Array<{ model: string; filters: any; changes: any; affected: number }> = []
-  const room = state.room ?? { id: 'r1', hotelId: 'h1', basePrice: 100, status: 'available' }
+  // REQ-HAC-05 (#260): la venta es por TIPO — la unidad necesita `type` y `findMany('Rooms')` la devuelve.
+  const room = { type: 'double', ...(state.room ?? { id: 'r1', hotelId: 'h1', basePrice: 100, status: 'available' }) }
 
   const orm: any = {
     findById: async (_m: string, id: string) => {
@@ -69,6 +70,7 @@ function makeOrm(state: {
     },
     findMany: async (model: string, filters?: any) => {
       if (model === 'Reservations') return state.reservations ?? []
+      if (model === 'Rooms') return [room]
       return []
     },
     findOne: async (model: string, filters: any) => {

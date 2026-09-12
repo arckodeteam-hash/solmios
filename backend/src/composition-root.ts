@@ -18,7 +18,7 @@ import { HotelAuth } from './infrastructure/auth/hotel-auth'
 import { registerSharedModels } from './shared/models'
 import { configureStripe } from './infrastructure/stripe-config'
 import { bootstrapEmail } from './infrastructure/email-bootstrap'
-import { createPushAvailability } from './shared/utils/push-availability'
+import { createPushAvailability, createPushAvailabilityByType } from './shared/utils/push-availability'
 import { createNoShowCron } from './modules/reports/usecases/no-show-cron'
 import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messages-cron'
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
@@ -296,6 +296,8 @@ const externalReviewsFetchers: ExternalReviewsFetchers = {
 }
 
 const pushAvailability = createPushAvailability((name) => system.resolveModule(name), logger)
+// REQ-HAC-05 (#260) — el motor público crea por TIPO sin unidad: su push a las OTAs va por `roomType`.
+const pushAvailabilityByType = createPushAvailabilityByType((name) => system.resolveModule(name), logger)
 
 // Puertos de medición del módulo `monitoring` (#96). Mismo criterio de motor que `db` arriba:
 // DATABASE_URL → Postgres (pg_dump), si no SQLite (copia consistente de DB_PATH). El directorio
@@ -319,7 +321,7 @@ const mods = [
   CanalesModule(), AriOutboxModule(), OpinionesModule(), GastosModule(), FoliosModule(), PaymentsModule(),
   EmpleadosModule({ storage }), PayrollModule(), AttendanceModule(), ActivosModule(), CapacitacionModule(), CrmModule(), MarketingModule(),
   ReclutamientoModule(), ReembolsosModule(),
-  AiRecepcionistaModule(), AiGerenteModule(), BookingengineModule({ pushAvailability }),
+  AiRecepcionistaModule(), AiGerenteModule(), BookingengineModule({ pushAvailability, pushAvailabilityByType }),
   CashModule(),
   // Contabilidad de doble entrada (CTB-0). Módulo aislado; los asientos automáticos se
   // enganchan por conectores en tareas posteriores (CTB-4). Ver openspec contabilidad-tesoreria.

@@ -1,12 +1,13 @@
-// public-booking-race.test.ts — Overbooking: dos huéspedes, la última habitación, al mismo tiempo.
+// public-booking-race.test.ts — Overbooking: dos huéspedes, la última unidad del tipo, al mismo tiempo.
 //
-// El chequeo de solape de `createPublicBookingDirect` ocurre FUERA de la transacción, y el insert
+// El `availableOfType` de `createPublicBookingDirect` ocurre FUERA de la transacción, y el insert
 // adentro. Entre esos dos puntos hay una ventana: dos requests concurrentes pasaban ambos el
-// chequeo y se creaban DOS reservas sobre la misma habitación y las mismas fechas.
+// chequeo y se creaban DOS reservas del mismo tipo sobre una sola unidad y las mismas fechas.
 //
 // Reproducido antes del fix congelando al primer comprador justo después de su chequeo (los dos
-// devolvían 201, quedaban 2 filas). Ahora la transacción toma el lock de la fila de la habitación
-// y RE-LEE el solape adentro: el que llega tarde ve la reserva del otro y recibe 409.
+// devolvían 201, quedaban 2 filas). Ahora la transacción toma el lock de las filas del tipo y
+// REPITE `availableOfType` adentro (REQ-HAC-05: la reserva nace sin unidad, así que el re-chequeo
+// es por tipo, no por `roomId`): el que llega tarde ve la reserva del otro y recibe 409.
 //
 // El lock (`updateMany` sobre `Rooms`) existe para SERIALIZAR, no para juzgar: quien decide es la
 // re-lectura. Por eso no se aborta por `affected === 0` — bastaría que alguien hubiera editado la
@@ -30,7 +31,8 @@ function makeWorld() {
     model === 'Reservations' ? reservations : model === 'Rooms' ? rooms : model === 'Hotels' ? hotels : []
   const match = (row: any, filter: any) => Object.entries(filter ?? {}).every(([k, v]) => row[k] === v)
 
-  /** `gate` congela la lectura del chequeo final de solape del comprador marcado como lento. */
+  /** `gate` congela la lectura por tipo (`Reservations {hotelId, roomType}`) del `availableOfType` de
+   *  afuera de la tx del comprador marcado como lento. */
   let gate: Promise<void> | null = null
   let openGate: (() => void) | null = null
   let slowBuyerActive = false
@@ -38,7 +40,7 @@ function makeWorld() {
   const orm: any = {
     async findMany(model: string, filter: any = {}) {
       const rows = pick(model).filter((r: any) => match(r, filter))
-      if (model === 'Reservations' && filter?.roomId && slowBuyerActive && gate) {
+      if (model === 'Reservations' && filter?.roomType && slowBuyerActive && gate) {
         const wait = gate
         gate = null
         await wait
@@ -98,7 +100,7 @@ describe('createPublicBookingDirect — carrera por la última habitación', () 
     const b = await createPublicBookingDirect(w.orm, { ...BODY, guestEmail: 'b@b.com' })
     expect(b.status).toBe(201)
 
-    // A retoma: su chequeo decía "libre", pero la re-lectura dentro de la tx ve la de B.
+    // A retoma: su chequeo decía "libre", pero el re-chequeo por tipo dentro de la tx ve la de B.
     w.release()
     const a = await pA
 
@@ -114,7 +116,7 @@ describe('createPublicBookingDirect — carrera por la última habitación', () 
     expect(w.reservations).toHaveLength(1)
   })
 
-  it('dos reservas que NO se solapan en fechas conviven en la misma habitación', async () => {
+  it('dos reservas que NO se solapan en fechas conviven en el mismo tipo de una sola unidad', async () => {
     const w = makeWorld()
     const first = await createPublicBookingDirect(w.orm, { ...BODY, guestEmail: 'uno@a.com' })
     const second = await createPublicBookingDirect(w.orm, {

@@ -14,11 +14,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function makeOrm(overrides: Partial<{ room: any; reservations: any[] }> = {}) {
   const created: any[] = []
-  const room = overrides.room ?? { id: 'r1', hotelId: 'h1', basePrice: 100, status: 'available' }
+  // REQ-HAC-05 (#260): la venta es por TIPO — la unidad necesita `type` y `findMany('Rooms')` la devuelve.
+  const room = overrides.room ?? { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }
   const reservations = overrides.reservations ?? []
   const orm: any = {
     findById: async (_model: string, _id: string) => room,
-    findMany: async (_model: string) => reservations,
+    findMany: async (model: string) => (model === 'Rooms' ? [room] : model === 'Reservations' ? reservations : []),
     create: async (model: string, payload: any) => {
       const row = { id: payload.id || 'row-1', ...payload }
       created.push({ model, row })
@@ -66,12 +67,17 @@ describe('createPublicBookingDirect — accessToken público (F0 0.13)', () => {
   })
 
   // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta (antes sólo el
-  // panel lo escribía y las reservas web quedaban con `roomType` NULL).
-  it('persiste roomType = rooms.type de la unidad resuelta (HAC-01)', async () => {
+  // panel lo escribía y las reservas web quedaban con `roomType` NULL). REQ-HAC-05 (#260): el
+  // `roomId` del body sólo deriva el tipo — la fila nace SIN unidad (`roomId` null).
+  it('persiste roomType = rooms.type derivado del roomId (HAC-01) y roomId null (HAC-05)', async () => {
     const { orm, created } = makeOrm({ room: { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' } })
     const res = await createPublicBookingDirect(orm, baseBody)
     expect(res.status).toBe(201)
-    expect(created.find((c) => c.model === 'Reservations')!.row.roomType).toBe('double')
+    const row = created.find((c) => c.model === 'Reservations')!.row
+    expect(row.roomType).toBe('double')
+    expect(row.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('double')
+    expect(res.body.reservation.roomId).toBeNull()
   })
 
   it('accessToken distinto entre dos reservas (no reutiliza)', async () => {

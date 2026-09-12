@@ -111,12 +111,13 @@ describe('[alias] la cuna se reconoce por nombre/slug, no sólo por custom:cuna'
 })
 
 describe('[cribUnavailable] cuna pedida que la unidad asignada no ofrece', () => {
-  it('reserva directa: nota en `notes`, `cribUnavailable` persistido y expuesto; la asignación no cambia', async () => {
+  it('reserva directa: nota en `notes`, `cribUnavailable` persistido y expuesto; la fila nace sin unidad (HAC-05)', async () => {
     const { orm, tables } = makeDb({ rooms: [room('r-suite', 'suite', 150)], roomAmenities: [am('r-suite', 'wifi')] })
     const res = await direct(orm, { roomType: 'suite', adults: 2, childrenAges: [1], needsCrib: true })
     expect(res.status).toBe(201)
     const saved = tables.Reservations[0]
-    expect(saved.roomId).toBe('r-suite')
+    expect(saved.roomId).toBeNull()
+    expect(saved.roomType).toBe('suite')
     expect(saved.needsCrib).toBe(false)
     expect(saved.cribCount).toBe(0)
     expect(saved.roomAmenities).toEqual([])

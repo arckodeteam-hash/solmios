@@ -4,6 +4,8 @@
 // `status === 'confirmed'` — y la reserva pública nace SIEMPRE `pending`, así que nunca empujaba.
 // El push real es el callback `pushAvailability` que reciben `createPublicBookingDirect` y
 // `createPublicBookingGroup`: una llamada por unidad física asignada, con el roomId resuelto.
+// REQ-HAC-05 (#260): la reserva individual nace SIN unidad (`roomId` null), así que el usecase
+// directo empuja por TIPO (`pushAvailabilityByType`, 9.º arg) y NO invoca al callback por unidad.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
@@ -72,23 +74,34 @@ function makePush() {
   return { pushCalls, pushAvailability }
 }
 
+function makePushByType() {
+  const pushTypeCalls: Array<{ hotelId: string; roomType: string }> = []
+  const pushAvailabilityByType = (hotelId: string, roomType: string) => { pushTypeCalls.push({ hotelId, roomType }) }
+  return { pushTypeCalls, pushAvailabilityByType }
+}
+
 describe('#276 — pushAvailability lo dispara el usecase, una vez por habitación', () => {
-  it('reserva directa (pending) → exactamente 1 push con el hotelId y el roomId resuelto', async () => {
+  it('reserva directa (pending) → exactamente 1 push POR TIPO con el hotelId y el roomType vendido (HAC-05); ninguno por unidad', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' }],
     })
     const { pushCalls, pushAvailability } = makePush()
+    const { pushTypeCalls, pushAvailabilityByType } = makePushByType()
 
     const res = await createPublicBookingDirect(
       orm, { ...BASE_BODY, roomType: 'deluxe', adults: 2 }, pushAvailability, undefined, fakeStripe as any, undefined, stripeUrls,
+      undefined, pushAvailabilityByType,
     )
 
     expect(res.status).toBe(201)
     expect(tables.Reservations).toHaveLength(1)
     expect(tables.Reservations[0].status).toBe('pending') // el connector viejo exigía 'confirmed' → nunca empujaba
-    expect(pushCalls).toHaveLength(1)
-    expect(pushCalls[0]).toEqual({ hotelId: HOTEL_ID, roomId: 'r-deluxe' })
-    expect(pushCalls[0].roomId).toBe(tables.Reservations[0].roomId)
+    expect(tables.Reservations[0].roomId).toBeNull()
+    expect(tables.Reservations[0].roomType).toBe('deluxe')
+    expect(pushTypeCalls).toHaveLength(1)
+    expect(pushTypeCalls[0]).toEqual({ hotelId: HOTEL_ID, roomType: 'deluxe' })
+    // Sin unidad asignada no hay nada que empujar por habitación.
+    expect(pushCalls).toHaveLength(0)
   })
 
   it('grupo de 3 habitaciones → 3 pushes, uno por roomId distinto', async () => {
