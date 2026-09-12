@@ -10,6 +10,10 @@
 // Los ids llevan un prefijo aleatorio por proceso (`cs_test_<rand8>_<n>`): `payments.stripeSessionId`
 // es clave de idempotencia en el backend y dos corridas contra la misma base no deben repetir id.
 //
+// Honra el header `Idempotency-Key` como Stripe: la misma clave sobre el mismo endpoint devuelve la
+// MISMA respuesta (mismo id, sin crear otro recurso) y la misma clave con otro body → 400
+// `idempotency_error`. El backend (stripe-gateway.ts, "F0 0.15") confía en eso contra el doble cobro.
+//
 //   bun run e2e/helpers/stripe-stub.ts --selftest   → OK (valida el contrato con el SDK real)
 
 import { createHmac, randomBytes } from 'node:crypto'
@@ -90,6 +94,8 @@ export interface StripeStub {
   refunds: RefundRecord[]
   /** Todo lo recibido, en orden: sirve para afirmar "el backend pidió el refund" en el spec. */
   requests: StubRequest[]
+  /** Respuestas guardadas por `Idempotency-Key`: clave `<METHOD> <path> <key>` → body crudo + respuesta. */
+  idempotent: Map<string, { rawBody: string; response: StubResponse }>
   stop(): void
 }
 
@@ -148,14 +154,19 @@ function currencyOf(body: FormObject): string {
   return typeof c === 'string' && c ? c.toLowerCase() : 'usd'
 }
 
-interface StubResponse { status: number; contentType: string; body: string }
+export interface StubResponse { status: number; contentType: string; body: string }
 
 function json(status: number, data: unknown): StubResponse {
   return { status, contentType: 'application/json', body: JSON.stringify(data) }
 }
 
-function stripeError(status: number, type: string, message: string): StubResponse {
-  return json(status, { error: { type, message } })
+function stripeError(status: number, type: string, message: string, code?: string): StubResponse {
+  return json(status, { error: { type, message, ...(code ? { code } : {}) } })
+}
+
+/** 404 con `code: resource_missing`, como Stripe cuando el id no existe. */
+function resourceMissing(kind: string, id: string): StubResponse {
+  return stripeError(404, 'invalid_request_error', `No such ${kind}: '${id}'`, 'resource_missing')
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -193,6 +204,7 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
     paymentIntents: new Map(),
     refunds: [],
     requests: [],
+    idempotent: new Map(),
     stop: () => {},
   }
 
@@ -223,10 +235,31 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
     }
 
     // stripe-node manda los params de GET en la query string y los de POST en el body form-urlencoded.
-    const body: FormObject = method === 'GET' || method === 'DELETE'
-      ? parseStripeForm(url.search.replace(/^\?/, ''))
-      : parseStripeForm(await readBody(req))
+    const rawBody = method === 'GET' || method === 'DELETE' ? url.search.replace(/^\?/, '') : await readBody(req)
+    const body: FormObject = parseStripeForm(rawBody)
     stub.requests.push({ method, path, body })
+
+    // Idempotencia al estilo Stripe: misma clave + mismo endpoint → la respuesta guardada, sin crear
+    // nada; misma clave con otro body → 400 idempotency_error. Sólo aplica a POST (en GET Stripe la ignora).
+    const idemHeader = req.headers['idempotency-key']
+    const idemKey = method === 'POST' && typeof idemHeader === 'string' && idemHeader ? `${method} ${path} ${idemHeader}` : null
+    if (idemKey) {
+      const seen = stub.idempotent.get(idemKey)
+      if (seen) {
+        if (seen.rawBody !== rawBody) {
+          return stripeError(400, 'idempotency_error',
+            `Keys for idempotent requests can only be used with the same parameters they were first used with. Try using a key other than '${idemHeader}' if you meant to execute a different request.`)
+        }
+        return seen.response
+      }
+    }
+    const response = await dispatch(method, path, body)
+    if (idemKey) stub.idempotent.set(idemKey, { rawBody, response })
+    return response
+  }
+
+  /** Enruta una llamada ya autenticada y parseada (sin idempotencia: eso lo resuelve `handle`). */
+  const dispatch = async (method: string, path: string, body: FormObject): Promise<StubResponse> => {
     const expand = Object.values(asRecord(body.expand)).filter((v): v is string => typeof v === 'string')
 
     let m: RegExpMatchArray | null
@@ -285,19 +318,19 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
 
     if (method === 'GET' && (m = path.match(/^\/v1\/checkout\/sessions\/([^/]+)$/))) {
       const session = stub.sessions.get(m[1]!)
-      if (!session) return stripeError(404, 'invalid_request_error', `No such checkout.session: '${m[1]}'`)
+      if (!session) return resourceMissing('checkout.session', m[1]!)
       return json(200, withExpand(session, expand, stub))
     }
 
     if (method === 'GET' && (m = path.match(/^\/v1\/payment_intents\/([^/]+)$/))) {
       const pi = stub.paymentIntents.get(m[1]!)
-      if (!pi) return stripeError(404, 'invalid_request_error', `No such payment_intent: '${m[1]}'`)
+      if (!pi) return resourceMissing('payment_intent', m[1]!)
       return json(200, withExpand(pi, expand, stub))
     }
 
     if (method === 'POST' && (m = path.match(/^\/v1\/payment_intents\/([^/]+)\/cancel$/))) {
       const pi = stub.paymentIntents.get(m[1]!)
-      if (!pi) return stripeError(404, 'invalid_request_error', `No such payment_intent: '${m[1]}'`)
+      if (!pi) return resourceMissing('payment_intent', m[1]!)
       pi.status = 'canceled'
       return json(200, withExpand(pi, expand, stub))
     }
@@ -310,8 +343,12 @@ export async function startStripeStub(opts: { port?: number } = {}): Promise<Str
         pi = [...stub.paymentIntents.values()].find(p => p.latest_charge.id === body.charge)
       }
       if (!pi) {
-        return stripeError(400, 'invalid_request_error',
-          `No such ${typeof body.charge === 'string' ? 'charge' : 'payment_intent'}: '${body.charge ?? body.payment_intent ?? ''}'`)
+        const kind = typeof body.charge === 'string' ? 'charge' : 'payment_intent'
+        const ref = body.charge ?? body.payment_intent
+        if (typeof ref !== 'string' || !ref) {
+          return stripeError(400, 'invalid_request_error', 'One of the following params should be provided for this request: payment_intent or charge.', 'parameter_missing')
+        }
+        return resourceMissing(kind, ref)
       }
       const amount = body.amount ? Number(body.amount) : pi.amount - pi.amount_refunded
       const refund: RefundRecord = {
@@ -518,6 +555,57 @@ async function selftest(): Promise<void> {
     const nf = await fetch(`${stub.baseUrl}/v1/customers`, { headers })
     assert(nf.status === 404 && (await nf.json() as { error: { type: string } }).error.type === 'invalid_request_error', '404')
     assert(stub.requests.some(r => r.method === 'POST' && r.path === '/v1/refunds'), 'requests no registra')
+
+    // 8. Idempotency-Key (F0 0.15): repetir la clave devuelve el MISMO objeto y no crea otro recurso.
+    const idemParams: Parameters<typeof stripe.checkout.sessions.create>[0] = {
+      mode: 'payment',
+      line_items: [{ price_data: { currency: 'usd', product_data: { name: 'Reserva' }, unit_amount: 777 }, quantity: 1 }],
+      success_url: 'http://localhost/ok',
+      cancel_url: 'http://localhost/cancel',
+      metadata: { reference: 'ref-idem' },
+    }
+    const sessionsBefore = stub.sessions.size
+    const requestsBefore = stub.requests.length
+    const first = await stripe.checkout.sessions.create(idemParams, { idempotencyKey: 'idem-repeat' })
+    const again = await stripe.checkout.sessions.create(idemParams, { idempotencyKey: 'idem-repeat' })
+    assert(again.id === first.id && again.payment_intent === first.payment_intent, 'idempotencia: la repetición devolvió otra session')
+    assert(stub.sessions.size === sessionsBefore + 1, `idempotencia: esperaba 1 session nueva, hay ${stub.sessions.size - sessionsBefore}`)
+    assert(stub.requests.length === requestsBefore + 2, 'idempotencia: la repetición tiene que quedar en requests igual')
+    const refundsBefore = stub.refunds.length
+    const r1 = await stripe.refunds.create({ payment_intent: first.payment_intent as string, amount: 100 }, { idempotencyKey: 'idem-refund' })
+    const r2 = await stripe.refunds.create({ payment_intent: first.payment_intent as string, amount: 100 }, { idempotencyKey: 'idem-refund' })
+    assert(r1.id === r2.id, 'idempotencia: refund repetido devolvió otro id')
+    assert(stub.refunds.length === refundsBefore + 1, 'idempotencia: el refund repetido creó otro refund')
+    assert(stub.paymentIntents.get(first.payment_intent as string)?.amount_refunded === 100, 'idempotencia: amount_refunded contado dos veces')
+    // La misma clave sirve por endpoint: `idem-refund` en sessions es una clave nueva, no un choque.
+    const other = await stripe.checkout.sessions.create(idemParams, { idempotencyKey: 'idem-refund' })
+    assert(other.id !== first.id, 'idempotencia: la clave tiene que ser por endpoint')
+
+    // 9. Misma clave con otro body → 400 idempotency_error (StripeIdempotencyError en el SDK).
+    const mismatch = await stripe.checkout.sessions
+      .create({ ...idemParams, metadata: { reference: 'ref-otro' } }, { idempotencyKey: 'idem-repeat' })
+      .then(() => null, (e: unknown) => e as { type: string; statusCode?: number; rawType?: string })
+    assert(mismatch, 'idempotencia: misma clave con otro body tendría que fallar')
+    assert(mismatch.type === 'StripeIdempotencyError' && mismatch.statusCode === 400 && mismatch.rawType === 'idempotency_error',
+      `idempotencia: esperaba StripeIdempotencyError 400, vino ${mismatch.type} ${mismatch.statusCode}`)
+    assert(stub.sessions.size === sessionsBefore + 2, 'idempotencia: el choque no tiene que crear session')
+
+    // 10. Recursos inexistentes → 404 resource_missing (StripeInvalidRequestError en el SDK).
+    type SdkErr = { type: string; statusCode?: number; code?: string }
+    const expectMissing = async (label: string, p: Promise<unknown>): Promise<void> => {
+      const err = await p.then(() => null, (e: unknown) => e as SdkErr)
+      assert(err, `${label}: tendría que fallar`)
+      assert(err.type === 'StripeInvalidRequestError' && err.statusCode === 404 && err.code === 'resource_missing',
+        `${label}: esperaba StripeInvalidRequestError 404 resource_missing, vino ${err.type} ${err.statusCode} ${err.code}`)
+    }
+    await expectMissing('GET session inexistente', stripe.checkout.sessions.retrieve('cs_test_nope'))
+    await expectMissing('GET PI inexistente', stripe.paymentIntents.retrieve('pi_test_nope'))
+    await expectMissing('cancel PI inexistente', stripe.paymentIntents.cancel('pi_test_nope'))
+    await expectMissing('refund PI inexistente', stripe.refunds.create({ payment_intent: 'pi_test_nope' }))
+    await expectMissing('refund charge inexistente', stripe.refunds.create({ charge: 'ch_test_nope' }))
+    const noRef = await stripe.refunds.create({}).then(() => null, (e: unknown) => e as SdkErr)
+    assert(noRef && noRef.type === 'StripeInvalidRequestError' && noRef.statusCode === 400,
+      `refund sin PI ni charge: esperaba 400 invalid_request_error, vino ${noRef?.type} ${noRef?.statusCode}`)
   } finally {
     stub.stop()
   }
