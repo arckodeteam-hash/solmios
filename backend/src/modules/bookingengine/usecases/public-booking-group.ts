@@ -91,20 +91,22 @@ export interface RoomLineInput {
    *  MR-10 (#275, Opción A): una línea con `children` plano y sin edades YA NO cotiza por adultos
    *  únicamente — se le sintetizan edades a `maxChildAge` y pasa por el mismo motor. */
   childrenAges?: number[]
-  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación) — a
-   *  diferencia de `upsells` (global al carrito, ver public-booking.ts), esto SÍ es por línea:
-   *  cada habitación del grupo pide su propia cuna para SU bebé, no la del grupo entero. Gateado
-   *  server-side contra los bebés de ESTA línea Y que alguna unidad vendible del TIPO ofrezca
-   *  `custom:cuna` (`CRIB_AMENITY_KEY`), igual que el flujo de 1 habitación (REQ-HAC-05: la fila
-   *  nace sin unidad). "Sí" fuerza esa key en `roomAmenities` de la línea (precio de la unión
-   *  del tipo) y `needsCrib` se persiste en TODAS las filas de la línea como espejo exacto de su
-   *  línea de cuna; "No" la quita aunque venga en el body.
+  /** Tarea 22 (Cuna; #292 por habitación; #341 amenidad NORMAL) — a diferencia de `upsells`
+   *  (global al carrito, ver public-booking.ts), esto SÍ es por línea: cada habitación del grupo
+   *  pide su propia cuna. Desde #341 NO hay gate por bebé: la cuna es una amenidad de habitación
+   *  más y normalmente llega como key cuna en `roomAmenities` de la línea; `needsCrib:true` queda
+   *  por compat con callers viejos y equivale a mandar esa key. Lo único que la decide es que
+   *  alguna unidad vendible del TIPO ofrezca una fila cuna (`CRIB_AMENITY_KEY` o alias), igual
+   *  que el flujo de 1 habitación (REQ-HAC-05: la fila nace sin unidad, precio de la unión del
+   *  tipo), y `needsCrib` se persiste en TODAS las filas de la línea como espejo exacto de su
+   *  línea de cuna.
    *  (#292: `childAmenities` por línea ya no se lee — el catálogo global se dio de baja.) */
   needsCrib?: boolean
   /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
    *  por línea. REQ-HAC-05: sin unidad asignada se resuelven contra la UNIÓN de `RoomAmenities`
    *  de las unidades vendibles del tipo (misma key → la más barata) y todas las filas de la
-   *  línea llevan el mismo snapshot. `custom:cuna` se filtra acá (la gobierna `needsCrib`). */
+   *  línea llevan el mismo snapshot. #341 — una key cuna acá cuenta como pedido de cuna (se
+   *  normaliza a la canónica más abajo, sin duplicar). */
   roomAmenities?: Array<{ key: string }>
   /** MR-03 (#268) — código del régimen de ESTA línea (cada habitación del grupo elige el suyo).
    *  Se resuelve contra `meal_plans` del hotel (precio del server) con las personas de la línea;
@@ -135,14 +137,14 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     const childrenAges = Array.isArray(r?.childrenAges)
       ? r.childrenAges.map((a: unknown) => Number(a)).filter((a: number) => Number.isFinite(a) && a >= 0)
       : []
-    // Tarea 22 — se normaliza acá igual que el resto; el gateo por bebé (¿esta línea tiene
-    // alguno?) Y por oferta de `custom:cuna` del tipo (#292) pasa más abajo, cuando ya se conoce
-    // la composición de CADA línea y las unidades vendibles de su tipo.
-    const needsCrib = r?.needsCrib === true
     // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
-    // #292 — la cuna (toda key que `isCribAmenityKey` reconozca) NO entra por acá: su única
-    // fuente de verdad es `needsCrib`.
-    const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities)
+    // #292/#341 — toda key cuna que `isCribAmenityKey` reconozca (`custom:cuna`, `custom:crib`,
+    // `custom:cuna_para_bebe`…) se saca de las keys y se refleja en `needsCrib` de la línea: más
+    // abajo vuelve UNA sola vez como la key canónica (una key alias del body y un `needsCrib:true`
+    // legacy nunca duplican la línea). Sin gate por bebé (#341): la cuna es una amenidad normal.
+    const allKeys = normalizeRoomAmenityKeys(r?.roomAmenities)
+    const needsCrib = r?.needsCrib === true || allKeys.some((key) => isCribAmenityKey(key))
+    const roomAmenities = allKeys
       .filter((key) => !isCribAmenityKey(key))
       .map((key) => ({ key }))
     // MR-03 (#268) — escalar por línea (mismo `max: 40` que el schema del flujo de 1 habitación);
@@ -293,10 +295,10 @@ export async function createPublicBookingGroup(
     perUnitPrice: number
     /** MR-10 (#275) — personas por unidad que cuentan para `per_person`/`per_person_per_night`. */
     upsellPersonsPerUnit: number
-    // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — por LÍNEA, no por grupo
-    // (a diferencia de los upsells genéricos de abajo): cada habitación pide lo suyo para su
-    // propio bebé. #292 — `needsCrib` = la línea de cuna quedó en el snapshot de la línea
-    // (resuelto contra la unión del tipo); TODAS las filas de la línea lo persisten igual.
+    // Tarea 22 (Cuna, Sí/No; #341 sin gate por bebé) — por LÍNEA, no por grupo (a diferencia de
+    // los upsells genéricos de abajo): cada habitación pide lo suyo, como cualquier amenidad de
+    // habitación. #292 — `needsCrib` = la línea de cuna quedó en el snapshot de la línea
+    // (resuelto contra la unión del tipo, REQ-HAC-05); TODAS las filas de la línea lo persisten igual.
     needsCrib: boolean
     /** Revisión #292 — la línea pidió cuna y NINGUNA unidad vendible del tipo la ofrece (todas
      *  sus filas persisten `cribUnavailable`, va a la nota del grupo y a la respuesta). */
@@ -467,14 +469,14 @@ export async function createPublicBookingGroup(
     // `basePrice` entre las unidades vendibles — lo que `/rates` publica como "desde".
     const typeProfile = roomTypeProfile(line.roomType, typeAvail.sellableRooms, totalGuestsForLine)
 
-    // ─── Cuna (Tarea 22, simplificada 2026-09-09; #292 por habitación) — POR LÍNEA ───────────
-    // Mismo criterio de defensa en profundidad que public-booking.ts: sin al menos un bebé en
-    // ESTA línea, se fuerza "no pedida" sin importar el body. La segunda mitad del gate — ¿alguna
-    // unidad vendible del TIPO ofrece `custom:cuna`? — se cierra DESPUÉS de
+    // ─── Cuna (Tarea 22; #292 por habitación; #341 amenidad NORMAL) — POR LÍNEA ─────────────
+    // Mismo criterio que public-booking.ts: la línea pide cuna si mandó `needsCrib:true` (compat)
+    // o una key cuna en sus `roomAmenities` (ya reflejada en `line.needsCrib` por
+    // `normalizeRoomLines`). Sin gate por bebé (#341). Lo único que la decide — ¿alguna unidad
+    // vendible del TIPO ofrece una fila cuna? (REQ-HAC-05: sin unidad) — se cierra DESPUÉS de
     // `resolveRoomAmenityLines` contra la unión del tipo. Sí/No únicamente — `cribCount` es 1/0
     // espejo de `needsCrib`, nunca una cantidad elegible.
-    const lineBabies = composition.babies
-    const lineCribRequested = lineBabies > 0 && line.needsCrib === true
+    const lineCribRequested = line.needsCrib === true
 
     // REQ-01 (#290) — amenidades de ESTA línea contra la UNIÓN de `RoomAmenities` de las unidades
     // vendibles del tipo (misma key → la más barata, como publica el catálogo público). Sin keys
@@ -491,10 +493,10 @@ export async function createPublicBookingGroup(
       lineRoomAmenities = resolved.lines
       lineRoomAmenitiesUnitTotal = resolved.total
     }
-    // #292 — `needsCrib` definitivo de la línea: la línea de cuna quedó (o no) en el snapshot
-    // (`hasCribLine`), igual que en public-booking.ts. Si se pidió y NINGUNA unidad del tipo la
-    // ofrece, todas las filas de la línea se crean sin cuna con un warn claro.
-    const lineNeedsCrib = lineCribRequested && hasCribLine(lineRoomAmenities)
+    // #292/#341 — `needsCrib` definitivo de la línea: la línea de cuna quedó (o no) en el snapshot
+    // (`hasCribLine`), espejo exacto igual que en public-booking.ts. Si se pidió y NINGUNA unidad
+    // del tipo la ofrece, todas las filas de la línea se crean sin cuna con un warn claro.
+    const lineNeedsCrib = hasCribLine(lineRoomAmenities)
     // Revisión #292 — cuna pedida que el tipo no puede cumplir: cada fila de la línea persiste
     // `cribUnavailable`, la nota del grupo lo dice y la respuesta lo expone.
     const lineCribUnavailable = lineCribRequested && !lineNeedsCrib
@@ -747,10 +749,10 @@ export async function createPublicBookingGroup(
             // Tarea "Cobro % niños" — % REALMENTE usado para cotizar ESTA línea (auditoría, mismo
             // criterio que public-booking.ts).
             childrenRatePercentApplied: line.childrenRatePercentApplied,
-            // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación)
-            // — gateado por línea (bebé + pedida) y cerrado contra la unión del TIPO: `needsCrib`
-            // es true si y sólo si `roomAmenities` de la línea trae `custom:cuna` (todas las filas
-            // de la línea igual, REQ-HAC-05); `cribCount` su espejo 1/0.
+            // Tarea 22 (Cuna; #292 por habitación; #341 amenidad normal, sin gate por bebé)
+            // — pedida por línea y cerrada contra la unión del TIPO: `needsCrib` es true si y
+            // sólo si `roomAmenities` de la línea trae una línea cuna (todas las filas de la
+            // línea igual, REQ-HAC-05); `cribCount` su espejo 1/0.
             needsCrib: line.needsCrib, cribCount: line.needsCrib ? 1 : 0,
             // Revisión #292 — la línea pidió cuna y ninguna unidad del tipo la ofrece.
             cribUnavailable: line.cribUnavailable,
