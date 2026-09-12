@@ -300,6 +300,14 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         log.warn('GET /api/public/bookings/:id removed (IDOR) — use GET /api/public/reservations/:id?token=X')
         return { status: 410, body: { error: 'Deprecated. Use GET /api/public/reservations/:id?token=X' } }
       })
+      // #270 — Recibo de pago PDF del huésped. Mismo token HMAC que el GET de abajo; registrado
+      // ANTES de `/api/public/reservations/:id` para que `:id` nunca capture "receipt.pdf".
+      // 10/min por IP: puppeteer lanza un Chromium por request (mismo techo que facturas/pdf).
+      router.get('/api/public/reservations/:id/receipt.pdf', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-receipt:${getClientIp(req)}`, { maxAttempts: 10, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.getPublicReceiptPdf(req)
+      })
       // F0 0.14 — Endpoint público SEGURO. Token HMAC en ?token=X (anti-IDOR).
       router.get('/api/public/reservations/:id', async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`public-reservation-get:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })

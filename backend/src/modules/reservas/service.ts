@@ -51,7 +51,7 @@ export class ReservasService {
   private auditPort: AuditPort | null = null; setAuditDeps(port: AuditPort): void { this.auditPort = port }
   private emailSender: EmailSender = new NullEmailSender(); private messageLogRepo: RepositoryAdapter<any> | null = null
   setEmailDeps(es: EmailSender, r: RepositoryAdapter<any>): void { this.emailSender = es; this.messageLogRepo = r }
-  private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger })
+  private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger, configRepo: this.configRepo ?? null })
   getNotifyDeps() { return this.notifyDeps() } // deps reales (post setEmailDeps) para checkin/checkout
 
   /** Puertos cross-módulo que inyectan los connectors. Tipo en usecases/orchestration-deps.ts. */

@@ -753,6 +753,66 @@ venció porque no se completó el pago" con CTA "Volver a reservar" cuando
 - WHEN dos `POST /api/public/booking` con la misma key y hotel
 - THEN una sola fila en `Reservations`, misma `reservationId`, la segunda con 200; con otro hotel, dos filas
 
+### Requirement: Confirmación de pago con desglose completo y recibo PDF (MR-05, #270)
+
+Al pagar por el motor público, `sendBookingPaidEmail` (`shared/usecases/booking-paid-email.ts`,
+evento `reservation_confirmed`) MUST armar el correo con el desglose completo desde datos
+estructurados de la reserva — nunca desde `notes`: `priceBreakdown` (`subtotal`,
+`promoDiscount`, `upsells[{id,name,kind,unitPrice,quantity,nights,persons?,total}]` (MR-10, #275 — la
+línea de un extra por persona y noche MUST mostrar personas × noches, no un `× cantidad` plano),
+`taxBreakdown[{name,rate,amount}]`,
+`total`), `childAmenities`, `roomAmenities`, `promoCode`, `adults`, `children`, `childrenAges`,
+`needsCrib`, y las columnas `estimatedArrival` y `specialRequests`, que el widget (single y
+grupo) MUST persistir además del texto de `notes`. Variables: `adults`, `children`,
+`children_ages`, `crib` (Sí/No por idioma), `meal_plan` (sin régimen persistido → "sólo
+alojamiento"), `extras_lines`, `child_amenities_lines`, `room_amenities_lines`, `tax_lines`
+(nombre · % · importe), `rooms_lines`, `rooms_count`, `promo_code`, `promo_discount`,
+`subtotal`, `estimated_arrival`, `special_requests`, `hotel_logo_url`, `manage_url`
+(`{PUBLIC_URL}/h/{slug}/confirm?booking=&token=`), `receipt_url`, `platform_name`. Las
+variables `*_lines` son HTML (`<ul><li>`) con cada valor escapado por el usecase y el renderer
+MUST NOT re-escaparlas (`isRawHtmlKey`). En un grupo `total_amount` y `deposit_amount` MUST ser
+la suma de `totalAmount`/`deposit` de las hermanas no canceladas (MR-11, #276: `settle()`
+prorratea el depósito, la líder sola no es lo que pagó el huésped) y `rooms_lines` MUST listar
+esas mismas filas por tipo/nombre (nunca el número: la unidad puede reasignarse hasta la
+víspera).
+
+`GET /api/public/reservations/:id/receipt.pdf?token=` MUST responder `application/pdf` (A4 vía
+`infrastructure/pdf.ts`, template `shared/usecases/payment-receipt.ts`, leyenda "Recibo de
+pago · no es factura fiscal": hotel con `ownerTaxId`, huésped, localizador, líneas, impuestos,
+total, método y `payments.reference`) con el MISMO HMAC y el MISMO body 404 que
+`GET /api/public/reservations/:id` (`reservationTokenMatches`); rate limit 10/min por IP. El
+correo MUST adjuntar ese PDF (`EmailQueue.attachments`, base64, techo 8 MB) de forma
+best-effort: si la generación falla, el correo sale sin adjunto. La confirmación pública
+(`booking-confirmation.vue`, `/h/:slug/confirm`) MUST mostrar "Descargar recibo (PDF)" con el
+mismo id+token.
+
+Si el encolado falla, la función MUST devolver `false` sin propagar y MUST crear una
+notificación `type:'system'` al hotel (broadcast, sin `userId`) "No se pudo enviar la
+confirmación a {email}" con `metadata.link` a la reserva. Las plantillas por defecto es/en/pt
+usan "usted" y `{platform_name}`; un override del hotel en `auto_messages` no se pisa (no hay
+seed que refrescar) y el flujo del panel (`reservation-email.ts`) parte de
+`confirmationVariableDefaults` para que ningún `{placeholder}` llegue literal.
+
+#### Scenario: Reserva con extras, promo e impuestos
+
+- GIVEN una reserva pagada con 1 upsell ×2, 1 amenidad infantil, promo 10, 2 impuestos, 2 adultos + 1 niño (6) y cuna
+- WHEN se encola la confirmación
+- THEN `extras_lines`, `child_amenities_lines`, `tax_lines`, `promo_discount` y `subtotal` traen los importes exactos de `priceBreakdown` y `total_amount` = `priceBreakdown.total`
+
+#### Scenario: Grupo de tres
+
+- WHEN paga la líder de un grupo de 3 habitaciones
+- THEN `total_amount` es la suma de las 3 hermanas y `rooms_lines` tiene 3 entradas sin números de habitación; una hermana cancelada no suma ni se lista
+
+#### Scenario: Recibo público
+
+- WHEN `GET /receipt.pdf` sin token o con token inválido → 404 con el mismo body; con token válido → `application/pdf` con el localizador y la referencia del pago
+
+#### Scenario: El envío falla
+
+- WHEN `enqueueNotification` lanza
+- THEN se crea la notificación `system` al hotel con el email del huésped y la función devuelve `false`
+
 ### Requirement: La reserva vende un tipo; la habitación física se asigna (REQ-HAC-01 mínimo + REQ-HAC-03, #258)
 
 **Modelo (HAC-01, lo mínimo que HAC-03 necesita; el resto de #256 —tipo obligatorio y `roomId`

@@ -242,11 +242,15 @@ async function createTablesBlock1(): Promise<void> {
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_source ON expenses(hotelId, source, sourceId)`)
   } catch { /* duplicados legacy o tabla ausente: se aplica en la próxima corrida tras reconciliar */ }
 
+  // #270: `attachments` (json nullable, columna TEXT) es la misma que declara el modelo ORM
+  // `EmailQueue` (shared/models.ts) — las dos fuentes del schema tienen que coincidir. En una base
+  // creada antes de la columna, la agrega el addColumnIfMissing de abajo (ormMigrate también).
   await exec(`CREATE TABLE IF NOT EXISTS email_queue (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT NOT NULL,
     html TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
     maxAttempts INTEGER NOT NULL DEFAULT 3, lastError TEXT, nextRetryAt TEXT, provider TEXT,
-    relatedType TEXT, relatedId TEXT, createdAt TEXT, updatedAt TEXT)`)
+    relatedType TEXT, relatedId TEXT, attachments TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await addColumnIfMissing('email_queue', 'attachments', 'TEXT')
   await exec(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_retry ON email_queue (status, nextRetryAt)`)
 
   // Estadía mínima por FECHA (fila "Días Mínimos" del planning). Solo overrides (minStay>1);

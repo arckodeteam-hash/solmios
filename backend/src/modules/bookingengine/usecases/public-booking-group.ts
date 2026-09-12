@@ -705,6 +705,11 @@ export async function createPublicBookingGroup(
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,
             notes: notesParts.join(' | '),
+            // #270 — llegada estimada y pedido especial estructurados (además del texto en
+            // `notes`, que no cambia). Van en TODAS las filas del grupo: cada unidad física
+            // comparte la misma llegada y el mismo pedido del huésped.
+            estimatedArrival: typeof estimatedArrival === 'string' && estimatedArrival.trim() ? estimatedArrival.trim() : undefined,
+            specialRequests: typeof specialRequests === 'string' && specialRequests.trim() ? specialRequests.trim() : undefined,
             accessToken: sharedAccessToken,
             promoCode: promoCode ? String(promoCode).trim().toUpperCase() : undefined,
             // Tarea 3.4 (corrección 2026-08-25) — mismo criterio que public-booking.ts:

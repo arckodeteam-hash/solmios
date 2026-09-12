@@ -248,6 +248,20 @@
                : paymentState === 'partial' ? t('confirm.partiallyPaid')
                : t('confirm.notPaid') }}
           </p>
+          <!-- #270 (MR-05): recibo de pago en PDF (no es factura fiscal), el mismo que viaja
+               adjunto en el correo. Mismo HMAC que el polling: token inválido → 404. Sólo se
+               ofrece cuando hubo un cobro (`hasReceipt`): sin pago no hay recibo que emitir. -->
+          <a
+            v-if="receiptUrl"
+            :href="receiptUrl"
+            target="_blank"
+            rel="noopener"
+            :aria-label="t('confirm.downloadReceipt')"
+            class="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-navy transition hover:border-cyan focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50"
+            data-testid="confirm-receipt"
+          >
+            {{ t('confirm.downloadReceipt') }}
+          </a>
         </div>
 
         <!-- 4. Qué sigue: horarios del hotel (si los tiene configurados) + pase/código si el backend los manda. -->
@@ -464,6 +478,7 @@ import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
+import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import { mealPlanLabelKey } from '@/utils/meal-plans'
 import { useTracking, initTracking } from '@/composables/useTracking'
@@ -735,6 +750,12 @@ function resolveIds(): { id: string; token: string } | null {
   return null
 }
 
+/** (id, token) del último tick: el botón "Descargar recibo" (#270) se arma con ellos. */
+const resolvedIds = ref<{ id: string; token: string } | null>(null)
+/** Sólo con un cobro hecho (`paid`/`partial` con importe): sin pago el backend responde 409 y no hay recibo. */
+const hasReceipt = computed(() => receiptAvailable(paymentState.value, amountPaid.value))
+const receiptUrl = computed(() => resolvedIds.value && hasReceipt.value ? receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token) : '')
+
 /** Un tick del poll: valida ids, pide estado, clasifica resultado. */
 async function tick(): Promise<void> {
   const ids = resolveIds()
@@ -743,6 +764,7 @@ async function tick(): Promise<void> {
     errorMessage.value = t('confirm.errorNotFound')
     return
   }
+  resolvedIds.value = ids
   try {
     const res = await BookingService.getReservation(ids.id, ids.token)
     reservation.value = res

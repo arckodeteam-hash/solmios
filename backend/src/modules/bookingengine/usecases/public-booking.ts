@@ -73,6 +73,7 @@ import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChil
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
+import { MEAL_PLAN_LABELS } from '../../../shared/usecases/meal-plan-labels'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput, type BookingEngineMealPlanInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
@@ -80,11 +81,7 @@ const MS_PER_DAY = 86_400_000
 
 /** MR-03 (#268) — etiqueta ES del régimen para `notes` (vistazo rápido del recepcionista). Se
  *  reusa desde public-booking-group.ts. Un código desconocido cae al código crudo. */
-export const MEAL_PLAN_LABEL: Record<string, string> = {
-  breakfast: 'Desayuno',
-  half_board: 'Media pensión',
-  all_inclusive: 'Todo incluido',
-}
+export const MEAL_PLAN_LABEL: Record<string, string> = MEAL_PLAN_LABELS.es
 
 /** MR-03 (#268) — la línea de régimen resuelta como input de `buildBookingEngineAddons` (fila
  *  `reservation_addons` kind `meal_plan`, #269). `units` = unidades físicas con ese régimen
@@ -902,6 +899,10 @@ export async function createPublicBookingDirect(
         // pago — no un total pelado que nadie puede reconstruir.
         priceBreakdown: totalBreakdown,
         notes: notesParts.join(' | '),
+        // #270 — además del texto en `notes` (que no cambia), la llegada estimada y el pedido
+        // especial se guardan estructurados para el correo de confirmación y el recibo.
+        estimatedArrival: typeof estimatedArrival === 'string' && estimatedArrival.trim() ? estimatedArrival.trim() : undefined,
+        specialRequests: typeof specialRequests === 'string' && specialRequests.trim() ? specialRequests.trim() : undefined,
         accessToken: crypto.randomUUID(),
         // F2 2.5 — persistimos el promoCode validado (upper-case). Upsells van en `notes`
         // (no hay tabla puente reservation_upsells en este cambio).

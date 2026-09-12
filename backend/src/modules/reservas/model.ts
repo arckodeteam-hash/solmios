@@ -97,6 +97,12 @@ export const ReservasModel: ModelDefinition = {
     // anteriores a la columna → el panel no muestra personas.
     mealPlanPersons: { type: 'number' },
     notes: { type: 'text' },
+    // #270 — Hora estimada de llegada y pedido especial del huésped, estructurados. Hasta ahora
+    // solo iban dentro de `notes` como texto libre ("Llegada estimada: ..." / "Pedido especial:
+    // ..."); el correo de confirmación y el recibo los necesitan como campos propios. `notes` se
+    // sigue escribiendo igual (el recepcionista lo lee de ahí). Nullable: solo el widget los llena.
+    estimatedArrival: { type: 'string' },
+    specialRequests: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },
     externalLocator: { type: 'string' },

@@ -44,6 +44,9 @@ import { chargeableTotal } from '../../../shared/utils/reservation-balance'
 import { DEFAULT_APPROVAL_DEADLINE_HOURS } from './config'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
+/** #270 — el MISMO 404 (misma referencia) para cualquier otro endpoint público por id+token
+ *  (recibo PDF): anti-enumeración exige un body idéntico entre endpoints, no solo dentro de uno. */
+export const PUBLIC_RESERVATION_NOT_FOUND = NOT_FOUND
 
 /** #272 — Hermanas del grupo para la página pública. Best-effort: cualquier fallo → null. */
 async function publicGroupOf(orm: any, reservation: any): Promise<null | { id: string; rooms: any[] }> {
@@ -86,6 +89,23 @@ function safeEqual(a: Buffer, b: Buffer): boolean {
 }
 
 /**
+ * #270 — ¿El token de la URL corresponde al `accessToken` de ESTA reserva?
+ * HMAC(secret(hotelId), stored) vs HMAC(secret, received) + timingSafeEqual. `false` si falta
+ * el token recibido o la reserva no tiene `accessToken` (creada desde el panel). Compartido por
+ * `getPublicReservation` y por el recibo PDF (`public-receipt.ts`) para que la regla sea UNA.
+ */
+export function reservationTokenMatches(
+  reservation: { hotelId: string; accessToken?: string | null },
+  receivedToken: string | undefined | null,
+): boolean {
+  if (!receivedToken || !reservation.accessToken) return false
+  const secret = hotelSecret(reservation.hotelId)
+  const expected = hmac(secret, String(reservation.accessToken))
+  const received = hmac(secret, String(receivedToken))
+  return safeEqual(expected, received)
+}
+
+/**
  * Devuelve la reserva pública + guest + paymentStatus, validando el token HMAC.
  *
  * @returns 404 (mismo body) si no existe, sin token, token incorrecto, o accessToken=null.
@@ -109,10 +129,7 @@ export async function getPublicReservation(
 
   // HMAC sobre el token recibido vs el accessToken almacenado. timingSafeEqual evita
   // timing attacks sobre la comparación. Secret derivado por hotel.
-  const secret = hotelSecret(reservation.hotelId)
-  const expected = hmac(secret, String(reservation.accessToken))
-  const received = hmac(secret, String(token))
-  if (!safeEqual(expected, received)) return NOT_FOUND
+  if (!reservationTokenMatches(reservation, token)) return NOT_FOUND
 
   let guest: any = null
   if (reservation.guestId) {
