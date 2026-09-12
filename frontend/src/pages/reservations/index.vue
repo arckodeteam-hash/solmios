@@ -73,6 +73,11 @@
           <option value="expedia">Expedia</option>
           <option value="airbnb">Airbnb</option>
         </select>
+        <!-- MR-03 (#268) — régimen: `mealPlan` (snapshot web) o `regime` (manual del panel/OTA). -->
+        <select id="reservations-filter-meal-plan" name="filterMealPlan" aria-label="Filtrar reservas por régimen" data-testid="reservations-filter-meal-plan" v-model="filterMealPlan" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
+          <option value="">Todos los regímenes</option>
+          <option v-for="(label, code) in MEAL_PLAN_LABELS" :key="code" :value="code">{{ label }}</option>
+        </select>
         <span class="text-xs text-text-muted ml-auto font-medium">{{ filtered.length }} reservas encontradas</span>
       </div>
 
@@ -111,6 +116,9 @@
             </td>
             <td class="px-4 py-5">
               <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+              <!-- MR-03 (#268) — régimen reservado desde la web (solo si no es "solo alojamiento"). -->
+              <span v-if="r.mealPlanLabel" data-testid="reservation-meal-plan-badge" :title="r.mealPlanTotal > 0 ? `Régimen: $${r.mealPlanTotal} incluido en el total` : 'Régimen incluido en la tarifa'"
+                class="block mt-1 w-fit px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple/10 text-purple whitespace-nowrap">{{ r.mealPlanLabel }}</span>
             </td>
             <td class="px-4 py-5">
               <div class="flex items-baseline gap-1">
@@ -289,6 +297,11 @@ const filterChannel = ref('')
 const filterApproval = ref('')
 // REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
 const filterPayment = ref('')
+// MR-03 (#268) — '' | código de régimen. Compara contra `mealPlan ?? regime` de cada fila.
+const filterMealPlan = ref('')
+// Mismo mapa que `regimeLabel()` de ReservationModal.vue (no se importa desde un .vue).
+const MEAL_PLAN_LABELS: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
+function mealPlanLabel(code?: string | null): string { return code ? (MEAL_PLAN_LABELS[code] || code) : '' }
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -367,7 +380,8 @@ const statsCards = computed(() => [
 
 const filtered = computed(() => {
   let l = list.value
-  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q)) }
+  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || mealPlanLabel(r.mealPlan ?? r.regime).toLowerCase().includes(q)) }
+  if (filterMealPlan.value) l = l.filter((r: any) => (r.mealPlan ?? r.regime ?? '') === filterMealPlan.value)
   if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
@@ -453,6 +467,11 @@ async function load() {
         approvalStatus: r.approvalStatus || null,
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
+        // MR-03 (#268) — régimen: snapshot web (`mealPlan`) o manual (`regime`). El badge solo
+        // se muestra cuando hay algo más que alojamiento.
+        mealPlan: r.mealPlan ?? null, regime: r.regime ?? null,
+        mealPlanTotal: r.mealPlanTotal ?? 0,
+        mealPlanLabel: (r.mealPlan ?? r.regime) && (r.mealPlan ?? r.regime) !== 'room_only' ? mealPlanLabel(r.mealPlan ?? r.regime) : '',
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }

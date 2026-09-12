@@ -143,6 +143,12 @@ export interface Reservation {
   paidAmount?: number
   promoCode?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. null/ausente en reservas
+   *  viejas y en las cargadas a mano (que solo tienen `regime`). */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
   createdAt: Date
   roomNumber?: string
   roomType?: string
@@ -204,6 +210,12 @@ export interface ReservationApiRecord {
   cancelledAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
   approvalStatus?: 'pending' | 'approved' | null
+  regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web. */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
 }
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
@@ -627,6 +639,12 @@ export interface ReservationDetail {
   depositPercentage?: number
   depositStatus?: string
   regime?: string
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web (`Reservations.mealPlan*`).
+   *  `mealPlanTotal` ya está DENTRO de `totalAmount`; null/ausente en reservas viejas o del panel. */
+  mealPlan?: string | null
+  mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
   notes?: string | null
   otaNotes?: string | null
   ownerNotes?: string | null
@@ -846,6 +864,11 @@ export interface CheckinGuest {
   /** `Reservations.notes` crudo (pedido especial, llegada estimada, etc. — mismo campo que
    *  `ReservationModal.vue` muestra como "Notas"). Null si la reserva no tiene nada cargado. */
   notes: string | null
+  /** MR-03 (#268) — etiqueta del régimen ("Desayuno incluido", "Media pensión"…) para que
+   *  recepción lo vea en la fila de llegadas. Null si es solo alojamiento o no hay régimen. */
+  mealPlanLabel: string | null
+  /** MR-03 (#268) — importe del régimen ya incluido en `totalAmount` (0 si incluido en tarifa). */
+  mealPlanTotal: number
 }
 
 // === FEEDBACK ===

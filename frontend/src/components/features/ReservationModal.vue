@@ -408,6 +408,24 @@ const pricePerNight = computed(() => {
   return n > 0 ? Math.round(((d.value?.totalAmount ?? 0) / n) * 100) / 100 : d.value?.room?.basePrice ?? 0
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
+// MR-03 (#268) — régimen reservado desde la web. `mealPlan` es el snapshot (código + precio
+// unitario + total) que persiste el booking engine; `regime` es el campo manual de siempre
+// (panel/OTA), así que reservas viejas siguen mostrando lo que tenían. El total ya está DENTRO
+// de `totalAmount`: acá solo se explica de dónde sale. Las personas no se guardan (adultos +
+// niños con plaza, sin bebés): se derivan del total ÷ (unitario × noches).
+const mealPlanCode = computed(() => d.value?.mealPlan ?? d.value?.regime)
+const mealPlanTotal = computed(() => d.value?.mealPlanTotal ?? 0)
+const mealPlanDetail = computed(() => {
+  if (!d.value?.mealPlan) return ''
+  // Con espacio inicial: el compilador de Vue condensa el blanco entre `</span>` y `{{ }}`.
+  if (d.value.mealPlanPriceMode === 'included') return ' (incluido)'
+  const total = mealPlanTotal.value
+  const unit = d.value.mealPlanUnitPrice ?? 0
+  const n = nights.value
+  if (total <= 0 || unit <= 0 || n <= 0) return ''
+  const persons = Math.max(1, Math.round(total / (unit * n)))
+  return ` (${persons} pers × ${n} noche${n === 1 ? '' : 's'} · ${money(total)})`
+})
 const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
 const secondaryTotal = computed(() => {
   const rate = currency.value?.exchangeRate
@@ -523,7 +541,7 @@ function srcDot(s?: string): string {
   const m: Record<string, string> = { direct: 'bg-teal', booking: 'bg-cyan', expedia: 'bg-gold', airbnb: 'bg-coral', google: 'bg-blue-400', whatsapp: 'bg-emerald-400', agoda: 'bg-purple-400', trip: 'bg-pink-400' }
   return m[s || ''] || 'bg-white/70'
 }
-function regimeLabel(r?: string): string {
+function regimeLabel(r?: string | null): string {
   const m: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
   return m[r || ''] || (r || '—')
 }
@@ -1071,7 +1089,7 @@ function irAFacturacion() {
                   <div class="text-xs text-text-muted">Asignada: ({{ fmtDate(d.checkIn) }})</div>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
-                  <div><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(d.regime) }}</span></div>
+                  <div data-testid="reservation-meal-plan"><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(mealPlanCode) }}</span><span v-if="mealPlanDetail" class="text-text-muted">{{ mealPlanDetail }}</span></div>
                   <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span>
                     <!-- Requerimiento 13 — desglose por niño (declarada/efectiva/balde) del backend
                          (`childrenAgesDetail`): reemplaza la nota genérica "alguna cuenta como
@@ -1134,6 +1152,8 @@ function irAFacturacion() {
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
+                <!-- MR-03 (#268) — desglose informativo: el régimen ya está sumado en el importe. -->
+                <div v-if="mealPlanTotal > 0" data-testid="reservation-meal-plan-total" class="flex justify-between pl-2 text-xs"><span class="text-text-muted">↳ Régimen · {{ regimeLabel(mealPlanCode) }}</span><span class="font-bold text-text-secondary">{{ money(mealPlanTotal) }}</span></div>
                 <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold text-navy">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">
