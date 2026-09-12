@@ -11,7 +11,6 @@ import { describe, it, expect } from 'bun:test'
 import { getPublicRates } from '../usecases/public-rates'
 import { getPublicMealPlans } from '../usecases/public-meal-plans'
 import { getPublicUpsells } from '../usecases/public-upsells'
-import { getPublicChildAmenities } from '../usecases/public-child-amenities'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
 import { ENGINE_CLOSED_BODY } from '../../../shared/usecases/booking-engine-gate'
@@ -78,7 +77,7 @@ const availability = {
   }),
 }
 
-/** Corre los 6 endpoints con el mismo hotel + la misma fila de booking_config. */
+/** Corre los 5 endpoints con el mismo hotel + la misma fila de booking_config. */
 async function runAll(hotel: any, cfg: any) {
   const hotels = hotelsRepo(hotel)
   const bookingConfig = bookingConfigRepo(cfg)
@@ -87,16 +86,15 @@ async function runAll(hotel: any, cfg: any) {
     rates: await getPublicRates({ hotels, bookingConfig, availability, config: emptyRepo } as any, SLUG, RATES_QUERY),
     mealPlans: await getPublicMealPlans({ hotels, bookingConfig, mealPlans: emptyRepo } as any, SLUG),
     upsells: await getPublicUpsells({ hotels, bookingConfig, upsells: emptyRepo } as any, SLUG),
-    childAmenities: await getPublicChildAmenities({ hotels, bookingConfig, childAmenities: emptyRepo } as any, SLUG),
     direct: await createPublicBookingDirect(makeDb(), DIRECT_BODY, undefined, undefined, undefined, undefined, undefined, extraDeps),
     group: await createPublicBookingGroup(makeDb(), GROUP_BODY, undefined, undefined, undefined, undefined, undefined, extraDeps),
   }
 }
 
-const ENDPOINTS = ['rates', 'mealPlans', 'upsells', 'childAmenities', 'direct', 'group'] as const
+const ENDPOINTS = ['rates', 'mealPlans', 'upsells', 'direct', 'group'] as const
 
 describe('#276 (MR-11) — un solo interruptor del motor público: isEngineOpen', () => {
-  it('(A) plataforma pausada (onlineBookingStatus:paused) + enabled:true → 404 MISMO body en los 6', async () => {
+  it('(A) plataforma pausada (onlineBookingStatus:paused) + enabled:true → 404 MISMO body en los 5', async () => {
     const res = await runAll(makeHotel('paused'), { hotelId: HOTEL_ID, enabled: true })
     for (const name of ENDPOINTS) {
       expect(res[name].status).toBe(404)
@@ -105,7 +103,7 @@ describe('#276 (MR-11) — un solo interruptor del motor público: isEngineOpen'
     }
   })
 
-  it('(B) plataforma activa + enabled:false (toggle del hotel) → 404 MISMO body en los 6', async () => {
+  it('(B) plataforma activa + enabled:false (toggle del hotel) → 404 MISMO body en los 5', async () => {
     const res = await runAll(makeHotel('active'), { hotelId: HOTEL_ID, enabled: false })
     for (const name of ENDPOINTS) {
       expect(res[name].status).toBe(404)
@@ -113,19 +111,18 @@ describe('#276 (MR-11) — un solo interruptor del motor público: isEngineOpen'
     }
   })
 
-  it('(C) plataforma activa + enabled:true → los 4 GET responden 200 y los 2 POST 201', async () => {
+  it('(C) plataforma activa + enabled:true → los 3 GET responden 200 y los 2 POST 201', async () => {
     const res = await runAll(makeHotel('active'), { hotelId: HOTEL_ID, enabled: true })
     expect(res.rates.status).toBe(200)
     expect(res.mealPlans.status).toBe(200)
     expect(res.upsells.status).toBe(200)
-    expect(res.childAmenities.status).toBe(200)
     expect(res.direct.status).toBe(201)
     expect(res.group.status).toBe(201)
   })
 
   it('hotel inexistente → el MISMO 404 que pausado/apagado (anti-enumeración)', async () => {
     const res = await runAll(null, null)
-    for (const name of ['rates', 'mealPlans', 'upsells', 'childAmenities'] as const) {
+    for (const name of ['rates', 'mealPlans', 'upsells'] as const) {
       expect(res[name].status).toBe(404)
       expect(res[name].body).toEqual(CLOSED)
     }
