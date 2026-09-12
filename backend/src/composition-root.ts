@@ -1234,15 +1234,6 @@ if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function')
     })
   }
 
-  // #276 (MR-11) — el asiento del pago de un grupo marca Groups confirmed/paidAmount y resuelve el titular para payments.description.
-  const bookingengineForSettle = system.resolveModule<{ setSettleDeps?(d: { groups?: any; guests?: any }): void }>('bookingengine')
-  if (bookingengineForSettle && typeof bookingengineForSettle.setSettleDeps === 'function') {
-    bookingengineForSettle.setSettleDeps({
-      groups: new OrmRepository<any>(orm, 'Groups'),
-      guests: new OrmRepository<any>(orm, 'Guests'),
-    })
-  }
-
   if (isPendingPaymentExpiryDisabled()) {
     logger.info('Pending-payment-expiry cron desactivado (BOOKING_PENDING_TTL_DISABLED=1)')
   } else {
@@ -1257,6 +1248,16 @@ if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function')
   }
 } else {
   logger.warn('Pending-payment-expiry: módulo reservas no disponible — cron desactivado')
+}
+
+// #276 (MR-11) — el asiento del pago de un GRUPO marca Groups confirmed/paidAmount y resuelve el
+// titular para payments.description. Independiente del cron de vencimiento (no depende de `reservas`).
+const bookingengineForSettle = system.resolveModule<{ setSettleDeps?(d: { groups?: any; guests?: any }): void }>('bookingengine')
+if (bookingengineForSettle && typeof bookingengineForSettle.setSettleDeps === 'function') {
+  bookingengineForSettle.setSettleDeps({
+    groups: new OrmRepository<any>(orm, 'Groups'),
+    guests: new OrmRepository<any>(orm, 'Guests'),
+  })
 }
 
 // #271 MR-06 — pushAvailabilityToChannex: reject.ts empuja la habitación liberada a las OTAs.
