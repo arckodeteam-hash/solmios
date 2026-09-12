@@ -863,6 +863,10 @@ export async function createPublicBookingDirect(
       // reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
       reservation = await tx.create('Reservations', {
         id: crypto.randomUUID(), hotelId, roomId: resolvedRoomId, guestId: guest.id,
+        // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta para que
+        // reasignar/soltar la unidad después (assign-room.ts) valide contra él y la
+        // disponibilidad la siga contando sin unidad. Antes sólo el panel (crud.ts) lo escribía.
+        roomType: room?.type ? String(room.type) : undefined,
         checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
         adults: childComposition.effectiveAdults,
         children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),

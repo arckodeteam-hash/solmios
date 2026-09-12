@@ -101,6 +101,8 @@ describe('createPublicBookingGroup — tipos distintos combinados', () => {
     expect(tokens.size).toBe(1)
     // REQ-RWP-04 — cada unidad del grupo nace con `source='web'` y `channel='direct'`.
     expect(tables.Reservations.every((r: any) => r.source === 'web' && r.channel === 'direct')).toBe(true)
+    // REQ-HAC-01 (#258) — cada unidad lleva el tipo vendido de su línea.
+    expect(tables.Reservations.map((r: any) => r.roomType).sort()).toEqual(['deluxe', 'standard'])
     expect(res.body.reservations).toHaveLength(2)
     expect(res.body.totalBreakdown.total).toBe(460)
   })
