@@ -197,6 +197,12 @@ export async function getPublicReservation(
         // Ausente/default en reservas de antes de esta feature.
         needsCrib: reservation.needsCrib ?? false,
         cribCount: reservation.cribCount ?? 0,
+        // MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado), no un dato
+        // interno del hotel. `null`/0 en reservas anteriores a esta feature o sin régimen.
+        mealPlan: reservation.mealPlan ?? null,
+        mealPlanPriceMode: reservation.mealPlanPriceMode ?? null,
+        mealPlanUnitPrice: reservation.mealPlanUnitPrice ?? 0,
+        mealPlanTotal: reservation.mealPlanTotal ?? 0,
         totalAmount: reservation.totalAmount,
         // Tarea 24 (#88): el desglose que vio en el paso de pago (subtotal, extras, promo, cada
         // impuesto con nombre/%/importe, total). Es SUYO — lo aceptó él. `null` en reservas

@@ -22,6 +22,7 @@ import { TeamService, type TeamMember } from '@/services/Team.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import { paymentStateBadge } from '@/utils/payment-state'
+import { effectiveMealPlan, mealPlanLabel } from '@/utils/meal-plans'
 import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -477,6 +478,32 @@ const pricePerNight = computed(() => {
   return n > 0 ? Math.round(((d.value?.totalAmount ?? 0) / n) * 100) / 100 : d.value?.room?.basePrice ?? 0
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
+// MR-03 (#268) — régimen. `regime` es el campo editable del panel y MANDA; `mealPlan` es el
+// snapshot (código + precio unitario + total + personas) que persiste el motor web al reservar y
+// solo cubre cuando `regime` no vino (`effectiveMealPlan`, regla única de las tres vistas).
+// El detalle "(N pers × noches · importe)" describe el SNAPSHOT: se muestra solo si el régimen
+// visible sigue siendo el reservado en la web (si recepción lo cambió, el importe congelado ya
+// no explica lo que se ve). Las personas vienen persistidas (`mealPlanPersons`): derivarlas de
+// total ÷ (unitario × noches) con las fechas actuales inventa un número al reagendar — sin el
+// campo (reserva anterior a la columna) no se muestran.
+const mealPlanCode = computed(() => effectiveMealPlan(d.value))
+const mealPlanTotal = computed(() => d.value?.mealPlanTotal ?? 0)
+const mealPlanDetail = computed(() => {
+  if (!d.value?.mealPlan || d.value.mealPlan !== mealPlanCode.value) return ''
+  // Con espacio inicial: el compilador de Vue condensa el blanco entre `</span>` y `{{ }}`.
+  if (d.value.mealPlanPriceMode === 'included') return ' (incluido)'
+  const total = mealPlanTotal.value
+  if (total <= 0) return ''
+  const persons = d.value.mealPlanPersons ?? null
+  const n = nights.value
+  const personsPart = persons && persons > 0 && n > 0 ? `${persons} pers × ${n} noche${n === 1 ? '' : 's'} · ` : ''
+  return ` (${personsPart}${money(total)})`
+})
+// Una reserva de varias habitaciones (`groupId`) persiste el régimen unitario en CADA fila, pero
+// su `totalAmount` es SOLO la habitación: el régimen se cobró con el total del grupo (Stripe
+// sobre la líder). En una reserva suelta sí está dentro de `totalAmount`. La fila no afirma ni
+// una cosa ni la otra: muestra el importe y, en grupo, dónde se cobró.
+const mealPlanChargedInGroup = computed(() => !!d.value?.groupId)
 const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
 
 // ── #269 Extras pagados online ──────────────────────────────────────────
@@ -681,10 +708,8 @@ function srcDot(s?: string): string {
   const m: Record<string, string> = { direct: 'bg-teal', booking: 'bg-cyan', expedia: 'bg-gold', airbnb: 'bg-coral', google: 'bg-blue-400', whatsapp: 'bg-emerald-400', agoda: 'bg-purple-400', trip: 'bg-pink-400' }
   return m[s || ''] || 'bg-white/70'
 }
-function regimeLabel(r?: string): string {
-  const m: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
-  return m[r || ''] || (r || '—')
-}
+/** MR-03 (#268) — etiqueta única en `utils/meal-plans.ts` (antes un mapa local por vista). */
+function regimeLabel(r?: string | null): string { return mealPlanLabel(r) }
 function payMethodLabel(p?: string | null): string {
   const m: Record<string, string> = { transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago', deposit: 'Depósito' }
   return m[p || ''] || (p || 'No especificado')
@@ -1421,7 +1446,7 @@ function facturar() {
                   </template>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
-                  <div><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(d.regime) }}</span></div>
+                  <div data-testid="reservation-meal-plan"><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(mealPlanCode) }}</span><span v-if="mealPlanDetail" class="text-text-muted">{{ mealPlanDetail }}</span></div>
                   <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span>
                     <!-- Requerimiento 13 — desglose por niño (declarada/efectiva/balde) del backend
                          (`childrenAgesDetail`): reemplaza la nota genérica "alguna cuenta como
@@ -1484,6 +1509,10 @@ function facturar() {
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
+                <!-- MR-03 (#268) — importe del régimen reservado en la web (snapshot `mealPlan`, lo que se
+                     cobró — por eso lleva SU código y no el editable). En grupo se cobró con el total del
+                     grupo, no con el importe de esta fila. -->
+                <div v-if="mealPlanTotal > 0" data-testid="reservation-meal-plan-total" class="flex justify-between pl-2 text-xs"><span class="text-text-muted">Régimen · {{ regimeLabel(d.mealPlan) }}<span v-if="mealPlanChargedInGroup" data-testid="reservation-meal-plan-group-note"> · cobrado con el total del grupo (reserva principal)</span></span><span class="font-bold text-text-secondary">{{ money(mealPlanTotal) }}</span></div>
                 <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold text-navy">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">

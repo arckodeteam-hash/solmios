@@ -400,7 +400,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, mealPlans: this.mealPlanRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -453,7 +453,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, hotels: this.hotelsRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, mealPlans: this.mealPlanRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -489,7 +489,11 @@ export class BookingengineController {
     if (!this.hotelsRepo || !this.configRepo) {
       return { status: 500, body: { error: 'rates deps no cableados' } }
     }
-    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; currency?: string }
+    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; children?: string; currency?: string }
+    // MR-03 #268 — `children` = niños CON plaza para cotizar el régimen (entero ≥ 0, default 0).
+    // No toca disponibilidad/ocupación: eso sigue por `guests`.
+    const childrenRaw = query.children ? Number(query.children) : 0
+    const children = Number.isFinite(childrenRaw) && childrenRaw > 0 ? Math.floor(childrenRaw) : 0
     return getPublicRates(
       {
         hotels: this.hotelsRepo, availability: this.service, config: this.configRepo,
@@ -501,6 +505,8 @@ export class BookingengineController {
         // otro para las mismas fechas en cualquier hotel con temporadas cargadas.
         seasonAssignments: this.seasonAssignmentsRepo, roomRates: this.roomRatesRepo,
         rateOverrides: this.rateOverridesRepo, seasons: this.seasonsCatalogRepo,
+        // MR-03 (#268) — regímenes activos con `totalForStay` para el widget.
+        mealPlans: this.mealPlanRepo,
       },
       String(req.params?.slug || ''),
       {
@@ -508,6 +514,7 @@ export class BookingengineController {
         checkOut: String(query.checkOut || ''),
         rooms: query.rooms ? Number(query.rooms) : undefined,
         guests: query.guests ? Number(query.guests) : undefined,
+        children,
         currency: query.currency,
       },
     )

@@ -430,6 +430,63 @@ re-evalúa en vivo al cambiar la edad de un menor.
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
 
+### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268)
+
+El hotel configura sus regímenes en `meal_plans` (`code` breakfast|half_board|all_inclusive,
+`active`, `priceMode` included|per_person_per_night, `price`). "Solo alojamiento" (`room_only`)
+NO tiene fila: es la base implícita, siempre disponible y sin costo. El motor público MUST
+aceptar `mealPlan` por habitación (`mealPlan` en el body single y en cada `rooms[i]` del grupo)
+y resolverlo SIEMPRE contra el catálogo del hotel (`public-meal-plan-lines.ts`): precio y modo
+se releen de `meal_plans`, nunca del body. Un código inexistente, inactivo o de otro hotel
+MUST rechazar con 400 `meal_plan_unavailable` ANTES de escribir nada (a diferencia de las
+amenidades, que se ignoran con warn: el régimen cambia el precio que el huésped vio y eligió).
+El importe es `price × persons × nights` con `persons = adultos efectivos + niños con plaza`
+(`childComposition.effectiveAdults + payingChildren`; bebés y niños libres no pagan) y
+`included` → 0. Entra en `subtotal` ANTES de promo e impuestos, se desglosa en
+`priceBreakdown.mealPlanTotal` y se resume en `notes` ("Régimen: Media pensión (2 pers × 3
+noches = 90.00)"). Cada fila `reservations` persiste el snapshot congelado `mealPlan`,
+`mealPlanPriceMode`, `mealPlanUnitPrice`, `mealPlanTotal` (unitario por habitación física;
+en un grupo `priceBreakdown.mealPlanTotal` = Σ líneas × quantity) y escribe `regime` con el
+mismo código para el panel. Cambiar `meal_plans` después NO altera reservas existentes.
+Reservas anteriores o creadas desde el panel quedan `mealPlan = null` (el panel muestra "—" o
+el `regime` manual). `GET /rates` MUST devolver `mealPlans[]` activos con `perNight`,
+`totalForStay`, `persons` y `nights` ya resueltos para `guests + children` (misma fórmula,
+en `chargeCurrency`, sin conversión) y la confirmación pública (`public-reservation.ts`)
+expone el snapshot. El widget y la landing ofrecen el régimen como radio por habitación
+("Solo alojamiento" + los activos; los no ofrecidos visibles y deshabilitados, sin
+"Próximamente"), muestran el importe antes de agregar al carrito y la fila "Régimen: … · N
+pers × M noches" en el desglose; el panel lo muestra en el modal, filtra por él en el listado
+y lo ve recepción en las llegadas del día.
+
+#### Scenario: Desayuno por persona y noche con niño con plaza y bebé
+
+- GIVEN breakfast `per_person_per_night` 10 activo, 2 adultos + 1 niño con plaza + 1 bebé, 3 noches
+- WHEN se reserva con `mealPlan: 'breakfast'`
+- THEN `mealPlanTotal = 90`, `subtotal = habitación + 90`, impuestos sobre `(subtotal − promo)`,
+  `Reservations.mealPlan = 'breakfast'`, `mealPlanUnitPrice = 10`, `regime = 'breakfast'`
+- AND `GET /rates?guests=2&children=1` devolvió `mealPlans[breakfast].totalForStay = 90`
+
+#### Scenario: Régimen inactivo en ese hotel
+
+- GIVEN `half_board` inactivo (o inexistente) para el hotel
+- WHEN se reserva con `mealPlan: 'half_board'`
+- THEN 400 `meal_plan_unavailable` y ninguna reserva ni huésped creados
+
+#### Scenario: Régimen incluido y snapshot congelado
+
+- GIVEN `all_inclusive` con `priceMode: included`
+- WHEN se reserva con él
+- THEN `mealPlanTotal = 0`, `mealPlan = 'all_inclusive'`, `mealPlanPriceMode = 'included'`
+- AND si después el hotel cambia el precio de un régimen, la reserva ya creada conserva su
+  `mealPlanTotal`; una reserva nueva cobra el precio nuevo
+
+#### Scenario: Grupo con regímenes distintos por línea
+
+- GIVEN 2 líneas, una con breakfast y otra con half_board
+- WHEN se reserva el grupo
+- THEN cada fila `reservations` lleva su propio `mealPlan`/`mealPlanTotal` y
+  `priceBreakdown.mealPlanTotal` es la suma
+
 ### Requirement: Intentos de la pasarela en el detalle de la reserva (REQ-RWP-02)
 
 El detalle extendido (`GET /api/reservations/:id`) MUST devolver `paymentAttempts[]`: la

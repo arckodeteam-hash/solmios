@@ -80,6 +80,22 @@ export const ReservasModel: ModelDefinition = {
     // En un grupo cada unidad física lleva las suyas (ver public-booking-group.ts).
     roomAmenities: { type: 'json' },
     roomAmenitiesTotal: { type: 'number', default: 0 },
+    // MR-03 (#268) — Régimen (desayuno / media pensión / todo incluido) elegido desde la web.
+    // Snapshot congelado con el mismo criterio que `childAmenities`: `mealPlanUnitPrice` es el
+    // precio por persona y noche RELEÍDO del catálogo `meal_plans` al reservar (nunca del body),
+    // `mealPlanTotal` = unitPrice × (adultos + niños con plaza) × noches, ya incluido en
+    // `totalAmount`/`priceBreakdown.subtotal`. Sin default: `null` en reservas anteriores a esta
+    // feature (el panel muestra "—"). El flujo público escribe también `regime` (más abajo) con
+    // el mismo código para que el modal/listado existentes lo muestren.
+    mealPlan: { type: 'string' },
+    mealPlanPriceMode: { type: 'string' },
+    mealPlanUnitPrice: { type: 'number', default: 0 },
+    mealPlanTotal: { type: 'number', default: 0 },
+    // Personas que pagaron el régimen (adultos + niños con plaza, sin bebés) al reservar. Se
+    // persiste porque derivarlas de `mealPlanTotal ÷ (unitPrice × noches)` con las fechas
+    // ACTUALES inventa un número al reagendar. Sin default ni backfill: `null` en reservas
+    // anteriores a la columna → el panel no muestra personas.
+    mealPlanPersons: { type: 'number' },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },

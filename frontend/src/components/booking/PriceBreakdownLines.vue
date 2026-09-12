@@ -6,6 +6,10 @@
   Recibe el `totalBreakdown` que persistió el backend con la reserva. Si es null (reserva
   anterior a esta feature o creada desde el panel), muestra solo el total: nunca inventa un
   desglose que no se le prometió al huésped.
+
+  MR-03 (#268) — régimen: si el caller todavía tiene el carrito (`mealPlanLines`, una por
+  habitación con régimen), se muestra el detalle "Desayuno · 2 pers × 3 noches" con su importe (o
+  "incluido"); si solo hay el desglose persistido, la fila agregada `mealPlanTotal` (> 0).
 -->
 <template>
   <div class="space-y-1" data-testid="price-breakdown">
@@ -31,6 +35,22 @@
         <span class="text-text-muted">{{ t('pay.roomAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.roomAmenitiesTotal) }}</span>
       </div>
+      <!-- MR-03 (#268) — régimen: detalle por habitación si el caller lo tiene; si no, la fila
+           agregada del desglose persistido. `included` → etiqueta + "incluido", sin importe. -->
+      <template v-if="mealPlanLines && mealPlanLines.length > 0">
+        <div v-for="line in mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
+          <span class="text-text-muted">
+            {{ t('pay.mealPlan') }}: {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: mealPlanLabel(line.code), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span>
+            <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span>
+          </span>
+          <span v-if="line.priceMode === 'included'" class="font-bold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
+          <span v-else class="font-bold text-navy tabular-nums">{{ format(line.total) }}</span>
+        </div>
+      </template>
+      <div v-else-if="(breakdown.mealPlanTotal ?? 0) > 0" class="flex justify-between" data-testid="meal-plan-line">
+        <span class="text-text-muted">{{ t('pay.mealPlan') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="font-bold text-navy tabular-nums">{{ format(breakdown.mealPlanTotal) }}</span>
+      </div>
       <div v-if="breakdown.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-bold tabular-nums">−{{ format(breakdown.promoDiscount) }}</span>
@@ -49,26 +69,37 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
+import type { MealPlanCode, TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
+import type { MealPlanLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 
 const props = defineProps<{
   breakdown: TotalBreakdown | null | undefined
   /** Total de la reserva: es el mismo que `breakdown.total`, pero también existe sin desglose. */
   total: number | string | null | undefined
   format: (amount: unknown) => string
+  /** MR-03 (#268) — detalle del régimen por habitación (`store.mealPlanLines`), cuando el caller
+   *  todavía tiene el carrito. Opcional: post-redirect solo existe `breakdown.mealPlanTotal`. */
+  mealPlanLines?: MealPlanLine[]
 }>()
 
 const { t } = useBookingI18nStore()
 
-/** Alojamiento = subtotal sin extras ni amenidades de la habitación (el backend guarda `subtotal`
- *  con ambos adentro; `roomAmenitiesTotal` es opcional — reservas previas a #290 no lo traen).
- *  `childAmenitiesTotal` es el snapshot histórico del catálogo global de amenidades infantiles
- *  (dado de baja en #292, siempre 0 en reservas nuevas): se resta para que el alojamiento de una
- *  reserva vieja siga siendo correcto, sin fila propia en el motor público. */
+/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts). */
+function mealPlanLabel(code: MealPlanCode): string {
+  return t(MEAL_PLAN_LABEL_KEY[code])
+}
+
+/** Alojamiento = subtotal sin extras, amenidades de la habitación ni régimen (el backend guarda
+ *  `subtotal` con los tres adentro; `roomAmenitiesTotal` y `mealPlanTotal` son opcionales —
+ *  reservas previas a #290 / MR-03 #268 no los traen). `childAmenitiesTotal` es el snapshot
+ *  histórico del catálogo global de amenidades infantiles (dado de baja en #292, siempre 0 en
+ *  reservas nuevas): se resta para que el alojamiento de una reserva vieja siga siendo correcto,
+ *  sin fila propia en el motor público. */
 const lodging = computed(() => Math.round((
   (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
-  - (props.breakdown?.roomAmenitiesTotal ?? 0)
+  - (props.breakdown?.roomAmenitiesTotal ?? 0) - (props.breakdown?.mealPlanTotal ?? 0)
 ) * 100) / 100)
 
 /** "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2"
