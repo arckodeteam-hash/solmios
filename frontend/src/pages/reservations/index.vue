@@ -64,6 +64,9 @@
           <option value="checked_in">Check-in</option>
           <option value="checked_out">Check-out</option>
           <option value="cancelled">Canceladas</option>
+          <!-- REQ-HAC-06 (#261) — reservas vigentes (pendiente/confirmada) que todavía no tienen
+               unidad asignada (`roomId` vacío). Filtro local: el backend no lo expone como query. -->
+          <option value="unassigned">Sin asignar</option>
         </select>
         <select id="reservations-filter-channel" name="filterChannel" aria-label="Filtrar reservas por canal" v-model="filterChannel" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los canales</option>
@@ -110,7 +113,13 @@
               </div>
             </td>
             <td class="px-4 py-5">
-              <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+              <!-- REQ-HAC-06 (#261) — la reserva vendió un TIPO; hasta que recepción asigne la
+                   unidad, `roomId` viene vacío y se muestra el tipo en vez de un número. -->
+              <span v-if="!r.roomId" data-testid="unassigned-badge"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 whitespace-nowrap">
+                <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"></span>Sin asignar · {{ typeLabel(r.roomType) }}
+              </span>
+              <span v-else class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
             </td>
             <td class="px-4 py-5">
               <div class="flex items-baseline gap-1">
@@ -192,6 +201,8 @@
                     <div class="fixed inset-0 z-20" @click="openMenuId = ''"></div>
                     <div class="absolute right-0 top-8 z-30 w-36 rounded-xl border border-border bg-white shadow-lg py-1 text-left" @click.stop>
                       <button @click="openEdit(r); openMenuId=''" data-testid="reservation-row-edit" class="w-full text-left px-3 py-2 text-xs font-semibold text-text-secondary hover:bg-surface cursor-pointer">Editar</button>
+                      <!-- REQ-HAC-06 (#261) — elegir/cambiar la unidad concreta (RoomAssignModal). -->
+                      <button v-if="canAssignRoom(r)" @click="openAssign(r); openMenuId=''" data-testid="reservation-row-assign-room" class="w-full text-left px-3 py-2 text-xs font-semibold text-text-secondary hover:bg-surface cursor-pointer">{{ r.roomId ? 'Cambiar habitación' : 'Asignar habitación' }}</button>
                       <button v-if="r.status==='pending'||r.status==='cancelled'" @click="confirmAction('delete',r); openMenuId=''" class="w-full text-left px-3 py-2 text-xs font-semibold text-coral hover:bg-coral/10 cursor-pointer">Eliminar</button>
                     </div>
                   </template>
@@ -246,6 +257,11 @@
     <CancelReservationModal :open="cancelDlg.show" :reservation="cancelDlg.res"
       @close="cancelDlg.show = false" @cancelled="load" />
 
+    <!-- REQ-HAC-06 (#261) — asignar/cambiar la habitación desde el menú ⋯ de la fila. El toast
+         de éxito y el 409 traducido los maneja el modal; acá sólo se recarga el listado. -->
+    <RoomAssignModal :open="assignDlg.show" :reservation-id="assignDlg.id" :room-type="assignDlg.roomType"
+      :current-room-id="assignDlg.roomId" @close="assignDlg.show = false" @assigned="onAssigned" />
+
     <!-- ═══ Vista de DETALLE (F3 match-misterplan) ═══ -->
     <ReservationModal
       v-if="detailId"
@@ -265,11 +281,13 @@ import { ReservationService } from '@/services/Reservation.service'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { usePermissions } from '@/composables/usePermissions'
 import { useRoute, useRouter } from 'vue-router'
 import type { CancellableReservation } from '@/types'
 
@@ -277,6 +295,7 @@ const loading = ref(true)
 
 const auth = useAuthStore()
 const toast = useToast()
+const { can } = usePermissions()
 const route = useRoute()
 const router = useRouter()
 const hid = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
@@ -298,6 +317,8 @@ const cfg = ref({ show: false, icon: '', title: '', msg: '', btn: '', fn: () => 
 const cancelDlg = ref<{ show: boolean; res: CancellableReservation | null }>({ show: false, res: null })
 // Menú contextual (⋮) de la fila abierta en la tabla de reservas
 const openMenuId = ref('')
+// REQ-HAC-06 (#261) — RoomAssignModal para la fila elegida en el menú ⋯.
+const assignDlg = ref<{ show: boolean; id: string; roomType: string | null; roomId: string | null }>({ show: false, id: '', roomType: null, roomId: null })
 
 const MS_PER_DAY = 86_400_000
 
@@ -368,7 +389,9 @@ const statsCards = computed(() => [
 const filtered = computed(() => {
   let l = list.value
   if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q)) }
-  if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
+  // REQ-HAC-06 (#261) — 'unassigned' no es un status del backend: vigentes sin unidad asignada.
+  if (filterStatus.value === 'unassigned') l = l.filter((r: any) => !r.roomId && (r.status === 'pending' || r.status === 'confirmed'))
+  else if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
   if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value && r.status !== 'cancelled') // mismo criterio que paidCount: el KPI y su filtro muestran las mismas filas
@@ -383,6 +406,17 @@ function fmtWeekdayAbbr(d: string) { return d ? new Date(d + 'T12:00:00').toLoca
 function stLabel(s: string) { const m: any = { pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada' }; return m[s] || s }
 function stClass(s: string) { const m: any = { pending: 'bg-gold/10 text-gold', confirmed: 'bg-teal/10 text-teal', checked_in: 'bg-cyan/10 text-cyan', checked_out: 'bg-gray-100 text-gray-500', cancelled: 'bg-coral/10 text-coral' }; return m[s] || '' }
 function stDotClass(s: string) { const m: any = { pending: 'bg-gold', confirmed: 'bg-teal', checked_in: 'bg-cyan', checked_out: 'bg-gray-400', cancelled: 'bg-coral' }; return m[s] || 'bg-gray-400' }
+// REQ-HAC-06 (#261) — etiqueta del tipo vendido para el badge "Sin asignar · {tipo}" (mismo mapa
+// que pages/rooms/index.vue; un tipo no catalogado se capitaliza).
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return 'Sin tipo'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
 function srcLabel(s: string) { const m: any = { direct: 'Directa', web: 'Web', booking: 'Booking', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google', whatsapp: 'WhatsApp', phone: 'Teléfono' }; return m[s] || s }
 function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', web: 'bg-blue-100 text-blue-700', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue-100 text-blue-700', whatsapp: 'bg-emerald-100 text-emerald-700' }; return m[s] || 'bg-gray-100 text-gray-500' }
 
@@ -445,6 +479,8 @@ async function load() {
       return {
         id: r.id, guestName: guest?.name || 'Guest', email: guest?.email || '',
         roomNumber: room?.number || r.roomNumber || '—', roomId: r.roomId, guestId: r.guestId,
+        // REQ-HAC-06 (#261) — tipo vendido (puede no haber unidad todavía); si hay unidad, su tipo.
+        roomType: r.roomType || room?.type || '',
         checkIn: String(r.checkIn || '').slice(0, 10), checkOut: String(r.checkOut || '').slice(0, 10),
         nights: nBetween(r.checkIn, r.checkOut), status: r.status, source: r.source,
         total: r.totalAmount, adults: r.adults, children: r.children, notes: r.notes || '',
@@ -504,6 +540,20 @@ function openCancel(r: any) {
     show: true,
     res: { id: r.id, guestName: r.guestName, roomNumber: r.roomNumber, checkIn: r.checkIn, checkOut: r.checkOut, amount: r.total },
   }
+}
+
+// REQ-HAC-06 (#261) — asignar/cambiar habitación desde el menú ⋯. Sólo con permiso de edición y
+// con la reserva viva (pendiente/confirmada/en casa): cambiar la unidad de un check-out o una
+// cancelada no tiene sentido y el backend lo rechaza (409 invalid_status).
+function canAssignRoom(r: any): boolean {
+  return can('reservations', 'edit') && (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked_in')
+}
+function openAssign(r: any) {
+  assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: r.roomId || null }
+}
+async function onAssigned() {
+  assignDlg.value.show = false
+  await load()
 }
 
 async function doCheckin(r: any) {
