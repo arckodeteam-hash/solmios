@@ -41,6 +41,12 @@ import { getPublicBookingBySlug, createPublicBookingDirect } from './usecases/pu
 import { createPublicBookingGroup } from './usecases/public-booking-group'
 import { getPublicHotelInfo } from './usecases/public-hotel-info'
 import { getPublicReservation } from './usecases/public-reservation'
+// #270 — recibo de pago PDF del huésped (mismo HMAC/404 que getPublicReservation). puppeteer y su
+// rate limit por IP viven en facturas/usecases/pdf.ts: se reusa el mismo techo (10 PDFs/min/IP).
+import { getPublicReceiptPdf } from './usecases/public-receipt'
+import { htmlToPdf, checkPdfRateLimit } from '../facturas/usecases/pdf'
+import { getClientIp } from '../../shared/middlewares/rate-limit'
+import { resolvePlatformIdentity } from '../../shared/utils/platform-identity'
 import { cancelPublicBooking } from './usecases/public-cancel'
 import { listActiveHotelSlugs, buildSitemapXml, resolveBaseUrl } from './usecases/sitemap'
 // F2 2.4 / 2.6 — Handlers públicos para /rates y /upsells (rates usa availability + config +
@@ -314,6 +320,27 @@ export class BookingengineController {
     this.logger.info('GET /api/public/reservations/:id', { id: req.params.id })
     const token = (req.query?.token as string | undefined) || undefined
     return getPublicReservation(this.orm, String(req.params?.id || ''), token)
+  }
+
+  /**
+   * #270 — Recibo de pago en PDF: GET /api/public/reservations/:id/receipt.pdf?token=X.
+   * Misma seguridad que getPublicReservation (HMAC + timingSafeEqual, 404 idéntico). Además del
+   * rateLimit de la ruta, aplica el techo de PDFs por IP de facturas (puppeteer lanza un
+   * Chromium por request) → 429.
+   */
+  async getPublicReceiptPdf(req: HttpRequest) {
+    this.logger.info('GET /api/public/reservations/:id/receipt.pdf', { id: req.params.id })
+    if (!checkPdfRateLimit(getClientIp(req))) {
+      return { status: 429, body: { error: 'Demasiadas generaciones de PDF. Intente nuevamente en un minuto.' } }
+    }
+    const receivedToken = (req.query?.token as string | undefined) || undefined
+    // Pie "Emitido a través de {platformName}": misma fuente que los correos (Configuration
+    // hotelId='platform'); resolvePlatformIdentity ya cae al default si no está.
+    const identity = await resolvePlatformIdentity({ findOne: (f: any) => this.orm.findOne('Configuration', f) })
+    return getPublicReceiptPdf(this.orm, String(req.params?.id || ''), receivedToken, {
+      toPdf: htmlToPdf,
+      platformName: identity.platformName,
+    })
   }
 
   /**
