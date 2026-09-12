@@ -1,7 +1,7 @@
 // services/notification-defaults.test.ts — Tests de los defaults de plantillas (spec 11.1.6).
 
 import { describe, it, expect } from 'bun:test'
-import { getCodeDefault, NOTIFICATION_DEFAULTS } from './notification-defaults'
+import { getCodeDefault, NOTIFICATION_DEFAULTS, type NotificationLanguage } from './notification-defaults'
 
 describe('notification-defaults (spec 11.1.6)', () => {
   it('cada evento tiene default en es con subject y body no vacíos', () => {
@@ -31,6 +31,67 @@ describe('notification-defaults (spec 11.1.6)', () => {
 
   it('evento desconocido → throw', () => {
     expect(() => getCodeDefault('unknown' as any, 'es')).toThrow(/evento desconocido/)
+  })
+
+  // #270: reservation_confirmed es el recibo completo — desglose, gestión, enlaces y tono formal.
+  describe('reservation_confirmed (#270)', () => {
+    const langs: NotificationLanguage[] = ['es', 'en', 'pt']
+    const confirmed = (lang: unknown) => getCodeDefault('reservation_confirmed', lang as NotificationLanguage)
+    const REQUIRED = [
+      '{extras_lines}', '{tax_lines}', '{rooms_lines}', '{rooms_count}', '{child_amenities_lines}', '{room_amenities_lines}',
+      '{manage_url}', '{receipt_url}', '{platform_name}', '{crib}', '{meal_plan}', '{estimated_arrival}', '{special_requests}',
+      '{adults}', '{children}', '{children_ages}', '{subtotal}', '{promo_code}', '{promo_discount}', '{total_amount}',
+      '{deposit_amount}', '{pending_amount}', '{payment_method}', '{locator}', '{cancellation_policy}', '{hotel_address}',
+    ]
+
+    it.each(langs)('%s: el cuerpo pide todas las variables del recibo', (lang) => {
+      const { body } = confirmed(lang)
+      for (const v of REQUIRED) expect(body).toContain(v)
+    })
+
+    it.each(langs)('%s: enlaces "Ver mi reserva" y "Descargar recibo" como href', (lang) => {
+      const { body } = confirmed(lang)
+      expect(body).toContain('<a href="{manage_url}"')
+      expect(body).toContain('<a href="{receipt_url}"')
+      expect(body).toMatch(/PDF/)
+    })
+
+    it.each(langs)('%s: subject con hotel y localizador', (lang) => {
+      const { subject } = confirmed(lang)
+      expect(subject).toContain('{hotel_name}')
+      expect(subject).toContain('{locator}')
+    })
+
+    it.each(langs)('%s: sin marca hardcodeada (usa {platform_name})', (lang) => {
+      const { subject, body } = confirmed(lang)
+      expect(subject + body).not.toContain('SolmiOS')
+      expect(body).toContain('{platform_name}')
+    })
+
+    it('es: tono de usted (nada de tuteo)', () => {
+      const { subject, body } = getCodeDefault('reservation_confirmed', 'es')
+      for (const tuteo of ['Tu reserva', 'Te mandamos', 'Te esperamos', 'Hola <strong>', 'tu habitación']) {
+        expect(body).not.toContain(tuteo)
+        expect(subject).not.toContain(tuteo)
+      }
+      expect(body).toContain('Su reserva ha sido confirmada')
+      expect(body).toContain('Le esperamos')
+    })
+
+    it('en/pt: fórmulas formales', () => {
+      expect(getCodeDefault('reservation_confirmed', 'en').body).not.toContain('Your booking has')
+      expect(getCodeDefault('reservation_confirmed', 'pt').body).not.toContain('Sua reserva foi')
+      expect(getCodeDefault('reservation_confirmed', 'pt').body).not.toContain('você')
+    })
+
+    it('las 3 plantillas comparten el mismo esqueleto visual', () => {
+      for (const lang of langs) {
+        const { body } = confirmed(lang)
+        expect(body).toContain('background:#1a2b4c')
+        expect(body).toContain('background:#f8f9fa')
+        expect(body).toContain('🏨 {hotel_name}')   // el renderer lo cambia por logo_url
+      }
+    })
   })
 
   it('NOTIFICATION_DEFAULTS registra todos los eventos × 3 idiomas', () => {

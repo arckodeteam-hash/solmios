@@ -3,6 +3,17 @@
 // Fuente de verdad de los defaults de email (NO se seedean en DB). El override del hotel
 // vive en auto_messages; este archivo es el fallback. Versionado con git, testeable sin DB.
 // Las variables {key} se interpolan con renderTemplate() de email-service (6.1.2).
+//
+// Ciclo de vida de estas plantillas (#270):
+//   · Los defaults viven en código y se actualizan con el deploy: no hay migración ni seed que
+//     correr para que un cambio acá llegue a producción.
+//   · El override por hotel (tabla `auto_messages`, resuelto por notification-renderer.ts) tiene
+//     prioridad sobre este archivo y NO se pisa nunca desde acá.
+//   · No existe seed ni `--refresh` para estos defaults (a diferencia de
+//     `scripts/seed-platform-email-templates.ts --refresh`, que es de platform-emails). Un hotel
+//     con plantilla personalizada de `reservation_confirmed` sigue viendo la suya: si quiere el
+//     desglose nuevo ({rooms_lines}, {extras_lines}, {tax_lines}, {receipt_url}, …) tiene que
+//     agregar esas variables a mano desde su panel.
 
 export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
@@ -15,6 +26,15 @@ export interface NotificationDefault {
 }
 
 // ─── reservation_confirmed ──────────────────────────────────────────────────
+//
+// Recibo completo de la reserva pagada (#270). Todas las variables las provee
+// shared/usecases/booking-paid-email.ts (hay test de contrato en
+// shared/usecases/tests/booking-paid-email.test.ts: NO inventar variables acá).
+// Las `*_lines` llegan ya como HTML (<ul><li>…</li></ul>) o '' y se insertan sin escapar.
+// El evento también lo dispara reservas/usecases/reservation-email.ts (reserva creada desde el
+// panel) con un mapa más chico: por eso las secciones nuevas van etiquetadas y separadas del
+// texto principal, para que el correo siga siendo legible si alguna variable queda sin valor.
+// Tono: "usted" en es, formal en pt, neutro en en. Sin marca hardcodeada: {platform_name}.
 
 const CONFIRMED_ES = `<!DOCTYPE html>
 <html lang="es">
@@ -22,23 +42,56 @@ const CONFIRMED_ES = `<!DOCTYPE html>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
     <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
-    <p style="margin:5px 0 0;opacity:0.8;">Confirmación de Reserva</p>
+    <p style="margin:5px 0 0;opacity:0.8;">Confirmación de reserva</p>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
-    <p>Tu reserva ha sido confirmada. Aquí tienes los detalles:</p>
+    <p style="font-size:16px;">Estimado/a {guest_name},</p>
+    <p>Su reserva ha sido confirmada. A continuación encontrará el detalle de su estancia y el recibo de su pago.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estancia</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestión del pago</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Huéspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adultos · {children} niños ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Cuna</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Régimen</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Llegada estimada</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Pedido especial</td><td style="padding:6px 0;text-align:right;">{special_requests}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Habitaciones · {rooms_count} habitación(es)</p>
+      <div style="font-size:14px;color:#4b5563;">{rooms_lines}</div>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Desglose</p>
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Subtotal alojamiento</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{subtotal}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Extras</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{extras_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Amenidades infantiles</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Amenidades de habitación</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Código promocional {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Impuestos</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestión del pago</p>
+      <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Forma de pago</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Anticipo</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Pagado</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Pendiente</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{pending_amount}</td></tr>
-        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
+    <p style="text-align:center;margin:20px 0;">
+      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">Ver mi reserva</a>
+      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Descargar recibo (PDF)</a>
+    </p>
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelación</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
@@ -48,8 +101,9 @@ const CONFIRMED_ES = `<!DOCTYPE html>
       <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
       <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Tel: <strong>{hotel_phone}</strong> · {hotel_email}</p>
     </div>
-    <p style="font-size:13px;color:#6b7280;">Te mandamos tu habitación y el código de acceso el día antes de llegar.</p>
-    <p style="font-size:13px;color:#6b7280;">¡Te esperamos!</p>
+    <p style="font-size:13px;color:#6b7280;">Le enviaremos el número de habitación y el código de acceso el día anterior a su llegada.</p>
+    <p style="font-size:13px;color:#6b7280;">Le esperamos.</p>
+    <p style="font-size:11px;color:#9ca3af;text-align:center;margin:24px 0 0;">Enviado por {platform_name}</p>
   </div>
 </body>
 </html>`
@@ -60,23 +114,56 @@ const CONFIRMED_EN = `<!DOCTYPE html>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
     <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
-    <p style="margin:5px 0 0;opacity:0.8;">Booking Confirmation</p>
+    <p style="margin:5px 0 0;opacity:0.8;">Reservation confirmation</p>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-    <p style="font-size:16px;">Hi <strong>{guest_name}</strong>,</p>
-    <p>Your booking has been confirmed. Here are the details:</p>
+    <p style="font-size:16px;">Dear {guest_name},</p>
+    <p>Your reservation is confirmed. Below you will find the details of your stay and your payment receipt.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Stay</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Payment</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Guests</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adults · {children} children ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Crib</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Meal plan</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Estimated arrival</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Special requests</td><td style="padding:6px 0;text-align:right;">{special_requests}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Rooms · {rooms_count} room(s)</p>
+      <div style="font-size:14px;color:#4b5563;">{rooms_lines}</div>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Breakdown</p>
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Accommodation subtotal</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{subtotal}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Extras</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{extras_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Children amenities</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Room amenities</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Promo code {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Taxes</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Payment</p>
+      <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Payment method</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Deposit</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Paid</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Pending</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{pending_amount}</td></tr>
-        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Booking ref: <strong>{locator}</strong></p>
+    <p style="text-align:center;margin:20px 0;">
+      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">View my reservation</a>
+      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Download receipt (PDF)</a>
+    </p>
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cancellation policy</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
@@ -86,8 +173,9 @@ const CONFIRMED_EN = `<!DOCTYPE html>
       <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
       <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Phone: <strong>{hotel_phone}</strong> · {hotel_email}</p>
     </div>
-    <p style="font-size:13px;color:#6b7280;">We'll send your room number and access code the day before you arrive.</p>
-    <p style="font-size:13px;color:#6b7280;">We look forward to welcoming you!</p>
+    <p style="font-size:13px;color:#6b7280;">We will send your room number and access code the day before your arrival.</p>
+    <p style="font-size:13px;color:#6b7280;">We look forward to welcoming you.</p>
+    <p style="font-size:11px;color:#9ca3af;text-align:center;margin:24px 0 0;">Sent by {platform_name}</p>
   </div>
 </body>
 </html>`
@@ -98,23 +186,56 @@ const CONFIRMED_PT = `<!DOCTYPE html>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
     <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
-    <p style="margin:5px 0 0;opacity:0.8;">Confirmação de Reserva</p>
+    <p style="margin:5px 0 0;opacity:0.8;">Confirmação de reserva</p>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
-    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
-    <p>A sua reserva foi confirmada. Aqui estão os detalhes:</p>
+    <p style="font-size:16px;">Prezado(a) {guest_name},</p>
+    <p>A sua reserva está confirmada. A seguir encontrará os detalhes da sua estadia e o recibo do seu pagamento.</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estadia</p>
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
-        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestão do pagamento</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Hóspedes</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} adultos · {children} crianças ({children_ages})</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Berço</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Regime</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{meal_plan}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Chegada estimada</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{estimated_arrival}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Pedido especial</td><td style="padding:6px 0;text-align:right;">{special_requests}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Quartos · {rooms_count} quarto(s)</p>
+      <div style="font-size:14px;color:#4b5563;">{rooms_lines}</div>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Detalhe</p>
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Subtotal da hospedagem</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{subtotal}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Extras</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{extras_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Comodidades infantis</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{child_amenities_lines}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Comodidades do quarto</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{room_amenities_lines}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Código promocional {promo_code}</td><td style="padding:6px 0;font-weight:bold;text-align:right;">−{promo_discount}</td></tr>
+        <tr><td colspan="2" style="padding:6px 0 0;color:#6b7280;">Impostos</td></tr>
+        <tr><td colspan="2" style="padding:0 0 6px;color:#4b5563;">{tax_lines}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">TOTAL</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestão do pagamento</p>
+      <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Forma de pagamento</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Sinal</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Pago</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Pendente</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{pending_amount}</td></tr>
-        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
+    <p style="text-align:center;margin:20px 0;">
+      <a href="{manage_url}" style="display:inline-block;background:#1a2b4c;color:white;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;margin:4px;">Ver a minha reserva</a>
+      <a href="{receipt_url}" style="display:inline-block;background:white;color:#1a2b4c;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;border:1px solid #1a2b4c;margin:4px;">Baixar recibo (PDF)</a>
+    </p>
     <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
       <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelamento</p>
       <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
@@ -124,8 +245,9 @@ const CONFIRMED_PT = `<!DOCTYPE html>
       <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
       <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Tel: <strong>{hotel_phone}</strong> · {hotel_email}</p>
     </div>
-    <p style="font-size:13px;color:#6b7280;">Enviamos o seu quarto e o código de acesso no dia anterior à chegada.</p>
-    <p style="font-size:13px;color:#6b7280;">Esperamos por si!</p>
+    <p style="font-size:13px;color:#6b7280;">Enviaremos o número do quarto e o código de acesso no dia anterior à sua chegada.</p>
+    <p style="font-size:13px;color:#6b7280;">Aguardamos a sua chegada.</p>
+    <p style="font-size:11px;color:#9ca3af;text-align:center;margin:24px 0 0;">Enviado por {platform_name}</p>
   </div>
 </body>
 </html>`
@@ -636,9 +758,9 @@ const REVIEW_PT = `<div style="font-family:Arial,sans-serif;max-width:520px;marg
 
 export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<NotificationLanguage, NotificationDefault>>> = {
   reservation_confirmed: {
-    es: { subject: 'Confirmación de reserva — {hotel_name}', body: CONFIRMED_ES },
-    en: { subject: 'Booking confirmation — {hotel_name}', body: CONFIRMED_EN },
-    pt: { subject: 'Confirmação de reserva — {hotel_name}', body: CONFIRMED_PT },
+    es: { subject: 'Su reserva en {hotel_name} está confirmada — {locator}', body: CONFIRMED_ES },
+    en: { subject: 'Reservation confirmed at {hotel_name} — {locator}', body: CONFIRMED_EN },
+    pt: { subject: 'A sua reserva em {hotel_name} está confirmada — {locator}', body: CONFIRMED_PT },
   },
   reservation_presale: {
     es: { subject: 'Reserva pendiente de pago — {hotel_name}', body: PRESALE_ES },
