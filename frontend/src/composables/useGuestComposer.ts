@@ -414,6 +414,9 @@ export function useGuestComposer() {
       needsCrib: !!line.needsCrib,
       ...(ids.length > 0 ? { childAmenityIds: ids } : {}),
       ...(keys.length > 0 ? { roomAmenityKeys: keys } : {}),
+      // MR-03 (#268) — el régimen elegido vuelve al composer: si no, al re-agregar la línea se
+      // perdía en silencio (y con él su cobro). `room_only` se omite, igual que los otros opcionales.
+      ...(line.mealPlan && line.mealPlan.code !== 'room_only' ? { mealPlan: line.mealPlan.code } : {}),
     }
     store.removeCartLineUnit(line.key)
     return true

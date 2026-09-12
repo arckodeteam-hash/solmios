@@ -300,7 +300,7 @@ const filterPayment = ref('')
 // MR-03 (#268) — '' | código de régimen. Compara contra `mealPlan ?? regime` de cada fila.
 const filterMealPlan = ref('')
 // Mismo mapa que `regimeLabel()` de ReservationModal.vue (no se importa desde un .vue).
-const MEAL_PLAN_LABELS: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
+const MEAL_PLAN_LABELS: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
 function mealPlanLabel(code?: string | null): string { return code ? (MEAL_PLAN_LABELS[code] || code) : '' }
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])

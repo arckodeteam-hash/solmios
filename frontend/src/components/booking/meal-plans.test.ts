@@ -193,6 +193,21 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(store.cart[1]!.quantity).toBe(2)
     expect(store.mealPlansTotal).toBe(60) // 30 × 2 unidades (1 adulto × 3 noches × 10)
   })
+
+  it('Editar una línea con régimen lo devuelve al composer (no vuelve a "Solo alojamiento" en silencio)', async () => {
+    const store = seedStore([BREAKFAST_PAID])
+    const { setMealPlan, addComposedRoom, editCartLine, mealPlanCode } = useGuestComposer()
+    const rt = roomType()
+    setMealPlan(rt, 'breakfast')
+    await addComposedRoom(rt)
+    expect(mealPlanCode(rt)).toBe('room_only') // el composer se resetea al agregar
+    expect(editCartLine(store.cart[0]!)).toBe(true)
+    expect(mealPlanCode(rt)).toBe('breakfast')
+    await addComposedRoom(rt)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.mealPlan?.code).toBe('breakfast')
+    expect(store.mealPlansTotal).toBe(30)
+  })
 })
 
 describe('useBooking — payload con régimen (MR-03 #268)', () => {

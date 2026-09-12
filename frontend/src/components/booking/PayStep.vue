@@ -127,7 +127,7 @@
       <!-- MR-03 (#268) — régimen, una fila por habitación con régimen ≠ solo alojamiento; los
            incluidos se listan sin importe para que el huésped vea que están en la tarifa. -->
       <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
-        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t('pay.mealPlanLine', { label: t(MEAL_PLAN_LABEL_KEY[line.code]), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: t(MEAL_PLAN_LABEL_KEY[line.code]), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span v-if="line.priceMode === 'included'" class="font-semibold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
         <span v-else class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>

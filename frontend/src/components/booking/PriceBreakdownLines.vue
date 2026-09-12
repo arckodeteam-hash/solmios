@@ -36,7 +36,7 @@
       <template v-if="mealPlanLines && mealPlanLines.length > 0">
         <div v-for="line in mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
           <span class="text-text-muted">
-            {{ t('pay.mealPlan') }}: {{ t('pay.mealPlanLine', { label: mealPlanLabel(line.code), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span>
+            {{ t('pay.mealPlan') }}: {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: mealPlanLabel(line.code), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span>
             <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span>
           </span>
           <span v-if="line.priceMode === 'included'" class="font-bold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
