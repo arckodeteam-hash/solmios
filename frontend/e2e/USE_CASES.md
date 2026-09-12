@@ -41,6 +41,7 @@ de darlo por bueno, y tachalo de acá (o dejalo — el ID sirve de referencia es
 | AUTH-06 — Aislamiento multi-tenant / IDOR cross-hotel + switch-hotel 403 | `e2e/auth/multitenant.spec.ts` |
 | AUTH — Registro público (2 pasos) | `e2e/auth/register.spec.ts` |
 | AUTH-02 — Correo de verificación real (IMAP) + enlace verifica + token de un solo uso | `e2e/auth/email-verification.spec.ts` |
+| RES-17 — Circuito completo del motor web (#265): desayuno+extra+cuna → pago por webhook firmado → aviso al hotel → recibo → check-in con extras en folio → cancelación con reembolso | `e2e/reservations/public-booking-circuit.spec.ts` |
 | Smoke (la app monta, login se renderiza) | `e2e/smoke.spec.ts` |
 
 ### Infra E2E (compartida por todos los specs de operaciones)
@@ -55,12 +56,18 @@ de darlo por bueno, y tachalo de acá (o dejalo — el ID sirve de referencia es
   `extractVerificationLink`). Lo usa AUTH-02 para afirmar "el correo llegó" con evidencia en vez
   de asumirlo. Credenciales por entorno (`MAILBOX_PASS`); sin ellas el spec se SALTA, nunca pasa
   en falso.
+- `e2e/helpers/stripe-stub.ts`: doble HTTP de la API de Stripe sobre `node:http` (`startStripeStub`,
+  `markSessionPaid`, `signStripeEvent`, `buildCheckoutCompletedEvent`) para que el backend cobre y
+  reembolse contra un servidor local con su SDK REAL (`STRIPE_API_HOST/PORT/PROTOCOL`, sólo con claves
+  `sk_test_`). Corre igual en Node (Playwright) y en Bun; `bun run e2e/helpers/stripe-stub.ts --selftest`
+  valida el contrato con el SDK. Lo usa RES-17; el spec firma los webhooks con el mismo
+  `STRIPE_WEBHOOK_SECRET` que recibe el backend.
 - **16 specs, ~38s**, corren contra el backend de dev (`:3001`) con datos reales que persisten.
 
 ## Índice por dominio
 
 1. [Auth & Onboarding](#1-auth--onboarding) — 11 casos (AUTH-01..11)
-2. [Reservas & Planning](#2-reservas--planning) — 16 casos (RES-01..16)
+2. [Reservas & Planning](#2-reservas--planning) — 17 casos (RES-01..17)
 3. [Facturación & Pagos](#3-facturación--pagos) — 15 casos (FAC-01..15)
 4. [Operaciones: Housekeeping / Mantenimiento / Huéspedes](#4-operaciones-housekeeping--mantenimiento--huéspedes) — 14 casos (OPS-01..14)
 5. [RRHH: Talento & Nómina](#5-rrhh-talento--nómina) — 14 casos (RRHH-01..14)
@@ -68,7 +75,7 @@ de darlo por bueno, y tachalo de acá (o dejalo — el ID sirve de referencia es
 7. [Dispositivos, Inventario, Compras & Restaurante](#7-dispositivos-inventario-compras--restaurante) — 14 casos (DEV-01..14)
 8. [Admin de Plataforma & Configuración](#8-admin-de-plataforma--configuración) — 15 casos (ADM-01..15)
 
-**Total: 112 casos de uso mapeados.**
+**Total: 113 casos de uso mapeados.**
 
 ## Prioridad Alta — por dónde seguir
 
@@ -377,7 +384,7 @@ del hotel), ADM-12 (programa Aliados).
 - **Endpoints clave:** `GET /rates`, `POST /api/public/booking`, webhook.
 - **UI:** `/book/:slug`, `/h/:slug/confirm`.
 - **Casos borde / errores a cubrir:** dos huéspedes compiten por la última unidad → el segundo 409; tipo inexistente → 404; sin unidades libres → 409 (no 404); estadía > máximo; hotel pausado → 404; Stripe caído → reserva se crea igual con `checkoutUrl:null`.
-- **Prioridad E2E:** Alta.
+- **Prioridad E2E:** Alta. El camino feliz (alta → `checkoutUrl` → webhook firmado → `confirmed`) lo cubre RES-17.
 
 ### RES-11 — Auto-cancelación pública del huésped (token HMAC)
 - **Actor(es):** Huésped anónimo.
@@ -387,7 +394,7 @@ del hotel), ADM-12 (programa Aliados).
 - **Endpoints clave:** `POST /:id/cancel`, `GET /:id`.
 - **UI:** `/h/:slug/confirm`.
 - **Casos borde / errores a cubrir:** sin token/token incorrecto/reserva del panel → 404 uniforme (anti-enumeración); reserva checked_in/out → 409; cancelación ya procesada → idempotente.
-- **Prioridad E2E:** Media-Alta.
+- **Prioridad E2E:** Media-Alta. La cancelación desde la UI pública con reembolso real en la pasarela la cubre RES-17.
 
 ### RES-12 — Código promocional en el motor público
 - **Actor(es):** Huésped anónimo (validación) / hotel_admin (alta).
@@ -438,6 +445,72 @@ del hotel), ADM-12 (programa Aliados).
 - **UI:** `/panel/finanzas/night-audit`.
 - **Casos borde / errores a cubrir:** **hallazgo a verificar**: la tabla de transiciones permite `pending→no_show` pero NO parece permitir `confirmed→no_show` (el caso más común) — el test debe confirmar o descartar esta inconsistencia antes de asumir que funciona; cron corriendo dos veces no debe duplicar.
 - **Prioridad E2E:** Media-Alta.
+
+### RES-17 — Circuito completo del motor de reservas web (epic #265)
+- **Actor(es):** Huésped anónimo (widget `/book/:slug` y página pública `/h/:slug/confirm`), la pasarela
+  (webhook), hotel_admin (campanita, check-in, folio).
+- **Precondición:** Motor habilitado con confirmación instantánea; régimen `breakfast` activo por persona y
+  noche; un upsell activo; política de niños con `maxBabyAge` y `custom:cuna` en las habitaciones Double;
+  `hotels.email` y la config SMTP del hotel (`configuration.email_config`) apuntando al buzón de pruebas.
+  El spec siembra todo por la API admin y lo restaura al final.
+- **Permiso requerido:** Ninguno para el huésped; `reservations:checkin` + `billing:view` para el check-in
+  y la lectura del folio.
+- **Flujo:**
+  - Given un huésped en `/book/:slug` con fechas futuras
+  - When arma una Double con 1 adulto + 1 bebé, pide cuna, elige "Desayuno incluido", suma el extra y
+    envía con "Reservar y pagar"
+  - Then la reserva queda `pending` con `mealPlan=breakfast`, `needsCrib=true` y el desglose del server
+    (`mealPlanTotal`, `upsellsTotal`, `roomAmenitiesTotal`) y el widget lo manda a la Checkout Session
+    (página del doble, `client_reference_id` = reserva, `amount_total` = total en centavos)
+  - When llega `checkout.session.completed` firmado a `POST /api/public/webhook/stripe/:hotelId`
+  - Then la reserva pasa a `confirmed` (`deposit` = total, `pendingAmount` 0, `paymentMethod=card`) y hay
+    una fila `charge/completed` en `payments` (`GET /api/reservations/:id` → `paymentHistory`)
+  - Then el hotel ve en la campanita "Nueva reserva web — …" y "Pago recibido — …", y recibe el correo
+    `reservation_new_staff` con "Pagado" en su buzón
+  - Then el huésped recibe `reservation_confirmed` con el desglose (régimen × personas × noches, extra,
+    cuna), el enlace "Ver mi reserva" y el recibo PDF (`GET /api/public/reservations/:id/receipt.pdf`
+    responde `application/pdf`)
+  - When recepción hace `POST /api/reservas/:id/checkin`
+  - Then el folio nace con la noche + una línea `extra` por cada addon pagado online (`Régimen: Desayuno`,
+    el upsell, `Cuna`, con sus importes base) y el prepago acreditado: saldo 0 (#269)
+  - Given una SEGUNDA reserva pagada de la misma forma (la primera ya está checked_in → 409 al cancelar)
+  - When el huésped abre el enlace del correo y confirma "Sí, cancelar"
+  - Then la reserva queda `cancelled` con `refundStatus=done`, el doble recibió `POST /v1/refunds` sobre el
+    PaymentIntent de su session por el total, `payments` tiene la fila `refund` y el cobro `refunded`, la
+    página muestra "Reembolso de … procesado" y llega el correo `reservation_cancelled_guest` (#272).
+- **Endpoints clave:** `POST /api/public/booking`, `POST /api/public/webhook/stripe/:hotelId`,
+  `GET /api/reservas/:id`, `GET /api/reservations/:id`, `POST /api/reservas/:id/checkin`, `GET /api/folios/:id`,
+  `POST /api/public/reservations/:id/cancel`, `GET /api/public/reservations/:id/receipt.pdf`; seed:
+  `PUT /api/booking-engine/config`, `PUT /api/meal-plans/:code`, `POST /api/upsells`,
+  `PUT /api/amenities/room/:id`, `POST /api/configuracion` (`child_policy`, `email_config`),
+  `PUT /api/settings/hotel`.
+- **UI:** `/book/:slug` (RoomsStep → UpsellsStep → GuestCheckoutStep → PayStep), página del doble de Stripe,
+  campanita del panel (`NotificationBell.vue`), `/h/:slug/confirm` (cancelación).
+- **Casos borde / errores a cubrir:** el aviso "reserva recibida sin pago" (`hasCheckout=false`), la
+  aprobación manual (#271), la expiración de pendientes por cron / `checkout.session.expired` (#266) y el
+  rechazo con reembolso quedan fuera de este circuito.
+- **Prioridad E2E:** Alta.
+- **Cubierto por** `e2e/reservations/public-booking-circuit.spec.ts` (un solo test con `test.step` por
+  etapa). Requiere el backend AISLADO apuntando al doble de Stripe y el buzón real:
+  ```
+  # backend (además de PORT/DB_PATH/JWT_SECRET del entorno aislado)
+  PUBLIC_URL=http://localhost:5174 PUBLIC_BASE_URL=http://localhost:5174 \
+  STRIPE_SECRET_KEY=sk_test_stub STRIPE_WEBHOOK_SECRET=whsec_stub \
+  STRIPE_API_HOST=127.0.0.1 STRIPE_API_PORT=4242 STRIPE_API_PROTOCOL=http \
+    bun --env-file=<tmp>/e2e.env src/composition-root.ts
+  # vite en :5174 con proxy /api → :3011 (vite.<x>.config.ts dentro de frontend/)
+  # spec
+  cd frontend && E2E_PORT=5174 E2E_BACKEND_URL=http://localhost:3011 MAILBOX_PASS=… \
+    bunx playwright test e2e/reservations/public-booking-circuit.spec.ts --project=chromium
+  ```
+  `PUBLIC_URL` tiene que ser el origen del FRONTEND: el correo arma con él el enlace `/h/:slug/confirm`
+  que el spec abre en Chromium. El doble (`e2e/helpers/stripe-stub.ts`, sobre `node:http`) se levanta
+  dentro del spec (`beforeAll`, en 127.0.0.1:4242; `E2E_STRIPE_STUB_PORT` / `E2E_STRIPE_WEBHOOK_SECRET`
+  para cambiarlos, siempre en línea con `STRIPE_API_PORT` / `STRIPE_WEBHOOK_SECRET` del backend) y
+  sus ids llevan un prefijo aleatorio por proceso (`cs_test_<rand8>_<n>`): se puede correr varias
+  veces contra la misma base sin chocar con la idempotencia de `payments.stripeSessionId`. Sin
+  `MAILBOX_PASS` se SALTA. Persisten por corrida: 2 reservas pagadas (checked_in / cancelada con
+  reembolso) en fechas aleatorias de 2028 y sus cobros.
 
 ## 3. Facturación & Pagos
 
