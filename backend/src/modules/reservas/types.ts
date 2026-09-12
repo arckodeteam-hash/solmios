@@ -76,6 +76,13 @@ export interface ReservasDTO {
 
 export interface CreateReservasDTO {
   guestId?: string
+  // MR-08 (#273): el panel puede mandar el email del huésped en lugar de `guestId`; el usecase lo
+  // resuelve a una ficha existente (email/teléfono normalizados) o nueva con el helper compartido
+  // `shared/usecases/find-or-create-guest.ts`. NO se persisten en Reservations. Con `guestId`
+  // presente se ignoran.
+  guestEmail?: string
+  guestName?: string
+  guestPhone?: string
   roomId: string
   hotelId: string
   checkIn: string

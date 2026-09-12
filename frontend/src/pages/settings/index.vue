@@ -38,7 +38,7 @@
     <div class="flex items-center justify-between mb-6">
       <div>
         <h2 class="text-xl font-black text-navy">Configuración</h2>
-        <p class="text-sm text-text-muted mt-0.5">Datos del hotel, amenities, tarifas e integraciones</p>
+        <p class="text-sm text-text-muted mt-0.5">Datos del hotel, tarifas e integraciones</p>
       </div>
       <!-- El builder de la landing, reputación externa y tracking se mudaron a su propia
            sección del menú (Página pública). Las pestañas que quedan acá persisten con
@@ -54,7 +54,7 @@
       </button>
     </div>
 
-    <!-- Tabs agrupados: administrativo vs. configuraciones e integraciones -->
+    <!-- Tabs agrupados (hoy un solo grupo, ver tabGroups) -->
     <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
       <div v-for="group in tabGroups" :key="group.label" class="min-w-0 lg:shrink">
         <p class="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-text-muted">{{ group.label }}</p>
@@ -101,7 +101,7 @@
           </div>
         </SectionCard>
       <!-- WiFi del establecimiento: dato OPERATIVO (pre-checkin, emails, WhatsApp), no parte de
-           ninguna "descripción" pública — la página pública sólo lista el badge amenity. Vivía en
+           ninguna "descripción" pública — la página pública sólo lista el badge de WiFi. Vivía en
            un tab "Descripción" que había quedado con este único contenido tras sacar la
            descripción multilingüe; acá va con los demás datos del hotel (feedback panel/config). -->
       <SectionCard title="WiFi" subtitle="Se comparte con el huésped en el pre-checkin">
@@ -266,6 +266,54 @@
             </label>
           </div>
         </SectionCard>
+
+        <!-- #297: aviso automático con los datos de la habitación asignada (número, código de acceso,
+             horario) N horas antes de la llegada, por email y/o WhatsApp. configuration('room_info_config'). -->
+        <SectionCard title="Datos de la habitación al huésped"
+          subtitle="Enviá número, código de acceso y horario de la habitación asignada antes de la llegada">
+          <template #actions>
+            <button @click="saveRoomInfo" :disabled="roomInfoSaving"
+              class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
+              {{ roomInfoSaving ? 'Guardando…' : 'Guardar aviso de habitación' }}
+            </button>
+          </template>
+          <div class="space-y-3">
+            <label for="room-info-enabled" class="flex items-center justify-between gap-4 rounded-xl bg-surface p-3.5 cursor-pointer">
+              <span class="text-sm font-bold text-navy">Enviar automáticamente
+                <span class="block text-[11px] font-normal text-text-muted">Se manda cuando la habitación ya está asignada; si cambia la habitación o el código, se vuelve a avisar</span></span>
+              <input id="room-info-enabled" name="roomInfoEnabled" type="checkbox" v-model="roomInfo.enabled" aria-label="Enviar automáticamente los datos de la habitación" class="h-5 w-5 shrink-0 rounded text-cyan cursor-pointer" />
+            </label>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="room-info-hours" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Horas antes de la llegada</label>
+                <input id="room-info-hours" name="roomInfoHoursBefore" v-model.number="roomInfo.hoursBefore" type="number" min="1" max="168" step="1" aria-label="Horas antes de la llegada"
+                  class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy text-right tabular-nums focus:border-navy focus:outline-none" />
+                <p class="text-[10px] text-text-muted mt-1">Entre 1 y 168 horas (7 días)</p>
+              </div>
+              <div>
+                <label for="room-info-channel" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Canal</label>
+                <select id="room-info-channel" name="roomInfoChannel" v-model="roomInfo.channel" aria-label="Canal de envío" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+                  <option value="email">Correo electrónico</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="both">Correo y WhatsApp</option>
+                </select>
+              </div>
+              <div v-if="roomInfo.channel !== 'email'" class="sm:col-span-2">
+                <label for="room-info-template" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Plantilla de WhatsApp</label>
+                <select id="room-info-template" name="roomInfoWhatsappTemplateId" v-model="roomInfo.whatsappTemplateId" aria-label="Plantilla de WhatsApp aprobada" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+                  <option value="">Elegí una plantilla aprobada</option>
+                  <option v-for="t in roomInfoTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
+                </select>
+                <p v-if="roomInfoTemplates.length === 0" class="text-[10px] text-text-muted mt-1">
+                  No hay plantillas aprobadas por Meta: creá una en Mensajería → Plantillas WhatsApp
+                </p>
+              </div>
+            </div>
+            <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
+              Sin habitación asignada no se envía nada. Cada envío queda en el Historial de envíos.
+            </p>
+          </div>
+        </SectionCard>
       </div>
 
       <!-- Columna lateral: identidad y plan -->
@@ -292,47 +340,6 @@
           <span class="mx-auto mb-2 block h-8 w-8 text-navy/40" v-html="ICON_BUILDING"></span>
           <div class="text-sm font-bold text-navy">{{ form.name || 'Hotel' }}</div>
           <div v-if="form.country" class="mt-1 text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ form.country }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== AMENITIES ========== -->
-    <div v-if="activeTab === 'amenities'" class="space-y-6">
-      <!-- Las amenidades por habitación (con precio y disponibilidad) viven en Habitaciones (#290). -->
-      <div class="rounded-2xl bg-cyan/10 border border-cyan/20 px-5 py-4 text-sm text-navy" data-testid="amenities-config-hint">
-        Las amenidades de cada habitación (cuna, cama extra, precios y disponibilidad) se configuran en
-        <router-link to="/panel/config/habitaciones" class="font-bold text-navy underline underline-offset-2 hover:text-cyan">Habitaciones → Crear/Editar habitación</router-link>.
-        Acá solo se define el catálogo general del hotel.
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div v-for="(items, category) in amenityCatalog" :key="category" class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-          <h3 class="font-extrabold text-navy mb-4 capitalize">{{ categoryLabels[category] || category }}</h3>
-          <div class="space-y-2 max-h-96 overflow-y-auto">
-            <label v-for="key in items" :key="key" class="flex items-center gap-3 p-2 rounded-lg hover:bg-surface cursor-pointer transition-colors">
-              <input type="checkbox" :value="key" v-model="selectedAmenities"
-                class="w-4 h-4 rounded border-gray-300 text-cyan focus:ring-cyan cursor-pointer" />
-              <span class="text-sm text-navy font-medium">{{ amenityLabels[key] || key }}</span>
-            </label>
-          </div>
-        </div>
-      </div>
-      <!-- Custom amenity -->
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Agregar Amenity Personalizada</h3>
-        <div class="flex flex-wrap gap-3">
-          <select v-model="newAmenityCategory" class="px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
-            <option value="interior">Interior</option>
-            <option value="exterior">Exterior</option>
-            <option value="services">Servicios</option>
-          </select>
-          <input v-model="newAmenityName" type="text" placeholder="Nombre de la amenity..." class="flex-1 min-w-[140px] px-4 py-2.5 rounded-full border border-border text-sm" @keyup.enter="addCustomAmenity" />
-          <button @click="addCustomAmenity" class="px-5 py-2.5 bg-cyan text-navy rounded-full text-sm font-bold cursor-pointer hover:shadow-lg">Agregar</button>
-        </div>
-        <div v-if="customAmenities.length > 0" class="mt-3 flex flex-wrap gap-2">
-          <span v-for="a in customAmenities" :key="a.key" class="px-3 py-1.5 bg-navy/5 text-navy rounded-full text-xs font-bold flex items-center gap-1">
-            {{ a.label }}
-            <button @click="removeCustomAmenity(a.key)" class="w-3 h-3 text-coral hover:opacity-75 cursor-pointer ml-1" v-html="ICON_X"></button>
-          </span>
         </div>
       </div>
     </div>
@@ -659,21 +666,19 @@ import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
 import { loadCurrencyConfig, type CurrencyConfig } from '@/composables/useCurrency'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
-import { HotelService } from '@/services/Hotel.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { AuthService } from '@/services/Auth.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
+import { WhatsappService, type WhatsappTemplate } from '@/services/Whatsapp.service'
 import { SignupService, type PublicPlan } from '@/services/Signup.service'
 import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useConfirm } from '@/composables/useConfirm'
-import type { AmenityCatalog } from '@/services/Hotel.service'
 import type { HotelEmergencyContact } from '@/types'
 
-const ICON_X = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>'
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>'
 const ICON_CARD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>'
 const ICON_MESSAGE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>'
@@ -857,6 +862,64 @@ async function saveAutomation() {
   }
 }
 
+// #297: aviso con los datos de la habitación asignada N horas antes de la llegada.
+// configuration('room_info_config'), mismo patrón que automation_config. El backend
+// (room-info-notice.ts) parsea con defaults {enabled:false, hoursBefore:24, channel:'email', whatsappTemplateId:''}.
+type RoomInfoChannel = 'email' | 'whatsapp' | 'both'
+const ROOM_INFO_CHANNELS: RoomInfoChannel[] = ['email', 'whatsapp', 'both']
+const roomInfo = reactive<{ enabled: boolean; hoursBefore: number; channel: RoomInfoChannel; whatsappTemplateId: string }>({
+  enabled: false, hoursBefore: 24, channel: 'email', whatsappTemplateId: '',
+})
+const roomInfoSaving = ref(false)
+// Sólo plantillas aprobadas por Meta: una pendiente o rechazada no se puede enviar.
+const roomInfoTemplates = ref<WhatsappTemplate[]>([])
+async function loadRoomInfo() {
+  try {
+    const c = await ConfigService.get('room_info_config') as {
+      enabled?: boolean; hoursBefore?: number | string; channel?: string; whatsappTemplateId?: string
+    } | null
+    if (c && typeof c === 'object') {
+      roomInfo.enabled = !!c.enabled
+      roomInfo.hoursBefore = Number(c.hoursBefore) || 24
+      roomInfo.channel = ROOM_INFO_CHANNELS.includes(c.channel as RoomInfoChannel) ? (c.channel as RoomInfoChannel) : 'email'
+      roomInfo.whatsappTemplateId = typeof c.whatsappTemplateId === 'string' ? c.whatsappTemplateId : ''
+    }
+  } catch { /* defaults: apagado, 24 h, email */ }
+  // Sin await: el catálogo de plantillas es un extra del selector, no puede demorar el resto de
+  // la pantalla (y en los tests que no mockean el servicio, una llamada real colgaría el mount).
+  void loadRoomInfoTemplates()
+}
+async function loadRoomInfoTemplates() {
+  try {
+    const res = await WhatsappService.list()
+    roomInfoTemplates.value = (res?.data ?? []).filter((t) => t.approvalStatus === 'approved')
+  } catch { roomInfoTemplates.value = [] }
+}
+async function saveRoomInfo() {
+  const hours = Number(roomInfo.hoursBefore)
+  if (!Number.isInteger(hours) || hours < 1 || hours > 168) {
+    toast.error('Las horas deben ser un entero entre 1 y 168')
+    return
+  }
+  if (roomInfo.channel !== 'email' && !roomInfo.whatsappTemplateId) {
+    toast.error('Elegí una plantilla de WhatsApp aprobada')
+    return
+  }
+  roomInfoSaving.value = true
+  try {
+    await ConfigService.set('room_info_config', {
+      enabled: roomInfo.enabled, hoursBefore: hours, channel: roomInfo.channel, whatsappTemplateId: roomInfo.whatsappTemplateId,
+    })
+    await nextTick()
+    markClean()
+    toast.success('Aviso de habitación guardado')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    roomInfoSaving.value = false
+  }
+}
+
 // La facturación electrónica (NCF) se mudó a Integraciones → Facturación electrónica
 // (pages/integraciones/facturacion.vue), con su propio estado y su propio aviso de cambios
 // sin guardar.
@@ -986,9 +1049,14 @@ const loading = ref(true)
 type SettingsTab = { value: string; label: string }
 type SettingsTabGroup = { label: string; tabs: SettingsTab[] }
 
-// Dos grupos de configuración (feedback #139):
-// - Administrativo: identidad del hotel + políticas comerciales/fiscales.
-// - Configuraciones e integraciones: catálogos configurables + conexiones con terceros.
+// Un solo grupo de configuración: el segundo ("Configuraciones e integraciones", feedback
+// #139) se quedó sin pestañas y se retiró para no dejar un encabezado vacío:
+// - Página pública / Landing / Reputación externa / Tracking se mudaron a su propia sección
+//   del menú lateral (Página pública). Acá queda solo config operativa.
+// - El "Catálogo" global de servicios se retiró (#290/#291): los servicios de CADA
+//   habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones y
+//   los del HOTEL (piscina, gimnasio, los de la landing) en Página pública → General.
+// - "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
 const tabGroups: SettingsTabGroup[] = [
   {
     label: 'Config. administrativo',
@@ -1001,20 +1069,6 @@ const tabGroups: SettingsTabGroup[] = [
       { value: 'emergency', label: 'Emergencias' },
       // "RRHH" (días laborables) se mudó a RRHH → Asistencia → Horarios: es lo único que
       // configuraba y estaba a dos secciones de distancia de ahí.
-    ],
-  },
-  {
-    label: 'Configuraciones e integraciones',
-    tabs: [
-      // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
-      // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      // "Catálogo de amenities", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
-      // las que salen en la landing) se editan en Página pública → General. Dos catálogos
-      // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
-      // aclaratoria para que no se confundieran. Y "catálogo" porque las amenidades de CADA
-      // habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones (#290).
-      { value: 'amenities', label: 'Catálogo de amenities' },
-      // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },
 ]
@@ -1074,16 +1128,16 @@ const hasErrors = computed(() => Object.keys(fieldErrors.value).length > 0)
 // Antes se podía salir de la pantalla y perder todo lo tipeado sin ningún aviso.
 const savedSnapshot = ref('')
 function snapshot(): string {
-  // Antes solo se rastreaba `form`/`descriptions`: tildar un amenity, editar un contacto de
+  // Antes solo se rastreaba `form`/`descriptions`: editar un contacto de
   // emergencia, tipear un PIN de garantía o tocar cualquiera de los toggles satélite y navegar
   // afuera sin guardar no mostraba ningún aviso — ni el banner "Cambios sin guardar" ni la
   // confirmación al salir. Cada bloque que tiene su PROPIO botón "Guardar" entra acá.
   return JSON.stringify({
     form: form.value, ownerUserName: ownerUserName.value,
-    selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
-    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation,
+    emergencyContacts: emergencyContacts.value,
+    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, roomInfo,
     childPolicy,
-    // Slug, amenities hotel-level, traducciones públicas y flags de reseñas públicas
+    // Slug, servicios hotel-level, traducciones públicas y flags de reseñas públicas
     // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
     // de habitación y días laborables, desde Habitaciones y Asistencia respectivamente.
   })
@@ -1123,7 +1177,7 @@ const form = ref<HotelForm>({
   requestReviews: false, publishReviewScore: false, publishReviewComments: false,
   taxName: 'ITBIS', taxRate: 18,
   wifiNetwork: '', wifiPassword: '', logo: '',
-  slug: '', amenities: [], descriptionTranslations: {},
+  slug: '', descriptionTranslations: {},
   id: '',
 })
 
@@ -1169,70 +1223,6 @@ async function loadPlan() {
 // Presets canónicos (mismos tiers que el backend, cancellation-math.ts).
 
 
-// Amenities
-const amenityCatalog = ref<AmenityCatalog>({ interior: [], exterior: [], services: [] })
-const selectedAmenities = ref<string[]>([])
-const newAmenityName = ref('')
-const newAmenityCategory = ref('interior')
-const customAmenities = ref<{ key: string; label: string; category: string }[]>([])
-
-function addCustomAmenity() {
-  const name = newAmenityName.value.trim()
-  if (!name) return
-  const key = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
-  if (customAmenities.value.find(a => a.key === key)) return
-  customAmenities.value.push({ key, label: name, category: newAmenityCategory.value })
-  if (!amenityCatalog.value[newAmenityCategory.value as keyof AmenityCatalog]) {
-    amenityCatalog.value[newAmenityCategory.value as keyof AmenityCatalog] = []
-  }
-  amenityCatalog.value[newAmenityCategory.value as keyof AmenityCatalog].push(key)
-  amenityLabels[key] = name
-  selectedAmenities.value.push(key)
-  newAmenityName.value = ''
-  saveCustomAmenities()
-}
-function removeCustomAmenity(key: string) {
-  customAmenities.value = customAmenities.value.filter(a => a.key !== key)
-  selectedAmenities.value = selectedAmenities.value.filter(k => k !== key)
-  saveCustomAmenities()
-}
-async function saveCustomAmenities() {
-  try {
-    const { ConfigService } = await import('@/services/Platform.service')
-    await ConfigService.set('custom_amenities', customAmenities.value, hotelId.value)
-  } catch {}
-}
-async function loadCustomAmenities() {
-  try {
-    const { ConfigService } = await import('@/services/Platform.service')
-    const data = await ConfigService.get('custom_amenities', hotelId.value)
-    if (Array.isArray(data)) {
-      customAmenities.value = data
-      for (const a of data) {
-        if (!amenityCatalog.value[a.category as keyof AmenityCatalog]) {
-          amenityCatalog.value[a.category as keyof AmenityCatalog] = []
-        }
-        amenityCatalog.value[a.category as keyof AmenityCatalog].push(a.key)
-        amenityLabels[a.key] = a.label
-      }
-    }
-  } catch {}
-}
-
-const categoryLabels: Record<string, string> = { interior: 'Interior', exterior: 'Exterior', services: 'Servicios' }
-const amenityLabels: Record<string, string> = {
-  ac: 'Aire Acondicionado', heating: 'Calefacción', kitchen: 'Cocina', microwave: 'Microondas',
-  fridge: 'Nevera', coffee_maker: 'Cafetera', washer: 'Lavadora', dishwasher: 'Lavavajillas',
-  tv: 'TV', wifi: 'WiFi', safe: 'Caja Fuerte', minibar: 'Minibar', hair_dryer: 'Secador',
-  iron: 'Plancha', balcony: 'Balcón', bathtub: 'Bañera', work_desk: 'Escritorio',
-  pool: 'Piscina', pool_heated: 'Piscina Climatizada', parking_free: 'Parking Gratis',
-  parking_paid: 'Parking Pago', gym: 'Gimnasio', spa: 'SPA', restaurant: 'Restaurante',
-  bar: 'Bar', garden: 'Jardín', terrace: 'Terraza', bbq: 'Barbacoa', elevator: 'Ascensor',
-  lounge: 'Salón', kids_playground: 'Zona Infantil',
-  room_service: 'Room Service', laundry: 'Lavandería', concierge: 'Conserjería',
-  luggage_storage: 'Guardaequipaje', pets_allowed: 'Mascotas', wheelchair_access: 'Acceso Silla Ruedas',
-}
-
 onMounted(async () => {
   let errors: string[] = []
 
@@ -1273,7 +1263,6 @@ onMounted(async () => {
       taxName: h.taxName ?? 'ITBIS', taxRate: h.taxRate ?? 18,
       wifiNetwork: h.wifiNetwork ?? '', wifiPassword: h.wifiPassword ?? '', logo: h.logo ?? '',
       slug: h.slug ?? '',
-      amenities: Array.isArray(h.amenities) ? [...(h.amenities as string[])] : [],
       descriptionTranslations: (h.descriptionTranslations && typeof h.descriptionTranslations === 'object')
         ? { ...(h.descriptionTranslations as Record<string, { title?: string; description?: string }>) }
         : {},
@@ -1290,15 +1279,6 @@ onMounted(async () => {
     // ocurre si el usuario INTERACTÚA después de la carga.
     await nextTick()
 
-    // Amenities catalog + selected
-    const [cat, sel] = await Promise.all([
-      HotelService.amenitiesCatalog(),
-      HotelService.amenitiesHotel().catch(() => ({ data: [] })),
-    ])
-    amenityCatalog.value = cat
-    selectedAmenities.value = sel.data.map((a: any) => a.amenityKey)
-    await loadCustomAmenities()
-
     // Todo lo de abajo cargaba en onMounted() separados, en carrera con éste: si llegaban
     // DESPUÉS del markClean() de acá abajo, el snapshot quedaba viejo y la pantalla marcaba
     // "cambios sin guardar" apenas terminaba de cargar, sin que el usuario tocara nada.
@@ -1306,13 +1286,14 @@ onMounted(async () => {
     await loadCurrency()
     await loadGuaranteePin()
     await loadAutomation()
+    await loadRoomInfo()
     await loadChildPolicy()
     await loadInvoicePolicy()
   } catch (e) {
     toast.error('Error al cargar datos')
   } finally {
     // COR-4: la tarjeta "Plan" NO puede depender de que los siete loaders de arriba hayan salido
-    // bien. Cuando `loadPlan()` era el último `await` del `try`, cualquier fallo previo (amenities,
+    // bien. Cuando `loadPlan()` era el último `await` del `try`, cualquier fallo previo (contactos,
     // moneda, PIN, automatización, fiscal, política de facturas) lo salteaba,
     // `planLoading` se quedaba en `true` para siempre y la tarjeta mostraba el skeleton eterno: el
     // fallback "No pudimos leer tu plan" era inalcanzable. Va en el `finally` y trae su propio
@@ -1391,7 +1372,7 @@ async function saveAll() {
     // el admin editó ahí con el cargado al abrir Configuración.
     if (v !== undefined) (patch as Record<string, unknown>)[k] = v
   }
-  // El slug, amenities (hotel-level), descriptionJson (título+descripción base ES),
+  // El slug, servicios (hotel-level), descriptionJson (título+descripción base ES),
   // descriptionTranslations y flags de reseñas públicas (publishReviewScore/Comments)
   // los persiste la sección "Página pública" (general.vue) con su propio botón
   // Guardar. Acá ya no se tocan.
@@ -1403,12 +1384,6 @@ async function saveAll() {
     // no sabía QUÉ campo corregir. El ApiError del http ya trae el detalle del backend
     // (campo rechazado por el schema, 403 de permisos, etc.).
     errors.push(`hotel — ${e instanceof Error ? e.message : 'error desconocido'}`)
-  }
-
-  try {
-    await HotelService.saveAmenitiesHotel(selectedAmenities.value)
-  } catch (e) {
-    errors.push(`amenities — ${e instanceof Error ? e.message : 'error desconocido'}`)
   }
 
   saving.value = false

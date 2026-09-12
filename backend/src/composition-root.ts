@@ -28,6 +28,7 @@ import { createActivationSequenceCron } from './shared/usecases/activation-seque
 import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createArrivalSetupCron, ARRIVAL_SETUP_TICK_MS } from './shared/usecases/arrival-setup-cron'
+import { createRoomInfoCron, ROOM_INFO_TICK_MS } from './shared/usecases/room-info-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -1031,6 +1032,21 @@ setInterval(() => {
   prearrivalPassCron().catch((e) => logger.warn('prearrival-pass cron failed', { error: (e as Error).message }))
 }, PREARRIVAL_TICK_MS)
 logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
+
+// Información de la habitación asignada al huésped (#297): anticipación configurable por hotel
+// en `room_info_config` (horas antes, email/WhatsApp, plantilla). Reemplaza el 24 h fijo para
+// reservas de cualquier origen; prearrival-pass-cron queda para los pases wallet. Dedup por
+// huella habitación+código en `message_logs.response`, con reintento de fallos.
+const roomInfoCron = createRoomInfoCron({
+  orm, resolveModule: (name) => system.resolveModule(name), emailService, logger, publicUrl: process.env.PUBLIC_URL || '',
+})
+setTimeout(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  roomInfoCron().catch((e) => logger.warn('room-info cron failed', { error: (e as Error).message }))
+}, ROOM_INFO_TICK_MS)
+logger.info('Room-info cron listo', { tickMs: ROOM_INFO_TICK_MS })
 
 // Tarea `arrival_setup` de housekeeping (#274): el connector reservas-housekeeping la mantiene
 // por socket, pero el motor público y la confirmación por Stripe escriben `Reservations` directo

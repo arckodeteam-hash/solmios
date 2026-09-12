@@ -85,6 +85,7 @@ export function buildInvoiceRecord(args: {
     fiscalMessage: fiscalMessage ?? null,
     paymentMethod: dto.paymentMethod ?? null,
     notes: dto.notes ?? null,
+    issuedBy: dto.issuedBy ?? null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as any
