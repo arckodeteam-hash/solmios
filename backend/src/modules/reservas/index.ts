@@ -47,7 +47,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'listTypeAvailability', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned', 'onRoomVacatedMidStay'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
@@ -122,6 +122,9 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
 
       // ── CRUD ──
       router.get('/api/reservas', guard('reservations', 'view'), (req) => controller.index(req))
+      // ── Disponibilidad por TIPO para el wizard (REQ-HAC-05, #260). ANTES de `/api/reservas/:id`:
+      // el `:id` es `([^/]+)` y capturaría `type-availability`. Permiso view: sólo lee.
+      router.get('/api/reservas/type-availability', guard('reservations', 'view'), (req) => controller.typeAvailability(req))
       router.get('/api/reservas/:id', guard('reservations', 'view'), (req) => controller.show(req))
       router.post('/api/reservas', guard('reservations', 'create'), (req) => controller.store(req))
       router.put('/api/reservas/:id', guard('reservations', 'edit'), (req) => controller.update(req))

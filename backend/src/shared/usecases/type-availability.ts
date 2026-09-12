@@ -218,3 +218,41 @@ export async function availableOfType(
   ])
   return countAvailableOfType(roomType, rooms ?? [], reservations ?? [], blocks ?? [], checkIn, checkOut, opts)
 }
+
+/**
+ * REQ-HAC-05 (#260) — Perfil de un TIPO a partir de sus unidades (normalmente las VENDIBLES,
+ * `sellableRooms`): lo que necesita quien reserva sin unidad para validar capacidad y cotizar.
+ * Mismo criterio que el motor público (`bookingengine/usecases/public-booking.ts`), copiado
+ * acá porque `shared` no importa `modules/`:
+ *  - `capacity`/`maxAdults`/`maxChildren` = el MÁXIMO entre las unidades (la reserva entra si
+ *    entra en alguna; recepción elige cuál al asignar). `null` = ninguna unidad lo limita.
+ *  - `minBasePrice` = el MÍNIMO `basePrice` > 0 (el "desde" que publica `/rates`); 0 si ninguna
+ *    tiene precio.
+ * Tiene la forma que espera `assertReservationFitsCapacity`/`effectiveRoomCapacity` (`type`,
+ * `capacity`, `maxAdults`, `maxChildren`), así el alta por tipo reusa la MISMA validación que el
+ * alta por unidad. Sin `capacity` en una fila (dato viejo) cuenta `fallbackCapacity`.
+ */
+export interface RoomTypeProfile {
+  type: string
+  capacity: number
+  maxAdults: number | null
+  maxChildren: number | null
+  minBasePrice: number
+}
+
+export function roomTypeProfileOf(type: string, rooms: any[], fallbackCapacity = 0): RoomTypeProfile {
+  let capacity = 0
+  let maxAdults: number | null = null
+  let maxChildren: number | null = null
+  let minBasePrice = 0
+  for (const r of rooms ?? []) {
+    capacity = Math.max(capacity, Number(r?.capacity ?? fallbackCapacity) || 0)
+    const ma = Number(r?.maxAdults)
+    if (r?.maxAdults != null && Number.isFinite(ma)) maxAdults = maxAdults == null ? ma : Math.max(maxAdults, ma)
+    const mc = Number(r?.maxChildren)
+    if (r?.maxChildren != null && Number.isFinite(mc)) maxChildren = maxChildren == null ? mc : Math.max(maxChildren, mc)
+    const price = Number(r?.basePrice ?? r?.price ?? 0)
+    if (price > 0 && (minBasePrice === 0 || price < minBasePrice)) minBasePrice = price
+  }
+  return { type, capacity, maxAdults, maxChildren, minBasePrice }
+}
