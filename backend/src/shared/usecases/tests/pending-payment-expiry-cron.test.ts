@@ -1,4 +1,4 @@
-// shared/usecases/tests/pending-payment-expiry-cron.test.ts — Tests del factory del cron (#248 REQ-RWP-05).
+// shared/usecases/tests/pending-payment-expiry-cron.test.ts — Tests del factory del cron (#248 REQ-RWP-05, #266).
 //
 // Cubre: kill-switch por env (evaluado por tick, env inyectado — no toca process.env), log de
 // resumen por corrida, try/catch cron-level y constantes. La lógica de vencimiento está en
@@ -78,8 +78,8 @@ describe('createPendingPaymentExpiryCron', () => {
     expect(isPendingPaymentExpiryDisabled({})).toBe(false)
   })
 
-  it('constantes: tick 30 min y primer tick 60 s', () => {
-    expect(PENDING_PAYMENT_EXPIRY_TICK_MS).toBe(30 * 60 * 1000)
-    expect(PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS).toBe(60_000)
+  it('constantes (#266): tick 5 min y primer tick 20 s', () => {
+    expect(PENDING_PAYMENT_EXPIRY_TICK_MS).toBe(5 * 60 * 1000)
+    expect(PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS).toBe(20_000)
   })
 })

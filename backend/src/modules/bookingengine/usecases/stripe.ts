@@ -90,7 +90,17 @@ export interface SettleResult {
   checkIn?: string | null
   /** Pasarela que cobró (`stripe`, `azul`, `cardnet`): el aviso al hotel lo nombra (#246). */
   provider?: string
+  /** #266 — `type: 'expired'`: true si `checkout.session.expired` cerró la reserva (vencida sin pago). */
+  expired?: boolean
 }
+
+/**
+ * #266 — Cierre de una reserva `pending` cuyo checkout expiró. Es el MISMO usecase que corre el
+ * cron (`shared/usecases/pending-payment-expiry.ts#expirePendingReservation`): composition-root
+ * lo inyecta con sus repos. Devuelve `expired:false` + `reason` cuando la reserva no vence
+ * (pago registrado, deadline futura, ya cancelada, ...).
+ */
+export type ExpirePendingFn = (reservationId: string, hotelId: string) => Promise<{ expired: boolean; reason?: string }>
 
 /**
  * #196 — URLs de retorno para un proveedor sin webhook: el proveedor manda al navegador a
@@ -215,7 +225,18 @@ export class StripeUseCase {
      * romper los tests/callers que construyen el usecase sin él.
      */
     private readonly attempts?: PaymentAttemptStore,
+    /**
+     * #266 (MR-01) — Vence la reserva `pending` cuando Stripe manda `checkout.session.expired`.
+     * Opcional: sin él, el evento sólo queda en la bitácora (comportamiento previo). Se puede
+     * cablear post-init con `setExpirePending` (composition-root arma el usecase con el orm).
+     */
+    private expirePending?: ExpirePendingFn,
   ) {}
+
+  /** #266 — Inyección post-init del cierre por vencimiento (ver `ExpirePendingFn`). */
+  setExpirePending(fn: ExpirePendingFn): void {
+    this.expirePending = fn
+  }
 
   async isConfigured(hotelId: string): Promise<boolean> {
     return this.registry.isConfigured(hotelId)
@@ -457,6 +478,28 @@ export class StripeUseCase {
         checkIn: reservation.checkIn ?? null,
         provider,
       }
+    }
+
+    // #266 (MR-01) — `checkout.session.expired`: el huésped abrió el checkout y no pagó. Se cierra
+    // la reserva con el MISMO usecase que el cron (evalúa deadline/pagos/grupo y cancela
+    // `no-charge`), así el cuarto vuelve a venderse en minutos y no en el próximo barrido. Sobre
+    // una reserva ya `confirmed` (pagó por otro camino o Stripe reordenó eventos) es no-op.
+    if (outcome.status === 'expired' && outcome.reference && this.expirePending) {
+      const reservationId = outcome.reference
+      const reservation = await this.reservationsRepo.findOne({ id: reservationId })
+      // Ownership: el webhook del Hotel A no puede vencer una reserva del Hotel B.
+      if (!reservation || reservation.hotelId !== hotelId) {
+        this.logger.error(`Checkout expirado por '${provider}' del hotel ${hotelId} quiso vencer la reserva ${reservationId}, que no es suya`)
+        return null
+      }
+      if (reservation.status !== 'pending') {
+        this.logger.info(`Checkout expirado sobre la reserva ${reservationId} ya ${reservation.status} — no-op (hotel ${hotelId})`)
+        return { type: 'expired', reservationId, expired: false }
+      }
+      const out = await this.expirePending(reservationId, hotelId)
+      if (out.expired) this.logger.info(`Reserva ${reservationId} vencida por checkout expirado (hotel ${hotelId})`)
+      else this.logger.info(`Checkout expirado sobre la reserva ${reservationId}: no vence (${out.reason ?? 'sin motivo'}) (hotel ${hotelId})`)
+      return { type: 'expired', reservationId, expired: out.expired }
     }
 
     return { type: outcome.status }

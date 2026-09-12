@@ -16,7 +16,7 @@ import { bookingPaidPayload } from './usecases/booking-paid-event'
 import { ConfigUseCase } from './usecases/config'
 import { AvailabilityUseCase } from './usecases/availability'
 import { AnalyticsUseCase } from './usecases/analytics'
-import { StripeUseCase } from './usecases/stripe'
+import { StripeUseCase, type ExpirePendingFn } from './usecases/stripe'
 import {
   syncUpsellFromPackage as syncUpsellFromPackageUsecase,
   removeSyncedUpsell as removeSyncedUpsellUsecase,
@@ -83,6 +83,8 @@ export class BookingengineService {
     this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined, attempts)
   }
   async notifyBookingCreated(d: PublicBookingDTO) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
+  /** #266 — Post-init (composition-root): `checkout.session.expired` vence la reserva con el mismo usecase del cron. Sin cablear = no-op. */
+  setExpirePending(fn: ExpirePendingFn): void { this.stripe.setExpirePending(fn) }
   setSockets(s: Partial<BookingengineSockets>): void {
     const next = s as Record<string, any>
     const cur = this.sockets as Record<string, any>
