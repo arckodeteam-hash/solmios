@@ -180,8 +180,9 @@ export async function getPublicReservation(
         // #266 (MR-01) — por qué se canceló SU reserva: el cron/webhook de vencimiento escribe
         // 'payment_timeout' cuando el huésped no completó el pago en el plazo, y la pantalla de
         // confirmación lo usa para decirle "venció, volvé a reservar" en vez de un error genérico.
-        // Sólo string|null: nunca ownerNotes ni otro texto interno del hotel.
-        cancellationReason: typeof reservation.cancellationReason === 'string' ? reservation.cancellationReason : null,
+        // `cancellationReason` es texto libre (el panel guarda lo que tipea el empleado): al
+        // público sale SOLO el código de sistema 'payment_timeout'; cualquier otro motivo → null.
+        cancellationReason: reservation.cancellationReason === 'payment_timeout' ? 'payment_timeout' : null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: amounts.status,
