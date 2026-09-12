@@ -2,7 +2,7 @@
 // El reloj y el sleep son falsos: los tests corren instantáneos y verifican los
 // INTERVALOS que se esperarían, no que pasara tiempo real.
 import { describe, it, expect } from 'bun:test'
-import { createChannexHttp } from '../usecases/channex-http'
+import { createChannexHttp, MAX_PER_PROPERTY_PER_MINUTE, PROPERTY_PAUSE_ON_429_MS } from '../usecases/channex-http'
 
 const jsonResponse = (status: number, body: unknown = {}, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
@@ -131,5 +131,122 @@ describe('createChannexHttp — backoff en 429/5xx (test 12)', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(429)
     expect(calls).toBe(4)
+  })
+})
+
+// ── #294: techo por property × endpoint (10/min cada POST según rate-limits.md de Channex) ──
+const ariBody = (propertyId: string) =>
+  JSON.stringify({ values: [{ property_id: propertyId, rate_plan_id: 'rp', date: '2026-11-22', rate: '333' }] })
+
+const postAri = (http: ReturnType<typeof createChannexHttp>, endpoint: 'availability' | 'restrictions', propertyId: string) =>
+  http.request(`https://x/${endpoint}`, { method: 'POST', body: ariBody(propertyId) })
+
+describe('createChannexHttp — rate limit por property (#294)', () => {
+  it(`bloquea el push ${MAX_PER_PROPERTY_PER_MINUTE + 1} de una property aunque el budget global tenga lugar`, async () => {
+    const clock = fakeClock()
+    let calls = 0
+    // Global holgado (100): lo único que puede frenar es el techo por property.
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 100)
+
+    for (let i = 0; i < MAX_PER_PROPERTY_PER_MINUTE; i++) await postAri(http, 'restrictions', 'prop-A')
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE)
+    expect(sleeps).toEqual([])
+
+    const extra = postAri(http, 'restrictions', 'prop-A')
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE)   // NO salió: la property agotó su minuto
+    await extra
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE + 1)
+    expect(sleeps.length).toBe(1)
+    expect(sleeps[0]).toBeGreaterThan(59_000)          // esperó a que expire el más viejo de ESA property
+  })
+
+  it('availability y restrictions de la MISMA property son budgets separados', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 100)
+
+    for (let i = 0; i < MAX_PER_PROPERTY_PER_MINUTE; i++) await postAri(http, 'restrictions', 'prop-A')
+    // restrictions agotado; availability de la misma property sigue teniendo lugar.
+    await postAri(http, 'availability', 'prop-A')
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE + 1)
+    expect(sleeps).toEqual([])
+  })
+
+  it('otra property NO queda frenada por la que agotó su budget', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 100)
+
+    for (let i = 0; i < MAX_PER_PROPERTY_PER_MINUTE; i++) await postAri(http, 'availability', 'prop-A')
+    await postAri(http, 'availability', 'prop-B')
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE + 1)
+    expect(sleeps).toEqual([])
+  })
+
+  it('el techo global sigue mandando: con global=2, la tercera property espera', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 2)
+
+    await postAri(http, 'availability', 'prop-A')
+    await postAri(http, 'availability', 'prop-B')
+    const third = postAri(http, 'availability', 'prop-C')
+    expect(calls).toBe(2)
+    await third
+    expect(calls).toBe(3)
+    expect(sleeps.length).toBe(1)
+  })
+
+  it('un 429 en un ARI update pausa ESA property 60 s (lo que pide la doc) sin tocar a las demás', async () => {
+    const clock = fakeClock()
+    const hits: string[] = []
+    const { http, sleeps } = makeTransport(async (_u: string, init: RequestInit) => {
+      const pid = (JSON.parse(String(init.body)) as { values: Array<{ property_id: string }> }).values[0]!.property_id
+      hits.push(pid)
+      // prop-A: 429 la primera vez, 200 después. prop-B: siempre 200.
+      if (pid === 'prop-A' && hits.filter((h) => h === 'prop-A').length === 1) return jsonResponse(429, {}, { 'retry-after': '1' })
+      return jsonResponse(200, { data: [] })
+    }, clock, 100)
+
+    const res = await postAri(http, 'restrictions', 'prop-A')
+    expect(res.ok).toBe(true)
+    expect(hits).toEqual(['prop-A', 'prop-A'])
+    // Durmió el Retry-After (1 s) y DESPUÉS lo que faltaba de la pausa de 60 s antes de reintentar.
+    expect(sleeps[0]).toBe(1000)
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(PROPERTY_PAUSE_ON_429_MS)
+
+    // prop-B no fue castigada por el 429 de prop-A.
+    const before = sleeps.length
+    await postAri(http, 'restrictions', 'prop-B')
+    expect(sleeps.length).toBe(before)
+  })
+
+  it('la pausa por 429 alcanza a los pushes SIGUIENTES de esa property, no solo al reintento', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => {
+      calls++
+      return calls === 1 ? jsonResponse(429, {}, { 'retry-after': '1' }) : jsonResponse(200, { data: [] })
+    }, clock, 100)
+
+    const t0 = clock.now()
+    await postAri(http, 'availability', 'prop-A')      // 429 → pausa hasta t0+60s → reintento a >= t0+60s
+    expect(clock.now() - t0).toBeGreaterThanOrEqual(PROPERTY_PAUSE_ON_429_MS)
+    const sleptSoFar = sleeps.length
+    await postAri(http, 'availability', 'prop-A')      // ya pasó la pausa: sale directo
+    expect(sleeps.length).toBe(sleptSoFar)
+    expect(calls).toBe(3)
+  })
+
+  it('un body ilegible o sin property_id cae al techo global solo (no se traba)', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 100)
+
+    for (let i = 0; i < MAX_PER_PROPERTY_PER_MINUTE + 3; i++) {
+      await http.request('https://x/availability', { method: 'POST', body: 'not-json' })
+    }
+    expect(calls).toBe(MAX_PER_PROPERTY_PER_MINUTE + 3)
+    expect(sleeps).toEqual([])
   })
 })

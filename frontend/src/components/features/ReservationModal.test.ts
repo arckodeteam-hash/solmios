@@ -57,7 +57,7 @@ import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { ConfigService } from '@/services/Platform.service'
 import { HotelService } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
-import type { ReservationDetail } from '@/types'
+import type { ReservationDetail, PaymentAttemptView } from '@/types'
 
 const ALL = ['*:*']
 const READ_ONLY = ['reservations:view']
@@ -87,6 +87,17 @@ function findButton(text: string): HTMLButtonElement | undefined {
 }
 
 let wrapper: VueWrapper | null = null
+
+/** REQ-RWP-02 — intento de la pasarela con la forma exacta de `PaymentAttemptView` (backend). */
+function attemptFixture(over: Partial<PaymentAttemptView> = {}): PaymentAttemptView {
+  return {
+    id: 'a1', kind: 'paid', source: 'booking_engine', provider: 'stripe', mode: 'test',
+    providerRef: 'pi_test_1', amount: 500, currency: 'USD', failureCode: '', failureMessage: '',
+    cardBrand: 'visa', cardLast4: '4242', receiptUrl: '',
+    dashboardUrl: `https://dashboard.stripe.com/test/payments/${over.providerRef ?? 'pi_test_1'}`,
+    occurredAt: '2026-09-01T10:00:00Z', ...over,
+  }
+}
 
 async function open(detail: ReservationDetail = detailFixture(), perms: string[] = ALL) {
   permissions = perms
@@ -371,19 +382,49 @@ describe('ReservationModal', () => {
       expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).toBeNull()
     })
 
-    // Un intento fallido no debe leerse como plata cobrada (ya lo garantiza el backend, `paidAmount`
-    // lo excluye), PERO tampoco debe quedar invisible: el staff necesita saber que puede haber que
-    // reintentar el cobro. Sigue en el historial (ya cubierto por payment-history.test.ts); acá se
-    // agrega el aviso a nivel de tarjeta.
-    it('con un intento de pago fallido en el historial: muestra el aviso, sin contarlo como pagado', async () => {
+    // REQ-RWP-02 — el aviso ya no sale de `paymentHistory` (que sólo ve `payments`, el dinero que
+    // ENTRÓ) sino de `paymentAttempts`: los intentos de la pasarela, rechazos y expiraciones
+    // incluidos. Un `payments.status='failed'` suelto ya no dispara el aviso: no es un intento de
+    // la pasarela, y el bloque "Historial de cobros" lo sigue mostrando.
+    it('con un pago fallido en el historial pero sin intentos en la pasarela: no muestra el aviso', async () => {
       await open(detailFixture({
         paymentState: 'pending', paidAmount: 0, pendingAmount: 500,
         paymentHistory: [{ id: 'p1', type: 'charge', method: 'card', status: 'failed', amount: 500, currency: 'USD', description: '', reference: '', registeredBy: '', createdAt: '2026-09-01T10:00:00Z' }],
       }))
-      const text = modalText()
-      expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).toBeNull()
+      expect(document.body.querySelector('[data-testid="payment-attempts"]')?.textContent).toContain('Esta reserva no pasó por la pasarela.')
+    })
+
+    it('último intento de la pasarela rechazado y reserva sin pagar: aviso ámbar con el motivo y fila con el rechazo', async () => {
+      await open(detailFixture({
+        paymentState: 'pending', paidAmount: 0, pendingAmount: 500,
+        paymentAttempts: [attemptFixture({ id: 'a2', kind: 'failed', failureCode: 'card_declined', failureMessage: 'Your card was declined.', cardLast4: '0002', providerRef: 'pi_test_declined_1', occurredAt: '2026-09-02T10:00:00Z' })],
+      }))
+      const warning = document.body.querySelector('[data-testid="failed-payment-warning"]')
+      expect(warning?.textContent?.replace(/\s+/g, ' ').trim()).toBe('El último intento de cobro no se completó (Your card was declined.). El huésped puede reintentar desde el correo de recuperación o usted puede generar un link de pago.')
+      const rows = document.body.querySelectorAll('[data-testid="payment-attempt-row"]')
+      expect(rows.length).toBe(1)
+      expect(rows[0].textContent).toContain('Rechazado')
+      expect(rows[0].querySelector('[data-testid="payment-attempt-failure"]')?.textContent?.trim()).toBe('Your card was declined.')
+      expect(rows[0].querySelector('a[target="_blank"]')?.getAttribute('href')).toBe('https://dashboard.stripe.com/test/payments/pi_test_declined_1')
       expect(document.body.querySelector('[data-testid="payment-state-badge"]')?.textContent?.trim()).toBe('Pendiente')
-      expect(text).toContain('Pendiente de cobroUS$500,00') // sanity: el intento fallido no bajó el pendiente
+      expect(modalText()).toContain('Pendiente de cobroUS$500,00') // sanity: el rechazo no bajó el pendiente
+    })
+
+    it('rechazo seguido de un cobro exitoso: sin aviso, y las filas van del más reciente al más viejo', async () => {
+      await open(detailFixture({
+        paymentState: 'paid', paidAmount: 500, pendingAmount: 0,
+        paymentAttempts: [
+          attemptFixture({ id: 'a2', kind: 'paid', cardLast4: '4242', providerRef: 'pi_test_paid_1', receiptUrl: 'https://pay.stripe.com/receipts/test_x', occurredAt: '2026-09-02T10:00:00Z' }),
+          attemptFixture({ id: 'a1', kind: 'failed', failureMessage: 'Your card was declined.', cardLast4: '0002', providerRef: 'pi_test_declined_1', occurredAt: '2026-09-01T10:00:00Z' }),
+        ],
+      }))
+      expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).toBeNull()
+      const rows = document.body.querySelectorAll('[data-testid="payment-attempt-row"]')
+      expect(rows.length).toBe(2)
+      expect(rows[0].textContent).toContain('Pagado')
+      expect(rows[0].textContent).toContain('Recibo')
+      expect(rows[1].textContent).toContain('Rechazado')
     })
   })
 

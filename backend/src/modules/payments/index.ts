@@ -26,14 +26,17 @@ export function PaymentsModule() {
     //         resolvía leyendo `payments` con el shim `paidRepos` y un `as any`.
     // 1.3.0 — #213: `paymentsOfBusinessDate` (los pagos del hotel de un día contable) para el cierre
     //         del día del restaurante — `payments` es la fuente única del dinero, la comanda no.
-    version: '1.3.0',
+    // 1.4.0 — #253: `unbilledPaymentsOfReservation` + `linkPaymentsToInvoice` (la factura emitida desde
+    //         una reserva pagada online VINCULA las filas existentes; nunca las crea). Los consume
+    //         `connectors/facturas-payments`.
+    version: '1.4.0',
     description: 'Payments: card charging, deposits, reconciliation',
 
     contract: {
       name: 'payments',
-      version: '1.3.0',
+      version: '1.4.0',
       description: 'Payments: card charging, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'refundDirectPayment', 'recordDirectRefund', 'refundPaymentByMethod', 'findByReference', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'refundDirectPayment', 'recordDirectRefund', 'refundPaymentByMethod', 'findByReference', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate', 'unbilledPaymentsOfReservation', 'linkPaymentsToInvoice'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'deposits'],
       dependencies: ['folios', 'facturas'],

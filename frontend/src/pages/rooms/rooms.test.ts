@@ -8,6 +8,9 @@
 //   3. Editar conserva y persiste TODOS los campos: superficie, baños, venta online, amenities.
 //   4. Eliminar confirma con el NÚMERO y el toast de éxito dice qué habitación se borró.
 //   5. Exportar CSV baja un archivo con todas las columnas del listado (respeta filtros).
+//   6. Amenidades personalizadas y con precio (#290): al editar se cargan las `custom:*` con
+//      nombre/precio/estado, "+ Cuna" arma la fila y Guardar manda items a saveRoom; nombre vacío
+//      muestra error y no guarda.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -27,10 +30,12 @@ vi.mock('@/services/Room.service', () => ({
     batchCreate: vi.fn(async () => ({ data: [] })),
   },
 }))
-const amenitiesByRoom: Record<string, string[]> = {}
+// Por room: keys fijas (string) o filas completas (custom con name/price/isActive) — como el GET real.
+type AmenityRow = { amenityKey: string; name?: string; price?: number; isActive?: number | boolean }
+const amenitiesByRoom: Record<string, (string | AmenityRow)[]> = {}
 vi.mock('@/services/Amenities.service', () => ({
   AmenitiesService: {
-    listRoom: vi.fn(async (roomId: string) => ({ data: (amenitiesByRoom[roomId] || []).map(amenityKey => ({ amenityKey })) })),
+    listRoom: vi.fn(async (roomId: string) => ({ data: (amenitiesByRoom[roomId] || []).map(a => typeof a === 'string' ? { amenityKey: a } : a) })),
     saveRoom: vi.fn(async () => ({ success: true, count: 0 })),
   },
 }))
@@ -233,7 +238,159 @@ describe('rooms — editar conserva todos los campos (facilidad del dueño)', ()
     expect(RoomService.update).toHaveBeenCalledWith('r1', expect.objectContaining({
       surfaceArea: 30, bathrooms: 2, onlineBookingEnabled: false, number: '101',
     }))
-    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi', 'kitchen'])
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi', 'kitchen'], [])
+  })
+})
+
+describe('rooms — amenidades personalizadas y con precio (#290)', () => {
+  const q = <T extends Element = HTMLInputElement>(testid: string) => Array.from(document.querySelectorAll<T>(`[data-testid="${testid}"]`))
+  const guardarBtn = () => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Guardar')) as HTMLButtonElement
+  const setInput = (el: HTMLInputElement, value: string) => { el.value = value; el.dispatchEvent(new Event('input')) }
+
+  beforeEach(() => {
+    roomsData = [room()]
+    amenitiesByRoom.r1 = [
+      { amenityKey: 'wifi', isActive: 1 },
+      { amenityKey: 'custom:cuna', name: 'Cuna', price: 15, isActive: 1 },
+      { amenityKey: 'custom:cama_extra', name: 'Cama extra', price: 0, isActive: 0 },
+    ]
+    created.length = 0
+    vi.clearAllMocks()
+  })
+
+  it('editar: carga 2 filas custom con nombre/precio/estado y wifi seleccionada (las custom no cuentan como fijas)', async () => {
+    const w = await render()
+    await openEdit(w, 'r1')
+
+    expect(bodyText()).toContain('1 seleccionada')
+    const names = q('custom-amenity-name').map(i => i.value)
+    const prices = q('custom-amenity-price').map(i => i.value)
+    const actives = q('custom-amenity-active').map(i => i.checked)
+    expect(names).toEqual(['Cuna', 'Cama extra'])
+    expect(prices).toEqual(['15', '0'])
+    expect(actives).toEqual([true, false])
+    // La sugerencia "+ Cuna" ya existe → deshabilitada, no duplica filas.
+    const suggestCuna = q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!
+    expect(suggestCuna.disabled).toBe(true)
+  })
+
+  it('guardar al editar conserva la key de las filas cargadas (upsert sobre la misma fila)', async () => {
+    const w = await render()
+    await openEdit(w, 'r1')
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi'], [
+      { key: 'custom:cuna', name: 'Cuna', price: 15, isActive: true },
+      { key: 'custom:cama_extra', name: 'Cama extra', price: 0, isActive: false },
+    ])
+  })
+
+  it('editar: renombrar una fila cargada con el nombre de otra ("Cama extra" → "cuna") → error inline y NO se guarda', async () => {
+    const w = await render()
+    await openEdit(w, 'r1')
+    setInput(q('custom-amenity-name')[1], ' cuna ')
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('mismo nombre')
+    expect(RoomService.update).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+  })
+
+  it('detalle: las custom activas salen como pills con precio; las inactivas no', async () => {
+    const w = await render()
+    const card = w.findAll('.cursor-pointer').find(c => c.text().includes('101'))
+    await card!.trigger('click')
+    await flushPromises()
+    const pills = q<HTMLElement>('detail-custom-amenity').map(p => p.textContent?.replace(/\s+/g, ' ').trim())
+    expect(pills).toEqual(['Cuna · $15'])
+  })
+
+  it('Nueva: "+ Cuna" arma la fila, precio 15 → saveRoom recibe items [{ name, price, isActive }] sin key', async () => {
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+
+    expect(q('custom-amenity-row')).toHaveLength(0)
+    q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!.click()
+    await flushPromises()
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna'])
+    expect(bodyText()).toContain('0 = gratis')
+    setInput(q('custom-amenity-price')[0], '15')
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(RoomService.create).toHaveBeenCalledWith(expect.objectContaining({ number: '202' }))
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('nueva-1', [], [{ name: 'Cuna', price: 15, isActive: true }])
+  })
+
+  it('"+ Agregar amenidad" con nombre vacío: error inline y NO llama a saveRoom', async () => {
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+
+    q<HTMLButtonElement>('custom-amenity-add')[0].click()
+    await flushPromises()
+    expect(q('custom-amenity-name')).toHaveLength(1)
+    expect(q('custom-amenity-name')[0].value).toBe('')
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('El nombre es obligatorio')
+    expect(RoomService.create).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+
+    // Quitar la fila destraba el guardado.
+    q<HTMLButtonElement>('custom-amenity-remove')[0].click()
+    await flushPromises()
+    expect(q('custom-amenity-row')).toHaveLength(0)
+  })
+
+  it('dos filas con el mismo nombre normalizado ("Cuna" y "cuna") → error inline y NO se guarda (el backend lo rechazaría con 400)', async () => {
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+
+    q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!.click()
+    q<HTMLButtonElement>('custom-amenity-add')[0].click()
+    await flushPromises()
+    setInput(q('custom-amenity-name')[1], 'cuna')
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('mismo nombre')
+    expect(RoomService.create).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+  })
+
+  it('si el backend rechaza las amenidades, el modal queda abierto con el motivo (no se pierde lo tipeado)', async () => {
+    const { ApiError } = await import('@/services/http')
+    vi.mocked(AmenitiesService.saveRoom).mockRejectedValueOnce(new ApiError(400, 'key duplicada: custom:cuna'))
+    const w = await render()
+    await w.findAll('button').find(b => b.text().trim() === 'Nueva')!.trigger('click')
+    await flushPromises()
+    setInput(bodyInput('room-number'), '202')
+    q<HTMLButtonElement>('custom-amenity-suggest').find(b => b.textContent?.includes('Cuna'))!.click()
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledTimes(1)
+    // El modal sigue abierto: la fila "Cuna" sigue ahí y el error explica el motivo del servidor.
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna'])
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('key duplicada: custom:cuna')
   })
 })
 

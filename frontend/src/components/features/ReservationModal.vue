@@ -29,7 +29,7 @@ import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
-import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation } from '@/types'
+import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -546,6 +546,35 @@ function childClassificationLabel(c: string): string {
 // El backend lo arma en `shared/usecases/reservation-payment-history.ts`, desde la MISMA
 // recolección con la que calcula el total — el desglose cuadra con el número de arriba.
 const paymentHistory = computed(() => d.value?.paymentHistory ?? [])
+// REQ-RWP-02 — intentos en la pasarela (Stripe/Azul…), más reciente primero. Los arma el backend
+// en `shared/usecases/payment-attempt-view.ts` desde el PaymentAttemptStore: acá no se derivan.
+const paymentAttempts = computed<PaymentAttemptView[]>(() => d.value?.paymentAttempts ?? [])
+
+function attemptKindBadge(kind?: string | null): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    checkout_created: { label: 'Checkout abierto', cls: 'bg-blue-100 text-blue-700' },
+    paid: { label: 'Pagado', cls: 'bg-teal/10 text-teal' },
+    failed: { label: 'Rechazado', cls: 'bg-coral/10 text-coral' },
+    expired: { label: 'Expirado', cls: 'bg-gray-100 text-gray-500' },
+    refunded: { label: 'Devuelto', cls: 'bg-purple/10 text-purple' },
+    pending: { label: 'Pendiente', cls: 'bg-amber-100 text-amber-700' },
+  }
+  return m[kind || ''] || { label: kind || '—', cls: 'bg-gray-100 text-gray-500' }
+}
+
+function providerLabel(p?: string | null): string {
+  const m: Record<string, string> = { stripe: 'Stripe', azul: 'Azul', cardnet: 'CardNet', paypal: 'PayPal' }
+  const key = (p || '').toLowerCase()
+  if (m[key]) return m[key]
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : '—'
+}
+
+async function copyProviderRef(ref: string) {
+  try {
+    await navigator.clipboard.writeText(ref)
+    toast.success('Referencia copiada')
+  } catch { toast.error('No se pudo copiar') }
+}
 
 function paymentStatusLabel(status?: string | null): { label: string; cls: string } {
   const m: Record<string, { label: string; cls: string }> = {
@@ -559,11 +588,15 @@ function paymentStatusLabel(status?: string | null): { label: string; cls: strin
 }
 
 // Requerimiento 14 — badge pendiente/parcial/pagada: sale de `d.paymentState` (backend) vía `@/utils/payment-state`.
-// Requerimiento 14 — si algún intento de esta reserva quedó `failed`, se avisa cerca del total:
-// el dinero cobrado (arriba) ya lo excluye correctamente, pero un intento fallido silencioso deja
-// al staff sin saber que el huésped puede necesitar reintentar el cobro. Reusa `paymentHistory`
-// (ya cargado): no es una consulta nueva ni un estado inventado.
-const hasFailedPayment = computed(() => paymentHistory.value.some((p) => p.status === 'failed'))
+// REQ-RWP-02 — reemplaza al aviso anterior (`hasFailedPayment`), que sólo veía `payments` y nunca
+// los intentos que no terminaron en cobro (rechazado/expirado en la pasarela). Se avisa sólo si el
+// ÚLTIMO intento falló y la reserva no quedó pagada por otra vía: un fallo seguido de un cobro
+// exitoso no es aviso.
+const lastAttemptFailure = computed(() => {
+  const last = paymentAttempts.value[0]
+  if (!last || (last.kind !== 'failed' && last.kind !== 'expired') || d.value?.paymentState === 'paid') return null
+  return last
+})
 function waLink(phone?: string | null, body?: string | null): string | null {
   if (!phone) return null
   const digits = phone.replace(/\D/g, '')
@@ -1093,8 +1126,9 @@ function irAFacturacion() {
                      `deposit` a secas: ver el comentario de `paymentStateBadge` en el script). -->
                 <span data-testid="payment-state-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full" :class="paymentStateBadge(d.paymentState).cls">{{ paymentStateBadge(d.paymentState).label }}</span>
               </div>
-              <p v-if="hasFailedPayment" class="mb-2 text-[11px] leading-tight text-coral bg-coral/5 rounded px-2 py-1.5" data-testid="failed-payment-warning">
-                Hay un intento de cobro fallido en el historial — no se contó como pagado, puede necesitar reintentarse.
+              <!-- REQ-RWP-02 — aviso ámbar si el último intento en la pasarela no terminó en cobro. -->
+              <p v-if="lastAttemptFailure" class="mb-2 text-[11px] leading-tight text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="failed-payment-warning">
+                El último intento de cobro no se completó ({{ lastAttemptFailure.failureMessage || attemptKindBadge(lastAttemptFailure.kind).label }}). El huésped puede reintentar desde el correo de recuperación o usted puede generar un link de pago.
               </p>
               <div class="space-y-1.5 text-sm">
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
@@ -1161,6 +1195,40 @@ function irAFacturacion() {
                   </div>
                 </div>
                 <div v-else class="mt-2 text-xs text-text-muted italic">Todavía no se registró ningún cobro para esta reserva.</div>
+              </details>
+
+              <!-- REQ-RWP-02 — Pasarela de pago: cada intento (checkout, pago, rechazo, expiración,
+                   devolución) con tarjeta, referencia del proveedor y links al dashboard/recibo. -->
+              <details class="mt-3 pt-3 border-t border-teal/20" data-testid="payment-attempts" open>
+                <summary class="text-xs font-black text-navy cursor-pointer select-none flex items-center gap-1.5">
+                  Pasarela de pago
+                  <span v-if="paymentAttempts.length" class="text-[10px] font-bold text-text-muted">({{ paymentAttempts.length }})</span>
+                </summary>
+                <div v-if="paymentAttempts.length" class="mt-2 space-y-2">
+                  <div v-for="a in paymentAttempts" :key="a.id" class="rounded-lg border border-border/60 bg-surface px-2.5 py-2" data-testid="payment-attempt-row">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-xs font-black tabular-nums text-navy">{{ money(a.amount) }} <span class="text-[10px] font-bold text-text-muted">{{ a.currency }}</span></span>
+                      <span class="flex items-center gap-1 shrink-0">
+                        <span v-if="a.mode === 'test'" class="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-100 text-gray-500 uppercase">test</span>
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" :class="attemptKindBadge(a.kind).cls">{{ attemptKindBadge(a.kind).label }}</span>
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 mt-0.5">
+                      <span class="text-[11px] text-text-secondary font-bold">{{ providerLabel(a.provider) }}<template v-if="a.cardBrand || a.cardLast4"> · {{ a.cardBrand }} ····{{ a.cardLast4 }}</template></span>
+                      <span class="text-[10px] text-text-muted">{{ fmtDateTime(a.occurredAt) }}</span>
+                    </div>
+                    <div v-if="a.kind === 'failed' && a.failureMessage" class="text-[11px] text-coral font-bold mt-0.5" data-testid="payment-attempt-failure">{{ a.failureMessage }}</div>
+                    <div v-if="a.providerRef" class="flex items-center gap-1.5 mt-0.5 min-w-0">
+                      <code class="font-mono text-[10px] text-text-muted truncate" :title="a.providerRef">{{ a.providerRef }}</code>
+                      <button type="button" @click="copyProviderRef(a.providerRef)" class="text-[10px] font-bold text-teal hover:underline shrink-0" data-testid="payment-attempt-copy">Copiar</button>
+                    </div>
+                    <div v-if="a.dashboardUrl || a.receiptUrl" class="flex items-center gap-3 mt-1">
+                      <a v-if="a.dashboardUrl" :href="a.dashboardUrl" target="_blank" rel="noopener noreferrer" class="text-teal font-bold text-[10px] hover:underline">Ver en Stripe</a>
+                      <a v-if="a.receiptUrl" :href="a.receiptUrl" target="_blank" rel="noopener noreferrer" class="text-teal font-bold text-[10px] hover:underline">Recibo</a>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-xs text-text-muted italic">Esta reserva no pasó por la pasarela.</div>
               </details>
 
               <!-- Movimientos del folio (inline) -->

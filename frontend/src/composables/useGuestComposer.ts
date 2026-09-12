@@ -9,7 +9,7 @@
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
 import { useBookingStore, type CartLine } from './useBooking'
-import { resolveChildComposition, fitsRoomCapacity, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
+import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import type { RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
 
 /** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
@@ -33,6 +33,11 @@ interface ComposerState {
   // inicial sigue siendo exactamente `{adults, ages, needsCrib}`, que es lo que la UI y los
   // tests existentes comparan. Leer siempre vía `childAmenityIds(rt)` / `isChildAmenitySelected`.
   childAmenityIds?: string[]
+  // REQ-01 (#290, amenidades de la habitación) — keys del catálogo por tipo
+  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta. Mismo criterio opcional/ausente
+  // que `childAmenityIds`, pero SIN relación con la composición: no se limpian al cambiar edades
+  // (una cuna o cama extra se pide para cualquier ocupación). Leer vía `roomAmenityKeys(rt)`.
+  roomAmenityKeys?: string[]
 }
 
 function freshComposerState(): ComposerState {
@@ -164,6 +169,41 @@ export function useGuestComposer() {
     return round2(store.childAmenities.reduce((s, a) => s + (wanted.has(a.id) ? Number(a.price) || 0 : 0), 0))
   }
 
+  // ─── REQ-01 (#290) — amenidades DE la habitación (cuna, cama extra…), POR TARJETA ───────────
+
+  /** Keys tildadas en esta tarjeta (siempre un array, aunque el estado todavía no lo tenga). */
+  function roomAmenityKeys(rt: RoomTypeRate): string[] {
+    return composer(rt).roomAmenityKeys ?? []
+  }
+
+  /** ¿Corresponde mostrar el checklist de amenidades de la habitación en ESTA tarjeta? Sí apenas
+   *  el tipo tenga catálogo (alguna habitación del tipo con una amenidad personalizada activa) —
+   *  a diferencia de `shouldOfferChildAmenities` NO depende de la composición ni de la política de
+   *  niños. Centralizado acá para que RoomsStep.vue y BookingModal.vue no diverjan. */
+  function shouldOfferRoomAmenities(rt: RoomTypeRate): boolean {
+    return store.roomAmenitiesFor(rt.id).length > 0
+  }
+
+  function isRoomAmenitySelected(rt: RoomTypeRate, key: string): boolean {
+    return roomAmenityKeys(rt).includes(key)
+  }
+
+  /** Tilda/destilda una amenidad del catálogo del tipo para esta tarjeta. Keys que el tipo no
+   *  ofrece se ignoran (nunca se guarda algo que el hotel no publicó para ese tipo). */
+  function toggleRoomAmenity(rt: RoomTypeRate, key: string): void {
+    if (!store.roomAmenitiesFor(rt.id).some((a) => a.key === key)) return
+    const c = composer(rt)
+    const current = c.roomAmenityKeys ?? []
+    c.roomAmenityKeys = current.includes(key) ? current.filter((x) => x !== key) : [...current, key]
+  }
+
+  /** Σ precio de las amenidades de habitación tildadas en esta tarjeta (para el "+ $X"). Precios
+   *  del catálogo en vivo — el snapshot fijo se toma recién al agregar (`store.addToCart`). */
+  function composedRoomAmenitiesTotal(rt: RoomTypeRate): number {
+    const wanted = new Set(roomAmenityKeys(rt))
+    return round2(store.roomAmenitiesFor(rt.id).reduce((s, a) => s + (wanted.has(a.key) ? Number(a.price) || 0 : 0), 0))
+  }
+
   /** Fila de la matriz para la ocupación chargeable actual. `null` = sin matriz (fallback al
    *  `fromPrice` único). Si HAY matriz pero la ocupación pedida excede sus filas, se sintetiza una
    *  fila "no disponible" — nunca se inventa un precio para una ocupación que el hotel no publicó. */
@@ -219,6 +259,8 @@ export function useGuestComposer() {
   function canAddComposition(rt: RoomTypeRate): boolean {
     const c = composition(rt)
     if (!fitsRoomCapacity({ capacity: rt.capacity, maxAdults: rt.maxAdults, maxChildren: rt.maxChildren }, c)) return false
+    // REQ-03 (#235) — tope hotel-wide de niños sin plaza por habitación (null = sin límite).
+    if (freeChildrenLimitError(store.childPolicy, c)) return false
     const row = matchedRow(rt)
     return !row || row.available
   }
@@ -236,10 +278,12 @@ export function useGuestComposer() {
    * también marca `over_capacity` cuando `occupancy > capacity`, así que NO se duplica ese motivo
    * acá salvo en el fallback sin matriz, donde `matchedRow` es siempre `null` y nunca lo diría).
    */
-  function capacityBlockReason(rt: RoomTypeRate): 'max_adults' | 'max_children' | 'capacity' | null {
+  function capacityBlockReason(rt: RoomTypeRate): 'max_adults' | 'max_children' | 'max_free_children' | 'capacity' | null {
     const c = composition(rt)
     if (rt.maxAdults != null && c.effectiveAdults > rt.maxAdults) return 'max_adults'
     if (rt.maxChildren != null && c.payingChildren > rt.maxChildren) return 'max_children'
+    // REQ-03 (#235) — los niños sin plaza no entran en la matriz ni en capacity: motivo propio.
+    if (freeChildrenLimitError(store.childPolicy, c)) return 'max_free_children'
     const rows = rt.occupancies
     if ((!Array.isArray(rows) || rows.length === 0) && c.chargeableOccupancy > rt.capacity) return 'capacity'
     return null
@@ -256,10 +300,14 @@ export function useGuestComposer() {
     // REQ-01 (#233) — mismo gateo: sin menores en la composición, sin catálogo o con el hotel
     // sin aceptar niños, no viaja ninguna amenidad aunque haya quedado algo tildado.
     const childAmenityIdsToSend = shouldOfferChildAmenities(rt) ? [...childAmenityIds(rt)] : []
+    // REQ-01 (#290) — sin gateo por composición: viaja lo tildado (el store descarta keys que el
+    // tipo ya no ofrezca).
+    const roomAmenityKeysToSend = shouldOfferRoomAmenities(rt) ? [...roomAmenityKeys(rt)] : []
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
       needsCrib, cribCount: needsCrib ? 1 : 0,
       ...(childAmenityIdsToSend.length > 0 ? { childAmenityIds: childAmenityIdsToSend } : {}),
+      ...(roomAmenityKeysToSend.length > 0 ? { roomAmenityKeys: roomAmenityKeysToSend } : {}),
     })
     // Reset: la próxima habitación (misma tarjeta u otra) arranca de nuevo en 1 adulto/0 niños.
     composerState[rt.id] = freshComposerState()
@@ -277,18 +325,21 @@ export function useGuestComposer() {
    *
    * Devuelve `false` sin tocar nada si el tipo ya no está en `ratesResponse` (cotización vieja) o
    * si la línea es del flujo legacy de ocupación plana (sin `adults`/`childrenAges`): no hay
-   * composición que recuperar. `childAmenityIds` se omite cuando está vacío para que el estado
-   * siga siendo exactamente `{adults, ages, needsCrib}` (mismo criterio que `freshComposerState`).
+   * composición que recuperar. `childAmenityIds` y `roomAmenityKeys` (#290: cama extra, cuna…) se
+   * omiten cuando están vacíos para que el estado siga siendo exactamente `{adults, ages, needsCrib}`
+   * (mismo criterio que `freshComposerState`).
    */
   function editCartLine(line: CartLine): boolean {
     const rt = (store.ratesResponse?.roomTypes ?? []).find((r) => r.id === line.roomType)
     if (!rt || line.adults === undefined || line.childrenAges === undefined) return false
     const ids = (line.childAmenities ?? []).map((a) => a.id)
+    const keys = (line.roomAmenities ?? []).map((a) => a.key)
     composerState[rt.id] = {
       adults: line.adults,
       ages: [...line.childrenAges],
       needsCrib: !!line.needsCrib,
       ...(ids.length > 0 ? { childAmenityIds: ids } : {}),
+      ...(keys.length > 0 ? { roomAmenityKeys: keys } : {}),
     }
     store.removeCartLineUnit(line.key)
     return true
@@ -304,5 +355,8 @@ export function useGuestComposer() {
     composedChildAmenitiesTotal,
     // REQ-02 (#234)
     editCartLine,
+    // REQ-01 (#290)
+    roomAmenityKeys, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity,
+    composedRoomAmenitiesTotal,
   }
 }

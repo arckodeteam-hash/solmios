@@ -61,6 +61,14 @@ export const ReservasModel: ModelDefinition = {
     // al menos un menor en la composición y `childPolicy.acceptChildren` (ver public-booking.ts).
     childAmenities: { type: 'json' },
     childAmenitiesTotal: { type: 'number', default: 0 },
+    // REQ-01 (#290) — Amenidades PERSONALIZADAS de la habitación asignada (filas `RoomAmenities`
+    // con key `custom:<slug>`, name, price) elegidas para ESTA fila. Mismo criterio que
+    // `childAmenities`: snapshot con precio congelado [{key, name, price, quantity, total}] —
+    // validado server-side contra las filas de la unidad asignada (nunca el precio del body) — y
+    // `roomAmenitiesTotal` = Σ `total`, ya incluido en `totalAmount`/`priceBreakdown.subtotal`.
+    // En un grupo cada unidad física lleva las suyas (ver public-booking-group.ts).
+    roomAmenities: { type: 'json' },
+    roomAmenitiesTotal: { type: 'number', default: 0 },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },

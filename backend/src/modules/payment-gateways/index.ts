@@ -8,6 +8,7 @@ import { PaymentGatewaysService } from './service'
 import { PaymentGatewaysController } from './controller'
 import type { PaymentGatewayRow } from './types'
 import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
+import { PaymentAttemptStore } from '../../services/payment-gateway/payment-attempts'
 import { isEncryptionConfigured } from '../../services/payment-gateway/crypto'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
@@ -16,6 +17,8 @@ export { PaymentGatewaysService }
 export type { PaymentGatewayDTO, UpsertPaymentGatewayDTO, PaymentGatewayRow } from './types'
 export type { PaymentGatewaysSockets } from './sockets'
 export { PaymentGatewaysValidator, UpsertPaymentGatewaySchema } from './validators/schema'
+// REQ-RWP-02 — tipos de la bitácora de intentos, para que el conector los tipe sin importar el service.
+export type { PaymentAttemptRow, PaymentAttemptKind } from '../../services/payment-gateway/payment-attempts'
 
 export function PaymentGatewaysModule() {
   return createModule({
@@ -27,7 +30,7 @@ export function PaymentGatewaysModule() {
       name: 'payment-gateways',
       version: '1.0.0',
       description: 'Configuración de pasarelas de pago por hotel',
-      actions: ['list', 'upsert', 'setEnabled', 'remove', 'testConnection'],
+      actions: ['list', 'upsert', 'setEnabled', 'remove', 'testConnection', 'listAttempts'],
       events: [],
       tables: ['payment_gateways', 'payment_events', 'payment_gateway_sessions', 'payment_attempts'],
       dependencies: [],
@@ -51,6 +54,8 @@ export function PaymentGatewaysModule() {
       // Sesiones de los proveedores 'pull' (CardNet): la session-key se guarda cifrada acá.
       const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
       const registry = new PaymentGatewayRegistry(repo as any, log, sessionsRepo as any)
+      // REQ-RWP-02 — bitácora de intentos (REQ-RWP-01): el detalle de la reserva la lee vía conector.
+      const attemptStore = new PaymentAttemptStore(new OrmRepository<any>(orm, 'PaymentAttempts') as any, log)
       const service = new PaymentGatewaysService(repo, log, registry, auth)
       const controller = new PaymentGatewaysController(service, log)
 
@@ -69,7 +74,12 @@ export function PaymentGatewaysModule() {
       log.info('Módulo payment-gateways listo (5 endpoints)')
       // El registry se expone para que los otros módulos resuelvan la pasarela DEL HOTEL
       // (vía conector), en vez de leer process.env como hacen hoy payments y bookingengine.
-      return Object.assign(service, { registry })
+      // REQ-RWP-02 — listAttempts: el detalle de la reserva lee los intentos por conector,
+      // sin importar el store ni el service de pasarelas.
+      return Object.assign(service, {
+        registry,
+        listAttempts: (hotelId: string, reservationId: string) => attemptStore.listByReservation(hotelId, reservationId),
+      })
     },
   })
 }

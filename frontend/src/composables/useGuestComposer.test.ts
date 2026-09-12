@@ -451,6 +451,23 @@ describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al 
     expect(store.cart).toHaveLength(0) // era la última unidad: la línea se fue entera
   })
 
+  it('recupera roomAmenityKeys (#290: cama extra/cuna de la habitación) — se perdían al editar', async () => {
+    const store = setupStore()
+    store.roomAmenities = { double: [{ key: 'custom:cuna', name: 'Cuna', price: 15 }] }
+    const { setAdults, toggleRoomAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const room = rt('double')
+    setAdults(room, 2)
+    toggleRoomAmenity(room, 'custom:cuna')
+    await addComposedRoom(room)
+    expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15 }])
+    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+
+    expect(editCartLine(store.cart[0]!)).toBe(true)
+
+    expect(composer(room)).toEqual({ adults: 2, ages: [], needsCrib: false, roomAmenityKeys: ['custom:cuna'] })
+    expect(store.cart).toHaveLength(0)
+  })
+
   it('con quantity 2 descuenta UNA unidad (queda 1 en el carrito) y precarga el composer', async () => {
     const store = setupStore()
     const { setAdults, setChildrenCount, setChildAge, addComposedRoom, composer, editCartLine } = useGuestComposer()

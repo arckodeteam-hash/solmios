@@ -432,6 +432,7 @@ import { reservasBookingengineConnector } from './connectors/reservas-bookingeng
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
 import { reservasMarketingConnector } from './connectors/reservas-marketing'
+import { reservasPaymentGatewaysConnector } from './connectors/reservas-payment-gateways'
 import { reservasDepositsConnector } from './connectors/reservas-deposits'
 // F3 3.8 (solmi-direct-booking) — Wallet pass al confirmar: bookingengine emite onBookingPaid
 // (mismo socket que ya cablea `bookingengine-payments`) → wallet-pass.generatePass orquesta
@@ -535,6 +536,8 @@ import { payrollGastosConnector } from './connectors/payroll-gastos'
 import { reembolsosGastosConnector } from './connectors/reembolsos-gastos'
 import { reservasRescheduleChargeConnector } from './connectors/reservas-reschedule-charge'
 import { reservasPaymentsConnector } from './connectors/reservas-payments'
+// #253 (REQ-FDR-02) — "Emitir factura" desde la reserva: folio abierto → folios; sin folio → facturas.
+import { reservasFacturasConnector } from './connectors/reservas-facturas'
 import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
 import { attendanceDashboardConnector } from './connectors/attendance-dashboard'
 import { attendancePayrollConnector } from './connectors/attendance-payroll'
@@ -602,6 +605,9 @@ system.addConnector('reservas-opiniones', reservasOpinionesConnector)
 // DT-18: on_reservation (reserva confirmada) + post_checkout, en tiempo real — antes de este
 // connector NINGÚN código disparaba estos 2 de los 5 triggerEvent del enum de auto-messages.
 system.addConnector('reservas-marketing', reservasMarketingConnector)
+// REQ-RWP-02: el bloque "Pasarela de pago" del detalle de la reserva lee `payment_attempts` por
+// el puerto de payment-gateways (dueño de la tabla), nunca por import directo. Best-effort.
+system.addConnector('reservas-payment-gateways', reservasPaymentGatewaysConnector)
 // Libera el depósito/garantía en el checkout: reservas emite onReservationCheckedOut → payments
 // libera los holds 'held' de la reserva. Cierra el bug CONFIRMADO "el hold queda colgando" (el
 // checkout no tocaba deposits). Best-effort, no pisa a reservas-opiniones (sockets se componen).
@@ -668,6 +674,9 @@ system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnec
 // REQ-RWP-06 (#249) — "Registrar pago" manual desde la ficha: el cobro se asienta en `payments`
 // (única fuente de verdad del dinero) y de ahí caen solos el pendiente y la caja.
 system.addConnector('reservas-payments', reservasPaymentsConnector)
+// #253 (REQ-FDR-02) — POST /api/reservas/:id/invoice: con folio abierto cierra y factura por `folios`
+// (mismo camino que POST /api/folios/:id/invoice); sin folio, `facturas.invoiceFromReservation`.
+system.addConnector('reservas-facturas', reservasFacturasConnector)
 // FIX 2026-07-31 — el código promocional del wizard de reserva manual (staff) se guardaba
 // como texto sin validar/aplicar descuento. Ver connectors/reservas-promocodes.ts.
 system.addConnector('reservas-promocodes', reservasPromocodesConnector)

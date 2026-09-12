@@ -41,6 +41,14 @@ export interface CreateBookingChildAmenity {
   id: string
 }
 
+/** REQ-01 (#290) — una amenidad DE LA HABITACIÓN (cuna, cama extra… configuradas por el hotel en
+ *  cada habitación) elegida para una línea, tal como viaja al backend: SOLO la `key`
+ *  (`custom:<slug>`). El precio lo resuelve el backend contra las filas `RoomAmenities` de la
+ *  habitación que asigna (el snapshot con precio del carrito es para mostrar, nunca para cobrar). */
+export interface CreateBookingRoomAmenity {
+  key: string
+}
+
 /** DTO friendly que recibe `BookingService.createBooking`. El service resuelve slug→hotelId,
  *  mapea `guest` → `guestName/guestEmail/guestPhone`, y postea al backend con el shape del
  *  `ExtendedPublicBookingSchema`.
@@ -79,6 +87,11 @@ export interface CreateBookingDTO {
    *  menos un menor (`childrenAges` no vacío) y `childPolicy.acceptChildren`; re-valida ids y
    *  precios contra su catálogo, nunca confía en el cliente. */
   childAmenities?: CreateBookingChildAmenity[]
+  /** REQ-01 (#290) — keys del catálogo por tipo (`GET /public/hotels/:slug/room-amenities`)
+   *  elegidas para ESTA habitación. A diferencia de `childAmenities` NO depende de la composición
+   *  (aplica a cualquier línea); el backend prefiere una habitación del tipo que las ofrezca y
+   *  cobra el precio real de la asignada — una key que esa habitación no ofrece se ignora. */
+  roomAmenities?: CreateBookingRoomAmenity[]
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
   successUrl?: string
@@ -136,6 +149,9 @@ export interface CreateBookingRoomLine {
   /** REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación (POR LÍNEA, igual que
    *  `needsCrib`; a diferencia de `upsells`, global al carrito). Ver `CreateBookingDTO`. */
   childAmenities?: CreateBookingChildAmenity[]
+  /** REQ-01 (#290) — amenidades de la habitación de ESTA línea (POR LÍNEA, igual que
+   *  `childAmenities`; sin gateo por niños). Ver `CreateBookingDTO.roomAmenities`. */
+  roomAmenities?: CreateBookingRoomAmenity[]
 }
 
 export interface CreateBookingGroupDTO {
@@ -446,6 +462,25 @@ export interface PublicChildAmenity {
   sortOrder: number
 }
 
+/**
+ * REQ-01 (#290) — Amenidad PERSONALIZADA de habitación vendible en el motor público
+ * (`GET /api/public/hotels/:slug/room-amenities`). `key` es `custom:<slug>` (las keys fijas del
+ * catálogo — wifi, tv — son features gratuitas y no llegan acá). `price` en `hotels.currency`, es
+ * el MÍNIMO entre las habitaciones del tipo que la ofrecen ("desde"); al reservar se cobra el
+ * precio real de la habitación asignada. `0` = sin cargo.
+ */
+export interface PublicRoomAmenity {
+  key: string
+  name: string
+  price: number
+}
+
+/** Body de `GET /api/public/hotels/:slug/room-amenities`: catálogo agrupado por `roomType` (el
+ *  `id` que devuelve `/rates`). Un tipo sin amenidades personalizadas activas NO aparece. */
+export interface PublicRoomAmenitiesResponse {
+  byRoomType: Record<string, PublicRoomAmenity[]>
+}
+
 export type PromoValidationReason =
   | 'not_found'
   | 'inactive'
@@ -480,6 +515,10 @@ export interface TotalBreakdown {
    *  creadas ANTES de esta feature persistieron un `totalBreakdown` sin el campo — tratar
    *  `undefined` como 0. */
   childAmenitiesTotal?: number
+  /** REQ-01 (#290) — Σ de las amenidades de habitación (cuna, cama extra…) de todas las
+   *  habitaciones de la reserva; entra en `subtotal` igual que `childAmenitiesTotal`. Opcional por
+   *  el mismo motivo: reservas anteriores a la feature no lo tienen — tratar `undefined` como 0. */
+  roomAmenitiesTotal?: number
   /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */

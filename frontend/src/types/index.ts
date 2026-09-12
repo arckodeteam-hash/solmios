@@ -501,6 +501,28 @@ export interface ReservationDetailAddon {
   quantity?: number
 }
 
+/** Una factura de la reserva tal como la muestra el detalle (REQ-FDR-01, #252). Vienen de la más
+ *  reciente a la más vieja; espejo EXACTO del backend `reservas/usecases/reservation-invoices.ts`. */
+export interface ReservationInvoiceView {
+  id: string
+  /** Número visible/imprimible de la factura. */
+  number: string
+  /** 'invoice' | 'credit_note'. */
+  type: string
+  /** 'pending' | 'paid' | 'overdue' | 'cancelled' | 'draft'. */
+  status: string
+  /** TOTAL de la factura (impuestos incluidos). */
+  amount: number
+  taxes: number
+  amountPaid: number
+  /** `amount − amountPaid`, ya derivado por el backend. */
+  balance: number
+  currency: string
+  issuedAt: string
+  /** Comprobante fiscal (RD). `null` cuando la factura no lo lleva. */
+  ncf: string | null
+}
+
 export interface CurrencyConfig {
   secondaryCurrency?: string
   exchangeRate?: number
@@ -538,6 +560,29 @@ export interface ReservationPaymentEntry {
   /** Nombre de quien lo registró. Vacío = lo asentó el sistema. */
   registeredBy: string
   createdAt: string
+}
+
+export type PaymentAttemptKind = 'checkout_created' | 'paid' | 'failed' | 'expired' | 'refunded' | 'pending'
+
+/** REQ-RWP-02 — espejo de backend shared/usecases/payment-attempt-view.ts */
+export interface PaymentAttemptView {
+  id: string
+  kind: PaymentAttemptKind
+  source: string
+  provider: string
+  mode: 'test' | 'live' | ''
+  providerRef: string
+  /** Unidades mayores (`amountMinor / 100`, redondeado a 2 decimales). */
+  amount: number
+  currency: string
+  failureCode: string
+  failureMessage: string
+  cardBrand: string
+  cardLast4: string
+  receiptUrl: string
+  /** Link al pago en el dashboard del proveedor. `''` si no se puede armar. */
+  dashboardUrl: string
+  occurredAt: string
 }
 
 export interface ReservationDetail {
@@ -622,6 +667,8 @@ export interface ReservationDetail {
   checkOutTime?: string | null
   /** Movimientos de dinero de la reserva: cobros y devoluciones, del más reciente al más viejo. */
   paymentHistory?: ReservationPaymentEntry[]
+  /** REQ-RWP-02: intentos de cobro del gateway, del más reciente al más viejo. */
+  paymentAttempts?: PaymentAttemptView[]
   // F3 MisterPlan: condiciones + otros cobros + código de check-in digital
   gdprAccepted?: boolean
   marketingAccepted?: boolean
@@ -637,6 +684,8 @@ export interface ReservationDetail {
   payments?: ReservationDetailPayment[]
   messageLogs?: ReservationDetailMessageLog[]
   addons?: ReservationDetailAddon[]
+  /** Facturas de la reserva, de la más reciente a la más vieja (REQ-FDR-01, #252). */
+  invoices?: ReservationInvoiceView[]
 }
 
 // === FOLIO ===
