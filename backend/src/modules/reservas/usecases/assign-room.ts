@@ -14,7 +14,9 @@
 //   · Reasignar una reserva `checked_in` mueve también el folio abierto y los estados de las
 //     habitaciones (anterior → `cleaning`, nueva → `occupied`), en transacción si el ORM la tiene.
 //   · Todo cambio de habitación emite `onRoomAssigned` (TTLock genera/reemplaza el código ahí) y
-//     deja auditoría `reservation.room_assigned` / `room_unassigned` / `room_type_changed`.
+//     deja auditoría `reservation.room_assigned` / `room_unassigned` / `room_type_changed`. La
+//     reasignación en estadía además emite `onRoomVacatedMidStay` con la unidad anterior
+//     (housekeeping la limpia como tras un check-out).
 
 import { ConflictError, NotFoundError, ValidationError } from 'arckode-framework'
 import type { Auth, CacheAdapter, Logger, RepositoryAdapter } from 'arckode-framework'
@@ -175,7 +177,8 @@ export async function assignRoom(deps: RoomAssignmentDeps, id: string, dto: Assi
 
   const { patch, typeChanged } = await validateRoomAssignment(deps, existing, dto.roomId, { allowTypeChange: dto.allowTypeChange, userId: currentUser.id })
   let updated: ReservasDTO
-  if (existing.status === 'checked_in') {
+  const movedMidStay = existing.status === 'checked_in'
+  if (movedMidStay) {
     await moveStay(deps, id, previousRoomId, dto.roomId, patch)
     updated = ((await deps.repo.findById(id)) ?? { ...existing, ...patch }) as ReservasDTO
   } else {
@@ -188,6 +191,12 @@ export async function assignRoom(deps: RoomAssignmentDeps, id: string, dto: Assi
     await auditSafely(deps.auditPort, deps.logger, { ...base, action: 'reservation.room_type_changed', detail: JSON.stringify({ from: existing.roomType ?? null, to: patch.roomType }) })
   }
   await emitAssigned(deps, existing, dto.roomId, previousRoomId)
+  // En estadía la unidad anterior queda sucia con el huésped todavía en casa: `moveStay` la dejó
+  // en `cleaning` dentro de la transacción, pero la tarea de housekeeping y el caché de
+  // `habitaciones` los maneja el connector (reservas-housekeeping), igual que en el check-out.
+  if (movedMidStay && previousRoomId && previousRoomId !== dto.roomId) {
+    await safeEmit(deps.logger, 'onRoomVacatedMidStay', deps.sockets.onRoomVacatedMidStay, { reservationId: id, hotelId: existing.hotelId, roomId: previousRoomId })
+  }
   return updated
 }
 

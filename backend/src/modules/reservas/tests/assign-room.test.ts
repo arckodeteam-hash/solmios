@@ -75,12 +75,13 @@ const baseRes = (over: Record<string, any> = {}) => ({
   checkIn: '2026-10-10', checkOut: '2026-10-13', totalAmount: 300, ...over,
 })
 
-type Harness = { deps: RoomAssignmentDeps; updates: any[]; audits: AuditEntry[]; emitted: any[]; rooms: any[]; folios: any[] }
+type Harness = { deps: RoomAssignmentDeps; updates: any[]; audits: AuditEntry[]; emitted: any[]; vacated: any[]; rooms: any[]; folios: any[] }
 
 function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[]; folios?: any[] } = {}): Harness {
   const updates: any[] = []
   const audits: AuditEntry[] = []
   const emitted: any[] = []
+  const vacated: any[] = []
   const rooms = opts.rooms ?? ROOMS()
   const folios = opts.folios ?? []
   const repo = memRepo(reservas, updates)
@@ -89,13 +90,13 @@ function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[]; folios?
     roomRepo: memRepo(rooms),
     blockRepo: memRepo(opts.blocks ?? []),
     queries: fakeQueries(folios, rooms, repo),
-    sockets: { onRoomAssigned: async (d: any) => { emitted.push(d) } },
+    sockets: { onRoomAssigned: async (d: any) => { emitted.push(d) }, onRoomVacatedMidStay: async (d: any) => { vacated.push(d) } },
     auditPort: { record: async (e) => { audits.push(e) } },
     logger: noopLogger,
     cache: noopCache,
     auth: realAuth,
   }
-  return { deps, updates, audits, emitted, rooms, folios }
+  return { deps, updates, audits, emitted, vacated, rooms, folios }
 }
 
 const rejects = async (p: Promise<any>) => { try { await p } catch (e) { return e as any } throw new Error('esperaba rechazo') }
@@ -243,6 +244,15 @@ describe('assignRoom — efectos', () => {
     expect(rooms.find((r) => r.id === 'room-102')!.status).toBe('occupied')
     expect(h.emitted).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-102', previousRoomId: 'room-101' }])
     expect(JSON.parse(h.audits[0].detail!)).toEqual({ from: 'room-101', to: 'room-102' })
+    // #258 — la anterior quedó sucia con el huésped en casa: housekeeping la limpia vía connector.
+    expect(h.vacated).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-101' }])
+  })
+
+  it('onRoomVacatedMidStay NO se emite antes del check-in (confirmed → la unidad no estaba en uso)', async () => {
+    const h = harness([baseRes({ roomId: 'room-101' })])
+    await assignRoom(h.deps, 'r1', { roomId: 'room-102' }, user)
+    expect(h.emitted).toHaveLength(1)
+    expect(h.vacated).toEqual([])
   })
 
   it('checked_in: si mover folio/estados falla, la reserva NO queda con la habitación nueva (misma tx)', async () => {
