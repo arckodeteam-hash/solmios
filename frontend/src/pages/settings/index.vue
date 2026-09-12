@@ -903,6 +903,11 @@ async function loadRoomInfo() {
       roomInfo.whatsappTemplateId = typeof c.whatsappTemplateId === 'string' ? c.whatsappTemplateId : ''
     }
   } catch { /* defaults: apagado, 24 h, email */ }
+  // Sin await: el catálogo de plantillas es un extra del selector, no puede demorar el resto de
+  // la pantalla (y en los tests que no mockean el servicio, una llamada real colgaría el mount).
+  void loadRoomInfoTemplates()
+}
+async function loadRoomInfoTemplates() {
   try {
     const res = await WhatsappService.list()
     roomInfoTemplates.value = (res?.data ?? []).filter((t) => t.approvalStatus === 'approved')
