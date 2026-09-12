@@ -135,6 +135,56 @@ describe('resolveUpsellLines (MR-10 #275)', () => {
   })
 })
 
+describe('resolveUpsellLines — bordes de cantidad (revisión 2026-09-12)', () => {
+  it('un id repetido se consolida: 2 + 2 per_person con 2 personas → fuera de rango, no 2 líneas', () => {
+    const r = resolveUpsellLines(catalog, [{ id: 'person', quantity: 2 }, { id: 'person', quantity: 2 }], H, ctx)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toBe('upsell_quantity_out_of_range')
+    expect(r.quantity).toBe(4)
+    expect(r.max).toBe(2)
+  })
+
+  it('un id repetido dentro del tope se cobra una sola vez con la suma (1 + 1 → quantity 2)', () => {
+    const r = resolveUpsellLines(catalog, [{ id: 'person', quantity: 1 }, { id: 'person', quantity: 1 }], H, ctx)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.lines).toHaveLength(1)
+    expect(r.lines[0]!.quantity).toBe(2)
+    expect(r.total).toBe(40)
+  })
+
+  it('un id repetido de kind fijo (per_night) no duplica la línea ni el cobro', () => {
+    const r = resolveUpsellLines(catalog, [{ id: 'night' }, { id: 'night', quantity: 5 }], H, ctx)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.lines).toHaveLength(1)
+    expect(r.total).toBe(45)
+  })
+
+  it('quantity 0 / negativa / decimal / no numérica se normaliza a entero ≥ 1', () => {
+    for (const quantity of [0, -3, 1.9, 'abc' as unknown as number, undefined, null]) {
+      const r = resolveUpsellLines(catalog, [{ id: 'person', quantity }], H, ctx)
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.lines[0]!.quantity).toBe(1)
+      expect(r.total).toBe(20)
+    }
+    const dec = resolveUpsellLines(catalog, [{ id: 'person', quantity: 2.7 }], H, ctx)
+    expect(dec.ok && dec.lines[0]!.quantity).toBe(2)
+  })
+
+  it('kind desconocido en el catálogo cae a per_stay (qty forzada a 1, precio plano)', () => {
+    const weird = [up({ id: 'weird', name: 'Raro', price: 7, kind: 'per_galaxy' as any })]
+    const r = resolveUpsellLines(weird, [{ id: 'weird', quantity: 3 }], H, ctx)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.kind).toBe('per_stay')
+    const one = resolveUpsellLines(weird, [{ id: 'weird' }], H, ctx)
+    expect(one.ok && one.total).toBe(7)
+  })
+})
+
 describe('upsellMaxQuantity (MR-10 #275)', () => {
   it('per_room = habitaciones, per_person = personas, fijos = 1', () => {
     expect(upsellMaxQuantity('per_room', ctx)).toBe(3)

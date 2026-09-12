@@ -124,15 +124,23 @@ export function resolveUpsellLines(
   const lines: UpsellPricedLine[] = []
   let total = 0
 
+  // Un mismo id repetido en el body se CONSOLIDA en una sola línea (Σ cantidades) antes de validar
+  // el tope: si no, `[{id, quantity: 2}, {id, quantity: 2}]` pasaría el máximo de 2 por línea y
+  // cobraría 4 (encontrado en revisión de tests, 2026-09-12). El orden de aparición se conserva.
+  const merged = new Map<string, number>()
   for (const item of Array.isArray(items) ? items : []) {
     if (!item || typeof item.id !== 'string') continue
-    const found = byId.get(item.id)
+    const qty = Math.max(1, Math.floor(Number(item.quantity) || 1))
+    merged.set(item.id, (merged.get(item.id) ?? 0) + qty)
+  }
+
+  for (const [id, requested] of merged) {
+    const found = byId.get(id)
     // Inexistente / inactivo / de otro hotel → se ignora (ver cabecera).
     if (!found || !found.active || found.hotelId !== hotelId) continue
 
     const kind = normalizeKind(found.kind)
     const unitPrice = round2(Number(found.price) || 0)
-    const requested = Math.max(1, Math.floor(Number(item.quantity) || 1))
     const name = String(found.name ?? '')
 
     let quantity = 1
