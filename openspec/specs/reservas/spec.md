@@ -283,6 +283,40 @@ session y MUST validar ownership implícita por hash→reserva.
 - THEN `preCheckinStatus='completed'`, foto guardada, aceptaciones con timestamp, y el
   recepcionista ve el check-in listo en el detalle
 
+### Requirement: Enlace de check-in digital por correo y WhatsApp desde el detalle (#336)
+
+La tarjeta "Check-in digital" del detalle (`ReservationModal.vue`, botones `checkin-link-wa` /
+`checkin-link-email`) MUST permitir mandarle al huésped el enlace del formulario.
+`POST /api/reservas/:id/send-checkin-link-email` (permiso `reservations:edit`,
+`usecases/checkin-link-email.ts`) MUST enviar al email del huésped el evento `checkin_link` de
+`notification-defaults` (es/en/pt) con `hotel_name`, `locator` (`externalLocator` o últimos 8 del
+id), la invitación y `checkin_url = PUBLIC_URL/checkin/:hash` con `checkinHashFromId(id)` — el MISMO
+hash que el `checkinCode` del detalle, nunca el de otra reserva. Ownership fail-closed → 404; sin
+email del huésped o sin `PUBLIC_URL` → 400. Cada intento MUST quedar en `message_logs`
+(`messageType:'email'`, `status` sent/failed, traza manual
+`{kind:'manual', reference:'Enlace de check-in digital', byUserId}`) y se puede reenviar.
+El botón "Enviar por WhatsApp" abre `wa.me/<teléfono del huésped>` con hotel, referencia,
+invitación y el enlace, y registra `queued` vía `POST /api/reservas/:id/message-log`. Ambos botones
+MUST quedar deshabilitados con aviso cuando falta teléfono/correo. Tests:
+`reservas/tests/checkin-link-email.test.ts` y `ReservationModal.test.ts` ('check-in digital #336').
+
+#### Scenario: Correo con el enlace de ESA reserva
+
+- GIVEN reserva R del hotel H con huésped con email y `PUBLIC_URL` configurada
+- WHEN staff de H con `reservations:edit` hace `POST /api/reservas/R/send-checkin-link-email`
+- THEN se encola `checkin_link` al email del huésped con `checkin_url` terminado en
+  `/checkin/<checkinHashFromId(R)>` (igual al `checkinCode` del detalle) y queda una fila `sent`
+  en `message_logs` con la traza manual; si el encolado falla, queda `failed` y se puede reintentar
+- WHEN lo pide staff de otro hotel
+- THEN 404 y no se envía nada
+
+#### Scenario: Huésped sin correo/teléfono
+
+- GIVEN reserva cuyo huésped no tiene email ni teléfono
+- WHEN se abre la tarjeta "Check-in digital" del detalle
+- THEN "Enviar por WhatsApp" y "Enviar por correo" quedan deshabilitados con el aviso
+  correspondiente, y el endpoint de correo responde 400 ("El huésped no tiene email cargado")
+
 ### Requirement: Acompañantes, addons y reprogramación como operaciones de dominio
 
 - Acompañantes (`companions.ts`): CRUD sobre `/api/reservations/:id/companions` con
