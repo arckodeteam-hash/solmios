@@ -110,6 +110,11 @@ export class InventarioService {
   }
 
   /** Menu items del hotel que TIENEN al menos una receta. Lo inyecta el conector en restaurant para el badge "Sin receta". */
+  /** KDS — ingredientes con nombre por ítem de menú (puerto `getRecipeIngredients` del restaurante). Sin tabla de recetas → {}. */
+  recipeIngredientsFor(menuItemIds: string[], user: CurrentUser) {
+    if (!this.recipes) return Promise.resolve({})
+    return recipesUc.recipeIngredientsFor({ recipes: this.recipes, items: this.items }, menuItemIds, user)
+  }
   async menuItemsWithRecipe(user: CurrentUser): Promise<string[]> {
     if (!this.recipes) return []
     const hotelId = user.hotelId || ''

@@ -70,6 +70,17 @@ const router = createRouter({
       meta: { layout: 'none' },
     },
     {
+      // Pantalla de la cocina (KDS en modo kiosco): el MISMO tablero de /panel/restaurante/cocina
+      // pero sin sidebar ni cabecera del panel — para la pantalla/tablet que vive en la cocina.
+      // Vive BAJO /panel a propósito: le aplican los mismos guards que a toda vista del hotel
+      // (sesión, `meta.permission` = restaurant:edit, módulo habilitado). Es una ruta de primer
+      // nivel (no hija de /panel) solo para no montar AdminLayout.
+      path: '/panel/kds',
+      name: 'restaurant-kds-kiosk',
+      component: () => import('@/pages/restaurante/cocina.vue'),
+      meta: { layout: 'none', requiresHotelAuth: true, permission: 'restaurant:edit', kiosk: true },
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/pages/auth/login.vue'),

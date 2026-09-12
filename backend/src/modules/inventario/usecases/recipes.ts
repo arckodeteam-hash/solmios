@@ -19,6 +19,35 @@ function hotelOf(u: CurrentUser): string { const h = u.hotelId || ''; if (!h) th
 function movDeps(d: RecipeDeps): MovementDeps { return { items: d.items, movements: d.movements, userRepo: d.userRepo, auth: d.auth } }
 const round2 = (n: number): number => Math.round((Number(n) || 0) * 100) / 100
 
+/**
+ * KDS — ingredientes CON NOMBRE de varios ítems de menú de una sola vez, para el tablero de cocina:
+ * `{ [menuItemId]: [{ name, quantity, unit }] }`. Dos lecturas en total (recetas del hotel + insumos
+ * del hotel), no una por plato: la cola del KDS puede tener decenas de líneas y se refresca cada
+ * pocos segundos. Un ítem sin receta no aparece en el resultado (la pantalla muestra "sin receta").
+ * Un insumo borrado del inventario se omite en vez de mostrar el id crudo.
+ */
+export async function recipeIngredientsFor(
+  deps: Pick<RecipeDeps, 'recipes' | 'items'>,
+  menuItemIds: string[],
+  user: CurrentUser,
+): Promise<Record<string, Array<{ name: string; quantity: number; unit: string }>>> {
+  const hotelId = hotelOf(user)
+  const wanted = new Set(menuItemIds.filter(Boolean))
+  if (!wanted.size) return {}
+  const rows = ((await deps.recipes.findMany({ hotelId })) as MenuItemRecipeDTO[]).filter((r) => wanted.has(r.menuItemId))
+  if (!rows.length) return {}
+  const items = new Map<string, InventoryItemDTO>()
+  for (const it of (await deps.items.findMany({ hotelId })) as InventoryItemDTO[]) items.set(it.id, it)
+  const out: Record<string, Array<{ name: string; quantity: number; unit: string }>> = {}
+  for (const r of rows) {
+    const it = items.get(r.inventoryItemId)
+    if (!it) continue
+    ;(out[r.menuItemId] ??= []).push({ name: it.name, quantity: Number(r.quantity) || 0, unit: it.unit || 'unit' })
+  }
+  for (const list of Object.values(out)) list.sort((a, b) => a.name.localeCompare(b.name, 'es'))
+  return out
+}
+
 /** Recetas de un ítem de menú (los insumos que consume). */
 export async function listRecipes(deps: RecipeDeps, menuItemId: string, user: CurrentUser): Promise<{ data: MenuItemRecipeDTO[]; total: number }> {
   const hotelId = hotelOf(user)

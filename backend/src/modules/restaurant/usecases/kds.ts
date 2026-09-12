@@ -3,8 +3,9 @@
 // líneas. hotelId SIEMPRE del JWT. Ver specs/kds.spec.md.
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
-import type { OrderDTO, OrderItemDTO, TableDTO, LineStatus, CurrentUser } from '../types'
+import type { OrderDTO, OrderItemDTO, TableDTO, LineStatus, CurrentUser, IngredientChanges, RecipeIngredient } from '../types'
 import type { RestaurantSockets } from '../sockets'
+import type { RecipePorts } from './food-cost'
 import { isLineActive } from './order-totals'
 
 export interface KdsDeps {
@@ -18,6 +19,9 @@ export interface KdsDeps {
   // sin ellos el ticket cae al tipo de comanda, como antes.
   tables?: RepositoryAdapter<TableDTO>
   rooms?: RepositoryAdapter<any>
+  // KDS con receta: `getRecipeIngredients` lo provee el conector restaurante-inventario. Sin él (o sin
+  // tabla de recetas) las líneas salen sin `ingredients` y el tablero muestra "sin receta".
+  recipePorts?: RecipePorts
 }
 
 // Estados "en cocina" (visibles en el KDS). served/cancelled/voided salen de la cola.
@@ -49,7 +53,35 @@ export interface KdsTicket {
     tableZone?: string
     roomNumber?: string
   }
-  lines: OrderItemDTO[]
+  lines: KdsLine[]
+}
+
+/** Línea del tablero: la fila de la comanda + su receta resuelta (solo lectura; lo que cocina cambió va en `ingredientChanges`). */
+export type KdsLine = OrderItemDTO & { ingredients?: RecipeIngredient[] }
+
+// Tope de nombres de ingrediente por lista y largo por nombre: es una anotación de cocina, no un texto libre.
+const MAX_INGREDIENT_CHANGES = 30
+const MAX_INGREDIENT_NAME = 60
+
+/** Normaliza lo que manda la pantalla: strings recortados, sin vacíos ni repetidos (sin distinguir mayúsculas), con tope. */
+export function normalizeIngredientChanges(input: unknown): IngredientChanges {
+  const pick = (v: unknown): string[] => {
+    if (!Array.isArray(v)) return []
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of v) {
+      if (typeof raw !== 'string') continue
+      const name = raw.trim().slice(0, MAX_INGREDIENT_NAME)
+      const key = name.toLocaleLowerCase('es')
+      if (!name || seen.has(key)) continue
+      seen.add(key)
+      out.push(name)
+      if (out.length >= MAX_INGREDIENT_CHANGES) break
+    }
+    return out
+  }
+  const src = (input ?? {}) as Record<string, unknown>
+  return { removed: pick(src.removed), added: pick(src.added) }
 }
 
 /** Nombre de mesa/zona y número de habitación de una comanda, según su tipo. Vacío si no aplica o no se encuentra. */
@@ -103,7 +135,44 @@ export async function kdsQueue(deps: KdsDeps, station: string | undefined, user:
     })
   }
   tickets.sort((a, b) => String(a.order.openedAt || '').localeCompare(String(b.order.openedAt || '')))   // FIFO
+  await attachIngredients(deps, tickets, user)
   return { data: tickets, total: tickets.length }
+}
+
+/** Pega la receta (con nombres) a cada línea del tablero: UNA llamada al puerto para todos los platos de la cola. */
+async function attachIngredients(deps: KdsDeps, tickets: KdsTicket[], user: CurrentUser): Promise<void> {
+  const port = deps.recipePorts?.getRecipeIngredients
+  if (!port) return
+  const ids = [...new Set(tickets.flatMap((t) => t.lines.map((l) => l.menuItemId || '')).filter(Boolean))]
+  if (!ids.length) return
+  let byItem: Record<string, RecipeIngredient[]> = {}
+  try { byItem = await port(ids, user) } catch { return }   // la receta es un extra: sin inventario el tablero sigue
+  for (const t of tickets) for (const l of t.lines) {
+    const recipe = l.menuItemId ? byItem[l.menuItemId] : undefined
+    if (recipe?.length) l.ingredients = recipe
+  }
+}
+
+/**
+ * KDS — cocina quita o agrega ingredientes a un plato que tiene en el tablero. Solo sobre líneas
+ * activas (new/preparing/ready) de una comanda en fase de cocina: un plato ya servido o anulado no se
+ * toca. Reemplaza la anotación completa (la pantalla manda el estado final, no deltas). No cambia
+ * precio ni estado; avisa por el canal en vivo para que el KDS de al lado y la comanda del mozo lo vean.
+ */
+export async function setLineIngredients(deps: KdsDeps, lineId: string, input: unknown, user: CurrentUser): Promise<OrderItemDTO> {
+  const changes = normalizeIngredientChanges(input)
+  const line = await deps.lines.findOne({ id: lineId })
+  if (!line) throw new NotFoundError('Línea no encontrada')
+  const order = await deps.orders.findById(line.orderId)
+  if (!order) throw new NotFoundError('Comanda no encontrada')
+  const me = await deps.userRepo.findById(user.id)
+  deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
+  if (!ACTIVE.includes(line.status) || line.kind === 'combo_header') throw new ValidationError('Ese plato ya no está en cocina')
+  if (!KITCHEN_ORDER_STATES.includes(order.status)) throw new ValidationError('La comanda ya no está en cocina')
+  const value: IngredientChanges | null = changes.removed.length || changes.added.length ? changes : null
+  const updated = (await deps.lines.update(lineId, { ingredientChanges: value } as Partial<Omit<OrderItemDTO, 'id'>>)) as OrderItemDTO
+  await deps.sockets.onLineStatusChanged?.(updated)
+  return updated
 }
 
 /**

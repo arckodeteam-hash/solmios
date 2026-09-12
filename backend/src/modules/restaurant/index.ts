@@ -219,6 +219,8 @@ export function RestaurantModule() {
       // KDS / cocina (RES-4)
       router.get('/api/restaurant/kds', guard('restaurant', 'view'), (req) => controller.kdsQueue(req))
       router.put('/api/restaurant/kds/lines/:id', guard('restaurant', 'edit'), (req) => controller.setLineStatus(req))
+      // KDS con receta: cocina quita/agrega ingredientes (mismo permiso con el que mueve la línea).
+      router.put('/api/restaurant/kds/lines/:id/ingredients', guard('restaurant', 'edit'), (req) => controller.setLineIngredients(req))
 
       // Canal en vivo (#211): SSE por hotel para KDS y Salón. `EventSource` no manda headers, así que
       // el stream se abre con un ticket de 60 s (`/events/ticket`, pedido con el JWT normal) que viaja

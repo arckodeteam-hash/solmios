@@ -105,7 +105,7 @@ export function splitPaymentsDeps(w: RestaurantWiring): splitPayments.SplitPayme
 }
 export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
   if (!w.orders || !w.lines) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, tables: w.tables, rooms: w.rooms }
+  return { orders: w.orders, lines: w.lines, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, tables: w.tables, rooms: w.rooms, recipePorts: w.recipePorts }
 }
 /** #213: cierre del día. #282: con las partes de una cuenta dividida (propina por parte, cargo a habitación por parte). */
 export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {

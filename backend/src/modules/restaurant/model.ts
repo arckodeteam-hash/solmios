@@ -250,6 +250,12 @@ export const RestaurantOrderItemModel: ModelDefinition = {
     // sub-líneas) — [{ groupId, groupName, modifierId, name, priceDelta }]. null = sin modificadores
     // (compat retro con líneas viejas). order-totals.ts/settlement.ts no lo leen ni lo necesitan.
     modifiers: { type: 'json' },
+    // KDS — lo que COCINA cambió de la receta de este plato: { removed: string[], added: string[] }
+    // (nombres de ingrediente, texto). Es una anotación de cocina, NO un modificador: no toca
+    // precio ni `lineTotal` (un extra que se cobra es un modificador, y lo carga el mozo). null =
+    // el plato va como dice la receta. Lo escribe `kds.setLineIngredients`; lo leen el tablero
+    // de cocina, la comanda del mozo y la comanda impresa.
+    ingredientChanges: { type: 'json' },
     // F2 — 'item' (default, retrocompat) | 'combo_header' | 'combo_component'. El ADD COLUMN con
     // default:'item' deja las filas pre-F2 tratadas como ítem simple, sin migración de datos manual.
     kind: { type: 'string', default: 'item' },

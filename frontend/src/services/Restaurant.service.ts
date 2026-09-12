@@ -126,6 +126,10 @@ export interface OrderLineModifierSnapshot {
   inventoryQuantity?: number
 }
 
+// KDS — espejo de restaurant/types.ts (IngredientChanges, RecipeIngredient).
+export interface IngredientChanges { removed: string[]; added: string[] }
+export interface RecipeIngredient { name: string; quantity: number; unit: string }
+
 export interface OrderLine {
   id: string
   hotelId: string
@@ -142,6 +146,12 @@ export interface OrderLine {
   lineTotal: number
   // F1: modificadores elegidos, snapshot en la MISMA fila. null/ausente = sin modificadores.
   modifiers?: OrderLineModifierSnapshot[] | null
+  // KDS — lo que cocina quitó/agregó de la receta de este plato (texto). null/ausente = receta tal cual.
+  // Es una anotación de cocina, no un modificador: no cambia el precio. La escribe el tablero de cocina.
+  ingredientChanges?: IngredientChanges | null
+  // KDS — receta del plato (menu_item_recipes ⋈ inventory_items), resuelta por el server SOLO en la cola
+  // del KDS (`GET /restaurant/kds`); en el resto de los endpoints no viene. Ausente = sin receta cargada.
+  ingredients?: RecipeIngredient[]
   // F2 — 'item' (default, retrocompat) | 'combo_header' | 'combo_component'.
   kind?: 'item' | 'combo_header' | 'combo_component'
   // F2 — solo en filas kind='combo_header': FK lógica a Combo.id.
@@ -702,6 +712,9 @@ export const RestaurantService = {
     return res.data ?? []
   },
   setLineStatus: (lineId: string, status: LineStatus): Promise<OrderLine> => http.put(`/restaurant/kds/lines/${lineId}`, { status }),
+  // KDS con receta: cocina quita/agrega ingredientes. El body es el estado FINAL de la anotación (no deltas);
+  // `{ removed: [], added: [] }` vuelve a la receta tal cual.
+  setLineIngredients: (lineId: string, changes: IngredientChanges): Promise<OrderLine> => http.put(`/restaurant/kds/lines/${lineId}/ingredients`, changes),
 
   // ─── Canal en vivo (#211) ───
   /** Ticket de 60 s para abrir `GET /restaurant/events` con EventSource (que no manda headers). Lo usa useRestaurantEvents. */

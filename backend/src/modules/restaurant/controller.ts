@@ -13,6 +13,7 @@ import {
   OpenOrderSchema, AddLineSchema, UpdateLineSchema,
   BillSchema, ChargeToRoomSchema, PaySchema, AddOrderPaymentSchema,
   KdsLineStatusSchema,
+  KdsLineIngredientsSchema,
   VoidLineSchema, CancelOrderSchema, RefundOrderSchema, VoidReasonsSchema,
   DiscountSchema, DiscountPolicySchema,
   CreateModifierGroupSchema, UpdateModifierGroupSchema,
@@ -317,6 +318,13 @@ export class RestaurantController {
     this.logger.info('PUT /restaurant/kds/lines/:id', { id: req.params.id })
     const data = validateSchema(KdsLineStatusSchema, req.body) as any
     const item = await this.service.setLineStatus(req.params.id, data.status, req.user as any)
+    return { status: 200, body: item }
+  }
+  /** KDS — cocina quita/agrega ingredientes de un plato. El body es el estado final: { removed: string[], added: string[] }. */
+  async setLineIngredients(req: HttpRequest) {
+    this.logger.info('PUT /restaurant/kds/lines/:id/ingredients', { id: req.params.id })
+    const data = validateSchema(KdsLineIngredientsSchema, req.body) as any
+    const item = await this.service.setLineIngredients(req.params.id, data, req.user as any)
     return { status: 200, body: item }
   }
 
