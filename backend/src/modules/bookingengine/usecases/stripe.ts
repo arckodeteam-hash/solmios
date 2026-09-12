@@ -482,7 +482,11 @@ export class StripeUseCase {
             this.logger.info(`Grupo ${reservation.groupId}: ${siblings.length} reserva(s) confirmada(s) por el mismo pago (hotel ${hotelId})`)
             if (this.settleDeps?.groups) {
               try {
-                await this.settleDeps.groups.update(reservation.groupId, { status: 'confirmed', paidAmount: paid })
+                // `paidAmount` ACUMULA (como `deposit` por fila): `settleOnce` sólo frena el mismo
+                // eventId; un segundo cobro real sobre el grupo suma, no pisa lo ya cobrado.
+                const prev = await this.settleDeps.groups.findOne({ id: reservation.groupId })
+                const paidAmount = round2((Number(prev?.paidAmount) || 0) + paid)
+                await this.settleDeps.groups.update(reservation.groupId, { status: 'confirmed', paidAmount })
               } catch (err) {
                 this.logger.warn(`Grupo ${reservation.groupId}: no se pudo marcar confirmed/paidAmount (${(err as Error)?.message ?? err})`)
               }

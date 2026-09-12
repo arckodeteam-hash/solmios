@@ -344,13 +344,19 @@ describe('StripeUseCase — handleWebhook cascada a reservas de GRUPO (Tarea 10)
 // cada habitación (el centavo del redondeo cae en la líder, Σ deposit = pagado exacto), `Groups`
 // queda `confirmed` con `paidAmount`, y el result nombra al huésped titular (vía `setSettleDeps`).
 describe('StripeUseCase — settle() reparte el cobro del grupo y marca Groups confirmed (#276 MR-11)', () => {
-  function makeGroupsRepo(): { repo: RepositoryAdapter<any>; updates: Array<{ id: string; patch: any }> } {
+  function makeGroupsRepo(rows: any[] = []): { repo: RepositoryAdapter<any>; updates: Array<{ id: string; patch: any }> } {
     const updates: Array<{ id: string; patch: any }> = []
     const repo = {
-      findMany: async () => [], findById: async () => null, findOne: async () => null,
-      create: async (d: any) => d, delete: async () => true, count: async () => 0,
-      paginate: async () => ({ data: [], total: 0, limit: 20, offset: 0, pages: 1 }),
-      update: async (id: string, patch: any) => { updates.push({ id, patch }); return { id, ...patch } },
+      findMany: async () => rows.slice(), findById: async () => null,
+      findOne: async (q: any) => rows.find((g) => g.id === q?.id) ?? null,
+      create: async (d: any) => d, delete: async () => true, count: async () => rows.length,
+      paginate: async () => ({ data: rows.slice(), total: rows.length, limit: 20, offset: 0, pages: 1 }),
+      update: async (id: string, patch: any) => {
+        updates.push({ id, patch })
+        const row = rows.find((g) => g.id === id)
+        if (row) Object.assign(row, patch)
+        return { id, ...patch }
+      },
     } as RepositoryAdapter<any>
     return { repo, updates }
   }
@@ -407,6 +413,25 @@ describe('StripeUseCase — settle() reparte el cobro del grupo y marca Groups c
     expect(byId('res-1').deposit).toBe(33.33) // 100 − 33.33 − 33.34
     expect(store.reduce((acc, r) => acc + r.deposit, 0)).toBeCloseTo(100, 2)
     expect(store.every((r) => r.pendingAmount === 0)).toBe(true)
+  })
+
+  it('dos cobros reales (eventId distintos) sobre el mismo grupo → Groups.paidAmount ACUMULA, no pisa', async () => {
+    const leader = { ...PENDING_RESERVATION, id: 'res-1', groupId: 'g4', totalAmount: 100 }
+    const sib = { ...PENDING_RESERVATION, id: 'res-2', roomId: 'room-2', groupId: 'g4', totalAmount: 100 }
+    const { repo: reservationsRepo, store } = makeReservationsRepo([leader, sib])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const groups = makeGroupsRepo([{ id: 'g4', status: 'pending', paidAmount: 0 }])
+    const events = new PaymentEventStore(eventRepo, log)
+
+    const first = new StripeUseCase(reservationsRepo, log, makeMockRegistry(paidWebhook(12000, 'evt_g4_a')), events)
+    first.setSettleDeps({ groups: groups.repo })
+    await first.handleWebhook('hotel-A', 'raw', 'sig')
+    const second = new StripeUseCase(reservationsRepo, log, makeMockRegistry(paidWebhook(8000, 'evt_g4_b')), events)
+    second.setSettleDeps({ groups: groups.repo })
+    await second.handleWebhook('hotel-A', 'raw', 'sig')
+
+    expect(groups.updates.map((u) => u.patch.paidAmount)).toEqual([120, 200])
+    expect(store.reduce((acc, r) => acc + r.deposit, 0)).toBe(200)
   })
 
   it('sin setSettleDeps → el asiento del grupo sigue igual y el result no trae huésped', async () => {
