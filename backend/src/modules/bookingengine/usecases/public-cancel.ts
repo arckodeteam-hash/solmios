@@ -50,9 +50,20 @@ function safeEqual(a: Buffer, b: Buffer): boolean {
   }
 }
 
+/** Lo mínimo del orm que necesita la cascada: una transacción cuyo `tx` sabe `update(model, id, data)`. */
+export interface CancelTransactionPort {
+  transaction<T>(fn: (tx: { update(model: string, id: string, data: Record<string, unknown>): Promise<unknown> }) => Promise<T>): Promise<T>
+}
+
 export interface CancelPublicDeps {
   reservationsRepo: RepositoryAdapter<any>
   policyRepo: RepositoryAdapter<CancellationPolicyDTO>
+  /**
+   * #272 (revisión) — Cascada del grupo en UNA transacción: "todo o nada" era un `for` de `update`
+   * sueltos, y si la 2ª fila fallaba la 1ª quedaba `cancelled` con las hermanas vivas (y sin
+   * evento, sin reembolso). Opcional: sin él (tests, drivers sin tx) se escribe fila por fila.
+   */
+  orm?: CancelTransactionPort
   /** Hotels — `cancellationType` (nivel 3 de resolvePolicy). Opcional: fail-soft → default. */
   hotelsRepo?: RepositoryAdapter<any>
   logger: Logger
@@ -65,6 +76,21 @@ export interface CancelPublicDeps {
 }
 
 const isCheckedIn = (r: any): boolean => r?.status === 'checked_in' || r?.status === 'checked_out'
+
+/**
+ * #272 — El mismo snapshot en todas las filas, atómico si hay transacción: o quedan todas
+ * `cancelled` o ninguna. Si una escritura falla, el error sube (la cancelación NO se procesó y
+ * el huésped puede reintentar) y no se emite evento ni se libera inventario.
+ */
+async function cancelRows(deps: CancelPublicDeps, rows: any[], snapshot: Record<string, unknown>): Promise<void> {
+  if (deps.orm?.transaction) {
+    await deps.orm.transaction(async (tx) => {
+      for (const row of rows) await tx.update('Reservations', String(row.id), snapshot)
+    })
+    return
+  }
+  for (const row of rows) await deps.reservationsRepo.update(String(row.id), snapshot)
+}
 
 /** #272 — Todas las filas del grupo (líder + hermanas). Si no hay grupo o falla la lectura → [item]. */
 async function groupRowsOf(reservationsRepo: RepositoryAdapter<any>, item: any): Promise<any[]> {
@@ -191,7 +217,7 @@ export async function cancelPublicBooking(
     policyApplied: penalty.policyApplied,
   }
   const cancelledRows = rows.filter((r) => r.status !== 'cancelled')
-  for (const row of cancelledRows) await reservationsRepo.update(String(row.id), snapshot)
+  await cancelRows(deps, cancelledRows, snapshot)
 
   // #272 — El grupo entero queda cancelled (best-effort, molde de pending-payment-expiry).
   if (item.groupId && groupsRepo) {

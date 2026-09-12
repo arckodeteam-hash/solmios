@@ -347,6 +347,8 @@ export class BookingengineController {
         // #272 — cascada al grupo + inventario por habitación (Channex).
         groupsRepo: this.groupsRepo,
         pushAvailability: this.pushAvailability,
+        // #272 — la cascada del grupo se escribe en UNA transacción (todo o nada de verdad).
+        orm: this.orm,
         // El evento onBookingCancelled está declarado en sockets.ts pero el service no lo
         // expone (gate <200 líneas). Accedemos al socket del service en runtime (ya está
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el

@@ -410,4 +410,77 @@ describe('cancelPublicBooking — grupo con token compartido (#272)', () => {
     expect(res.body.refundStatus).toBe('none')
     expect(h.updates.length).toBe(3)
   })
+
+  // #272 (revisión): "todo o nada" de verdad. Las escrituras del grupo van en UNA transacción; una
+  // falla en la 2ª fila revierte la 1ª, el error sube y no se emite evento ni se libera inventario.
+  describe('cascada en transacción', () => {
+    /** Transacción falsa con semántica de commit/rollback: las escrituras se aplican SOLO si `fn` resuelve. */
+    function fakeOrm(reservations: any[], failOnId?: string) {
+      const txWrites: Array<{ model: string; id: string; data: any }> = []
+      let committed = 0
+      let rolledBack = 0
+      const orm = {
+        transaction: async <T,>(fn: (tx: any) => Promise<T>): Promise<T> => {
+          const pending: Array<{ model: string; id: string; data: any }> = []
+          const tx = {
+            update: async (model: string, id: string, data: any) => {
+              if (id === failOnId) throw new Error(`falló la escritura de ${id}`)
+              pending.push({ model, id, data })
+              return { id, ...data }
+            },
+          }
+          try {
+            const out = await fn(tx)
+            for (const w of pending) {
+              txWrites.push(w)
+              const target = reservations.find((r) => r.id === w.id)
+              if (target) Object.assign(target, w.data)
+            }
+            committed++
+            return out
+          } catch (e) {
+            rolledBack++
+            throw e
+          }
+        },
+      }
+      return { orm, txWrites, get committed() { return committed }, get rolledBack() { return rolledBack } }
+    }
+
+    it('la 2ª fila falla → la 1ª NO queda cancelled, el error sube, sin evento, inventario ni grupo', async () => {
+      const rows = groupOf3()
+      const h = makeDeps({ reservations: rows, policies: moderate, withGroupsRepo: true })
+      const fake = fakeOrm(h.reservations, 'sib-1')
+
+      await expect(cancelPublicBooking({ ...h.deps, orm: fake.orm }, 'lead', VALID_TOKEN)).rejects.toThrow(/sib-1/)
+
+      expect(fake.rolledBack).toBe(1)
+      expect(fake.committed).toBe(0)
+      expect(fake.txWrites).toHaveLength(0)
+      expect(h.reservations.map((r) => r.status)).toEqual(['confirmed', 'confirmed', 'confirmed'])
+      // Nada se escribió por fuera de la transacción.
+      expect(h.updates).toHaveLength(0)
+      expect(h.groupUpdates).toHaveLength(0)
+      expect(h.pushed).toHaveLength(0)
+      expect(h.events).toHaveLength(0)
+    })
+
+    it('con transacción y sin fallas → las 3 se escriben adentro de la tx (Reservations) y nada por el repo suelto', async () => {
+      const rows = groupOf3()
+      const h = makeDeps({ reservations: rows, policies: moderate, withGroupsRepo: true })
+      const fake = fakeOrm(h.reservations)
+
+      const res = await cancelPublicBooking({ ...h.deps, orm: fake.orm }, 'sib-2', VALID_TOKEN)
+
+      expect(res.status).toBe(200)
+      expect(fake.committed).toBe(1)
+      expect(fake.txWrites.map((w) => [w.model, w.id])).toEqual([['Reservations', 'lead'], ['Reservations', 'sib-1'], ['Reservations', 'sib-2']])
+      expect(new Set(fake.txWrites.map((w) => JSON.stringify(w.data))).size).toBe(1)
+      expect(fake.txWrites[0].data.status).toBe('cancelled')
+      expect(h.updates).toHaveLength(0)
+      expect(h.reservations.every((r) => r.status === 'cancelled')).toBe(true)
+      expect(h.events).toHaveLength(1)
+      expect(h.pushed).toHaveLength(3)
+    })
+  })
 })
