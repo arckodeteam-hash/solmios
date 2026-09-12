@@ -528,3 +528,31 @@ describe('textos nuevos en los 3 idiomas y sin strings sueltos', () => {
     expect(pageSrc).not.toContain('No, mantener')
   })
 })
+
+describe('cuna pedida que la habitación asignada no ofrece (#292, revisión)', () => {
+  it('cribUnavailable: true → aviso "el hotel se pondrá en contacto" dentro de la confirmación exitosa; en inglés se traduce', async () => {
+    const w = await render(HOTEL, 'es', {
+      ...RESERVATION,
+      reservation: { ...RESERVATION.reservation, needsCrib: false, cribUnavailable: true },
+    })
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(true)
+    const notice = w.find('[data-testid="confirm-crib-unavailable"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toBe('La cuna no está disponible en la habitación asignada; el hotel se pondrá en contacto.')
+
+    const w2 = await render(HOTEL, 'en', {
+      ...RESERVATION,
+      reservation: { ...RESERVATION.reservation, cribUnavailable: true },
+    })
+    expect(w2.find('[data-testid="confirm-crib-unavailable"]').text()).toBe('The crib is not available in the assigned room; the hotel will get in touch with you.')
+  })
+
+  it('sin la marca (false, ausente, o cuna concedida) el aviso no aparece', async () => {
+    const w = await render(HOTEL, 'es', { ...RESERVATION, reservation: { ...RESERVATION.reservation, cribUnavailable: false } })
+    expect(w.find('[data-testid="confirm-crib-unavailable"]').exists()).toBe(false)
+    const w2 = await render(HOTEL, 'es', { ...RESERVATION, reservation: { ...RESERVATION.reservation, needsCrib: true, cribCount: 1 } })
+    expect(w2.find('[data-testid="confirm-crib-unavailable"]').exists()).toBe(false)
+    const w3 = await render()
+    expect(w3.find('[data-testid="confirm-crib-unavailable"]').exists()).toBe(false)
+  })
+})

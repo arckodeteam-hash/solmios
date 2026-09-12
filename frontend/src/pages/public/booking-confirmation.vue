@@ -176,6 +176,12 @@
           </p>
         </div>
 
+        <!-- Revisión #292 — pidió cuna (había bebé) y la habitación asignada no la ofrece: la reserva
+             se creó sin cuna y el hotel lo tiene anotado; acá se le dice al huésped, no se esconde. -->
+        <div v-if="cribUnavailable" class="rounded-2xl border-2 border-gold/40 bg-gold/5 p-4" data-testid="confirm-crib-unavailable">
+          <p class="text-sm font-bold text-navy">{{ t('confirm.cribUnavailableNotice') }}</p>
+        </div>
+
         <!-- 2. Resumen de la estadía: fechas legibles en el idioma de la página, noches, huésped. -->
         <div v-if="reservation" class="rounded-2xl border border-slate-200 bg-white p-5" data-testid="confirm-stay">
           <div class="flex items-center justify-between gap-3">
@@ -657,6 +663,8 @@ const refundStateText = computed(() => {
 /** Tarea 3.4 (corrección 2026-08-25) — el pago se completó (por eso llegamos a SUCCESS) pero
  *  el hotel todavía no aprobó la reserva ("confirmación instantánea" apagada). */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
+/** Revisión #292 — la reserva se creó sin la cuna pedida (la habitación asignada no la ofrece). */
+const cribUnavailable = computed(() => reservation.value?.reservation?.cribUnavailable === true)
 /** #271 (MR-06) — plazo (horas) en que el hotel se comprometió a revisar. El backend manda
  *  `booking_config.approvalDeadlineHours`; 24 si no vino (reserva vieja / config sin el campo). */
 const approvalDeadlineHours = computed(() => {

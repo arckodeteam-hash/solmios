@@ -214,6 +214,9 @@ export async function getPublicReservation(
         // Ausente/default en reservas de antes de esta feature.
         needsCrib: reservation.needsCrib ?? false,
         cribCount: reservation.cribCount ?? 0,
+        // Revisión #292 — pidió cuna y la habitación asignada no la ofrece: la confirmación le
+        // avisa que el hotel se pondrá en contacto. Es SU pedido, no un dato interno.
+        cribUnavailable: reservation.cribUnavailable === true || reservation.cribUnavailable === 1 || reservation.cribUnavailable === '1',
         // MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado), no un dato
         // interno del hotel. `null`/0 en reservas anteriores a esta feature o sin régimen.
         mealPlan: reservation.mealPlan ?? null,

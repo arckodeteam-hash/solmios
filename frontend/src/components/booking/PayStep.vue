@@ -242,7 +242,8 @@
 import { computed, ref } from 'vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import { CRIB_AMENITY_KEY, type PromoValidationReason } from '@/types/booking'
+import type { PromoValidationReason } from '@/types/booking'
+import { isCribAmenityKey } from '@/utils/crib-amenity'
 import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 import { classifyAge } from '@/utils/child-composition'
 
@@ -392,8 +393,8 @@ function cartLineGuestsLabel(line: CartLine): string {
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   // REQ-01 (#290) — amenidades de la habitación elegidas para ESTA habitación, por nombre
-  // (snapshot de la línea). La cuna (#292, `custom:cuna`) ya se nombró arriba: no se repite.
-  const roomAmenities = (line.roomAmenities ?? []).filter((a) => a.key !== CRIB_AMENITY_KEY).map((a) => a.name)
+  // (snapshot de la línea). La cuna (#292, `isCribAmenityKey`) ya se nombró arriba: no se repite.
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
   return roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
 }
 

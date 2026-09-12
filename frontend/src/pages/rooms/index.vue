@@ -473,6 +473,9 @@
               <div class="mt-4 pt-4 border-t border-border" data-testid="custom-amenities">
                 <div class="text-[10px] font-extrabold uppercase tracking-wide text-navy/60 mb-1">Amenidades personalizadas y con precio</div>
                 <p class="text-[11px] text-text-muted mb-2.5">Se ofrecen al huésped al reservar esta habitación; el precio se suma a la reserva.</p>
+                <!-- #292 — la cuna se reconoce por el NOMBRE (`utils/crib-amenity.ts`: "Cuna", "Cuna para bebé",
+                     "Crib", "Berço"…), no por la sugerencia: se avisa acá porque es la única regla no evidente. -->
+                <p class="text-[11px] text-text-muted mb-2.5" data-testid="custom-amenity-crib-hint">Si el nombre contiene «cuna», el motor la ofrece solo a huéspedes con bebé.</p>
                 <div class="flex flex-wrap gap-2 mb-3">
                   <button v-for="s in CUSTOM_AMENITY_SUGGESTIONS" :key="s.key" type="button"
                     data-testid="custom-amenity-suggest"
@@ -545,6 +548,7 @@ import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { ApiError } from '@/services/http'
 import type { Room } from '@/types'
 import type { RoomAmenityItem, RoomAmenityRow } from '@/services/Amenities.service'
+import { CRIB_AMENITY_KEY } from '@/utils/crib-amenity'
 
 interface MappedRoom {
   id: string
@@ -827,7 +831,7 @@ function amenityCountLabel(n: number): string { return `${n} seleccionada${n ===
 const CUSTOM_PREFIX = 'custom:'
 /** Sugerencias rápidas: mismo slug que genera el backend (minúsculas sin acentos, no-alfanumérico → `_`). */
 const CUSTOM_AMENITY_SUGGESTIONS: { key: string; name: string }[] = [
-  { key: 'custom:cuna', name: 'Cuna' },
+  { key: CRIB_AMENITY_KEY, name: 'Cuna' },
   { key: 'custom:cama_extra', name: 'Cama extra' },
 ]
 function slugifyAmenityName(name: string): string {

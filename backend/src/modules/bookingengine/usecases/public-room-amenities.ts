@@ -17,16 +17,22 @@
 //     huésped no tiene la culpa de un catálogo stale; mejor crear la reserva sin ese extra).
 //   - NUNCA se toma el precio del body.
 //
-// #292 — La CUNA es una de estas amenidades: `CRIB_AMENITY_KEY` (`custom:cuna`, la que el admin
-// de habitaciones ya sugiere). No existe más el toggle global del hotel ni el catálogo
-// `child_amenities`: "¿Necesita cuna?" se ofrece sólo si el tipo publica esa key, y decir "sí"
-// equivale a pedir esa key en `roomAmenities` — el precio real lo cobra `resolveRoomAmenityLines`
-// contra la unidad asignada, como cualquier otra custom. `needsCrib`/`cribCount` se deciden
-// DESPUÉS de esa resolución (`hasCribLine`): reflejan la unidad finalmente asignada, no el tipo.
+// #292 — La CUNA es una de estas amenidades. No existe más el toggle global del hotel ni el
+// catálogo `child_amenities`: "¿Necesita cuna?" se ofrece sólo si el tipo publica una amenidad que
+// `isCribAmenityKey` reconozca como cuna (`shared/usecases/crib-amenity.ts`: `custom:cuna`,
+// `custom:crib`, `custom:berco`, o cualquier `custom:*` cuyo nombre diga "cuna"/"crib"/"berço" —
+// el slug lo deriva el panel del NOMBRE, así que "Cuna para bebé" NO es `custom:cuna`), y decir
+// "sí" equivale a pedir `CRIB_AMENITY_KEY` (la key canónica) en `roomAmenities` — al resolver
+// contra la unidad asignada esa key acepta CUALQUIER fila cuna de la habitación y la línea
+// persistida conserva la key real de la fila; el precio real lo cobra `resolveRoomAmenityLines`
+// como cualquier otra custom. `needsCrib`/`cribCount` se deciden DESPUÉS de esa resolución
+// (`hasCribLine`): reflejan la unidad finalmente asignada, no el tipo.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { isCustomAmenityKey } from '../../amenities/usecases/room-amenity-items'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
+import { CRIB_AMENITY_KEY, isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
+import { round2 } from '../../../shared/utils/money'
 import type { PublicBookingLogger } from './public-booking'
 
 /**
@@ -49,14 +55,17 @@ export interface PublicRoomAmenity {
   price: number
 }
 
-/** #292 — key de la amenidad personalizada "cuna" (`RoomAmenities.amenityKey`). Es la que decide
- *  si un tipo ofrece cuna y la línea que se cobra cuando el huésped la pide (`needsCrib`). */
-export const CRIB_AMENITY_KEY = 'custom:cuna'
+/** #292 — key CANÓNICA con la que se PIDE la cuna (ver `shared/usecases/crib-amenity.ts`). Se
+ *  re-exporta para los usecases del módulo y sus tests. */
+export { CRIB_AMENITY_KEY }
 
 const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
+/** Fila `RoomAmenities` (ya filtrada como custom vendible) que satisface la key pedida: la key
+ *  exacta, o — si lo pedido es la cuna — cualquier fila que `isCribAmenityKey` reconozca. */
+function findOffered(rows: any[], key: string): any | undefined {
+  if (isCribAmenityKey(key)) return rows.find((a: any) => isCribAmenityKey(a.amenityKey, a.name))
+  return rows.find((a: any) => a.amenityKey === key)
 }
 
 /**
@@ -93,12 +102,11 @@ export function resolveRoomAmenityLines(
   quantity: number,
   logger?: PublicBookingLogger,
 ): { lines: RoomAmenityLine[]; total: number } {
-  const byKey = new Map<string, any>()
-  for (const a of customRoomAmenities(roomRows)) if (!byKey.has(a.amenityKey)) byKey.set(a.amenityKey, a)
+  const offered = customRoomAmenities(roomRows)
   const lines: RoomAmenityLine[] = []
   let total = 0
   for (const key of keys) {
-    const found = byKey.get(key)
+    const found = findOffered(offered, key)
     if (!found) {
       logger?.warn('Amenidad de habitación ignorada: la habitación asignada no la ofrece o está inactiva', { amenityKey: key, roomId: roomRows?.[0]?.roomId })
       continue
@@ -114,8 +122,8 @@ export function resolveRoomAmenityLines(
 /** ¿Esta room (sus filas RoomAmenities) ofrece TODAS las keys pedidas? */
 export function roomOffersAll(roomRows: any[], keys: string[]): boolean {
   if (keys.length === 0) return true
-  const offered = new Set(customRoomAmenities(roomRows).map((a: any) => a.amenityKey))
-  return keys.every((k) => offered.has(k))
+  const offered = customRoomAmenities(roomRows)
+  return keys.every((k) => findOffered(offered, k) !== undefined)
 }
 
 /**
@@ -144,17 +152,18 @@ export function preferRoomsOffering(candidates: any[], amenitiesByRoom: Map<stri
 }
 
 /** #292 — ¿alguna de las rooms dadas ofrece la cuna, es decir tiene una fila `RoomAmenities` ACTIVA
- *  con `CRIB_AMENITY_KEY`? Helper de consulta (catálogo público / diagnóstico). OJO: NO es el gate
+ *  que `isCribAmenityKey` reconozca? Helper de consulta (catálogo público / diagnóstico). OJO: NO es el gate
  *  de `needsCrib` al reservar — ahí lo que manda es la línea `custom:cuna` que
  *  `resolveRoomAmenityLines` haya resuelto contra la unidad FINALMENTE asignada (`hasCribLine`). */
 export function roomsOfferCrib(amenitiesByRoom: Map<string, any[]>, roomIds: string[]): boolean {
   return roomIds.some((id) => roomOffersAll(amenitiesByRoom.get(id) ?? [], [CRIB_AMENITY_KEY]))
 }
 
-/** #292 — ¿el snapshot resuelto de una unidad trae la línea de cuna? Es la ÚNICA fuente de verdad
- *  de `needsCrib`/`cribCount` al persistir: `needsCrib === (roomAmenities tiene custom:cuna)`. */
+/** #292 — ¿el snapshot resuelto de una unidad trae la línea de cuna (key real de la fila, que
+ *  puede ser `custom:crib` o `custom:cuna_para_bebe`)? Es la ÚNICA fuente de verdad de
+ *  `needsCrib`/`cribCount` al persistir: `needsCrib === (roomAmenities tiene una línea cuna)`. */
 export function hasCribLine(lines: RoomAmenityLine[]): boolean {
-  return lines.some((l) => l.key === CRIB_AMENITY_KEY)
+  return lines.some((l) => isCribAmenityKey(l.key, l.name))
 }
 
 /** Agrupa filas `RoomAmenities` por `roomId` (una lectura, N habitaciones). */

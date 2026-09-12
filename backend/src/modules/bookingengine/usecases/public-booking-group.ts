@@ -45,8 +45,10 @@ import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
-import { mealPlanNote, mealPlanAddonInput, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
+import { mealPlanNote, mealPlanAddonInput, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation, CRIB_UNAVAILABLE_NOTE } from './public-booking'
 import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
+import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
+import { round2 } from '../../../shared/utils/money'
 import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
@@ -120,9 +122,10 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     // la composición de CADA línea y sus unidades libres.
     const needsCrib = r?.needsCrib === true
     // REQ-01 (#290) — solo keys `custom:*` únicas; la resolución contra cada unidad va más abajo.
-    // #292 — `custom:cuna` NO entra por acá: su única fuente de verdad es `needsCrib`.
+    // #292 — la cuna (toda key que `isCribAmenityKey` reconozca) NO entra por acá: su única
+    // fuente de verdad es `needsCrib`.
     const roomAmenities = normalizeRoomAmenityKeys(r?.roomAmenities)
-      .filter((key) => key !== CRIB_AMENITY_KEY)
+      .filter((key) => !isCribAmenityKey(key))
       .map((key) => ({ key }))
     // MR-03 (#268) — escalar por línea (mismo `max: 40` que el schema del flujo de 1 habitación);
     // la resolución contra el catálogo va más abajo, con la composición de la línea.
@@ -138,12 +141,11 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
   return out.length > 0 ? out : null
 }
 
+/** Booleano persistido (INTEGER 0/1 en la columna, `true`/`1`/`'1'` según el adapter). */
+const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
+
 function overlaps(r: any, checkIn: string, checkOut: string): boolean {
   return r.status !== 'cancelled' && r.status !== 'no_show' && r.checkIn < checkOut && r.checkOut > checkIn
-}
-
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
 /**
@@ -267,6 +269,9 @@ export async function createPublicBookingGroup(
     // propio bebé. #292 — `needsCrib` acá es "al menos una unidad de la línea quedó con cuna"
     // (para las notas); lo que se PERSISTE por fila sale de `roomAmenitiesByRoom` de ESA unidad.
     needsCrib: boolean
+    /** Revisión #292 — unidades de la línea que pidieron cuna y NO la ofrecen (persisten
+     *  `cribUnavailable`, van a la nota del grupo y a la respuesta). Vacío si no se pidió. */
+    cribUnavailableRoomIds: string[]
     // Tarea "Cobro % niños" — % REALMENTE usado para cotizar ESTA línea (o `null`), por LÍNEA
     // igual que crib: cada habitación puede tener una cantidad de adultos distinta, así que el
     // "valor de un adulto" (y por ende si el % terminó aplicando) es por línea.
@@ -433,9 +438,12 @@ export async function createPublicBookingGroup(
     // cada unidad asignada (`hasCribLine`), igual que en public-booking.ts. Si se pidió y alguna
     // unidad de la línea no la ofrece, esa fila se crea sin cuna con un warn claro.
     const cribRoomIds = lineCribRequested ? chosen.filter((r: any) => hasCribLine(roomAmenitiesByRoom.get(r.id) ?? [])).map((r: any) => r.id) : []
-    if (lineCribRequested && cribRoomIds.length < chosen.length) {
+    // Revisión #292 — unidades de ESTA línea que pidieron cuna y no la tienen: cada una de esas
+    // filas persiste `cribUnavailable`, la nota del grupo lo dice y la respuesta lo expone.
+    const cribUnavailableRoomIds = lineCribRequested ? chosen.filter((r: any) => !cribRoomIds.includes(r.id)).map((r: any) => r.id) : []
+    if (cribUnavailableRoomIds.length > 0) {
       logger?.warn('createPublicBookingGroup: cuna pedida pero la unidad asignada no la ofrece — se crea sin cuna', {
-        hotelId, roomType: line.roomType, roomIds: chosen.filter((r: any) => !cribRoomIds.includes(r.id)).map((r: any) => r.id),
+        hotelId, roomType: line.roomType, roomIds: cribUnavailableRoomIds,
       })
     }
     const lineNeedsCrib = cribRoomIds.length > 0
@@ -473,6 +481,7 @@ export async function createPublicBookingGroup(
       // niños libres, SIN bebés), por unidad; se multiplica por `roomIds.length` más abajo.
       upsellPersonsPerUnit: composition.effectiveAdults + composition.payingChildren + (composition.freeChildren - composition.babies),
       needsCrib: lineNeedsCrib,
+      cribUnavailableRoomIds,
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
       roomAmenitiesByRoom, roomAmenitiesTotal: round2(lineRoomAmenitiesTotal),
       mealPlan: lineMealPlan, mealPlanTotal: lineMealPlanTotal,
@@ -611,6 +620,10 @@ export async function createPublicBookingGroup(
   // (2026-09-09) — se lista qué tipos la RECIBIERON (alguna unidad con línea de cuna), sin cantidad.
   const cribLines = resolvedLines.filter((l) => l.needsCrib).map((l) => l.roomType)
   if (cribLines.length > 0) notesParts.push(`Cuna: ${cribLines.join(', ')}`)
+  // Revisión #292 — tipos con alguna unidad que pidió cuna y no la ofrece (misma nota que el
+  // flujo de 1 habitación, con el tipo para que recepción sepa cuál).
+  const cribUnavailableTypes = resolvedLines.filter((l) => l.cribUnavailableRoomIds.length > 0).map((l) => l.roomType)
+  if (cribUnavailableTypes.length > 0) notesParts.push(`${CRIB_UNAVAILABLE_NOTE} (${cribUnavailableTypes.join(', ')})`)
   notesParts.push(`Total grupo: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +
     `${promoDiscount > 0 ? ` - promo ${promoDiscount.toFixed(2)}` : ''} + tax ${taxes.toFixed(2)})`)
 
@@ -687,6 +700,8 @@ export async function createPublicBookingGroup(
             // — gateado por línea (bebé + pedida) y cerrado POR UNIDAD: `needsCrib` es true si
             // y sólo si `roomAmenities` de ESTA fila trae `custom:cuna`; `cribCount` su espejo 1/0.
             needsCrib: unitNeedsCrib, cribCount: unitNeedsCrib ? 1 : 0,
+            // Revisión #292 — ESTA unidad pidió cuna y no la ofrece.
+            cribUnavailable: line.cribUnavailableRoomIds.includes(roomId),
             // #292 — el catálogo global de amenidades infantiles se dio de baja: las columnas
             // quedan (reservas históricas + lectores) pero una reserva nueva las escribe vacías.
             childAmenities: [],
@@ -877,6 +892,9 @@ function groupResponse(
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       checkoutUrl,
       totalBreakdown,
+      // Revisión #292 — alguna unidad del grupo pidió cuna y no la ofrece (sale de las filas,
+      // así el replay también lo trae).
+      ...(reservations.some((r) => isOn(r.cribUnavailable)) ? { cribUnavailable: true } : {}),
       ...(paymentError !== null ? { paymentError } : {}),
       // #266 — solo en el replay idempotente (misma key, mismo hotel).
       ...(replayed ? { replayed: true } : {}),

@@ -381,7 +381,8 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import { CRIB_AMENITY_KEY, type MealPlanCode, type OccupancyUnavailableReason, type RoomTypeRate } from '@/types/booking'
+import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
+import { isCribAmenityKey } from '@/utils/crib-amenity'
 import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import { classifyAge } from '@/utils/child-composition'
@@ -559,7 +560,7 @@ function cartLineGuestsLabel(line: CartLine): string {
   // REQ-01 (#290) — las amenidades de la habitación elegidas para ESTA habitación, por nombre
   // (snapshot de la línea), para que el huésped confirme qué quedó pedido en cada una. La cuna
   // (#292, `custom:cuna`) ya se nombró arriba con `needsCrib`: no se repite.
-  const roomAmenities = (line.roomAmenities ?? []).filter((a) => a.key !== CRIB_AMENITY_KEY).map((a) => a.name)
+  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
   // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
   return line.mealPlan && line.mealPlan.code !== 'room_only'
