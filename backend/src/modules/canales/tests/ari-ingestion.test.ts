@@ -106,6 +106,74 @@ describe('ingesta OTA — applyBookingRevision (QA-02)', () => {
   }
 })
 
+// REQ-HAC-02 (#257) — la unidad se elige con la fuente única de disponibilidad por tipo:
+// entre las unidades del tipo, la primera sin reserva bloqueante solapada. Si no queda ninguna,
+// la OTA se ingesta igual (nunca se dropea) y la nota marca el overbooking.
+describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (REQ-HAC-02)', () => {
+  const DTO = {
+    externalLocator: 'OTA-HAC02', status: 'confirmed', channel: 'Booking.com', notes: 'OTA: Booking.com',
+    checkIn: '2026-10-10', checkOut: '2026-10-12', channexRoomTypeId: 'rt-twin',
+  }
+  const channex: any = { getRoomTypeById: async () => ({ id: 'rt-twin', title: 'Twin Room' }) }
+  const TWINS = [{ id: 'r1', type: 'twin', status: 'available' }, { id: 'r2', type: 'twin', status: 'available' }]
+
+  const ormCon = (reservations: any[], created: any[]): any => ({
+    findMany: async (t: string, q: any) => {
+      if (t === 'Rooms') return TWINS
+      if (t === 'Reservations') return q?.externalLocator ? [] : reservations
+      return []
+    },
+    update: async () => {},
+    create: async (_t: string, d: any) => { created.push(d); return d },
+  })
+
+  it('2 twin, r1 ocupada esas noches → la OTA se crea en r2', async () => {
+    const created: any[] = []
+    const orm = ormCon([{ id: 'x1', roomId: 'r1', roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' }], created)
+    const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
+    expect(result).toEqual({ created: true })
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ roomId: 'r2', roomType: 'twin' })
+    expect(created[0].notes).not.toContain('OVERBOOKING')
+  })
+
+  it('las 2 twin ocupadas → igual se crea (nunca dropea) en r1 con nota ⚠ OVERBOOKING', async () => {
+    const created: any[] = []
+    const orm = ormCon([
+      { id: 'x1', roomId: 'r1', roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' },
+      { id: 'x2', roomId: 'r2', roomType: 'twin', status: 'checked_in', checkIn: '2026-10-11', checkOut: '2026-10-13' },
+    ], created)
+    const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
+    expect(result).toEqual({ created: true })
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
+    expect(created[0].notes).toBe('OTA: Booking.com | ⚠ OVERBOOKING: sin unidad libre de twin para esas fechas')
+  })
+
+  it('una reserva del tipo SIN unidad asignada no bloquea ninguna unidad física: se elige r1', async () => {
+    const created: any[] = []
+    const orm = ormCon([{ id: 'x1', roomId: null, roomType: 'twin', status: 'confirmed', checkIn: '2026-10-10', checkOut: '2026-10-12' }], created)
+    await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
+    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
+  })
+
+  it('si el chequeo de disponibilidad falla, cae a rooms[0] sin romper la ingesta', async () => {
+    const created: any[] = []
+    const orm: any = {
+      findMany: async (t: string, q: any) => {
+        if (t === 'Rooms') return TWINS
+        if (t === 'Reservations' && q?.externalLocator) return []
+        throw new Error('modelo no soportado')
+      },
+      update: async () => {},
+      create: async (_t: string, d: any) => { created.push(d); return d },
+    }
+    const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
+    expect(result).toEqual({ created: true })
+    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
+  })
+})
+
 // #246 — el aviso al hotel sale SOLO cuando la ingesta crea una reserva nueva. Dedupe, modificación
 // y cancelación no avisan; y un aviso que falla nunca deshace la ingesta ni frena el ack.
 describe('ingesta OTA — onIngested (#246)', () => {
