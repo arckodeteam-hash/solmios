@@ -340,9 +340,20 @@ function detailsFromNotes(notes: unknown): string {
   return raw.split(NOTES_SEPARATOR).map((p) => p.trim()).filter(Boolean).join('\n')
 }
 
-/** Link absoluto al panel: la plantilla va por correo, un path relativo no abre nada. */
-function absolutePanelLink(id: string): string {
-  return `${(process.env.PUBLIC_URL || '').replace(/\/$/, '')}${reservationPanelLink(id)}`
+/**
+ * Link absoluto al panel para el correo: un path relativo dentro de un mail no abre nada. Sin
+ * `PUBLIC_URL` devuelve '' y avisa por log — el correo sale sin botón (HTML crudo) o con
+ * `{panel_link}` vacío (plantilla), nunca con un enlace muerto.
+ */
+function absolutePanelLink(deps: Pick<ReservationNotifyDeps, 'logger'>, ref: ReservationRef): string {
+  const base = (process.env.PUBLIC_URL || '').replace(/\/$/, '')
+  if (!base) {
+    deps.logger?.warn('PUBLIC_URL no configurado: el correo de reserva al hotel sale sin enlace al panel', {
+      reservationId: ref.id, hotelId: ref.hotelId,
+    })
+    return ''
+  }
+  return `${base}${reservationPanelLink(ref.id)}`
 }
 
 /**
@@ -360,9 +371,9 @@ function resolveHotelRecipient(
 }
 
 function templateVariables(
-  ref: ReservationRef,
   a: Announcement,
   s: ReservationSummary,
+  panelLink: string,
   hotelName: string,
   platformName: string,
 ): NotificationInput['variables'] {
@@ -386,7 +397,7 @@ function templateVariables(
     total_amount: s.total,
     payment_status: a.paymentStatus ?? '',
     channel_name: a.channelName ?? '',
-    panel_link: absolutePanelLink(ref.id),
+    panel_link: panelLink,
     platform_name: platformName,
   }
 }
@@ -429,6 +440,7 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
     if (to) {
       const identity = await deps.platformIdentity().catch(() => null)
       const platformName = identity?.platformName?.trim() ?? ''
+      const panelLink = absolutePanelLink(deps, ref)
       try {
         if (a.summary && a.event && typeof deps.emailSender.enqueueNotification === 'function') {
           // Plantilla por origen (editable por hotel en auto_messages, default en código).
@@ -436,8 +448,10 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
             to,
             hotelId: ref.hotelId,
             event: a.event,
+            // El correo es al STAFF del hotel y no hay idioma de hotel en el modelo (`hotels` no lo
+            // tiene; `booking_config.language` es el del widget para el huésped): queda 'es'.
             language: 'es',
-            variables: templateVariables(ref, a, a.summary, String(hotel?.name || '').trim(), platformName),
+            variables: templateVariables(a, a.summary, panelLink, String(hotel?.name || '').trim(), platformName),
             relatedType: a.relatedType,
             relatedId: ref.id,
           })
@@ -448,7 +462,7 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
             `<p><strong>${esc(a.title)}</strong></p>`,
             a.html,
             a.paymentStatus !== undefined ? `<p>Estado del pago: ${esc(a.paymentStatus)}</p>` : '',
-            `<p><a href="${esc(link)}">Abrir la reserva en el panel</a></p>`,
+            panelLink ? `<p><a href="${esc(panelLink)}">Abrir la reserva en el panel</a></p>` : '',
             platformName ? `<p style="color:#888;font-size:12px">Enviado por ${esc(platformName)}</p>` : '',
           ].filter(Boolean).join('\n')
           await deps.emailSender.enqueue({

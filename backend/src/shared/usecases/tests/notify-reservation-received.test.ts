@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'bun:test'
-import { silentLogger } from 'arckode-framework/testing'
 import { getCodeDefault } from '../../../services/notification-defaults'
 import { renderTemplate } from '../../../services/notification-renderer'
 import {
@@ -36,6 +35,19 @@ const RESERVA = {
 }
 const GUEST = { id: 'g1', hotelId: 'h1', name: 'Ana Pérez', email: 'ana@example.com', phone: '+34 600 000 000' }
 
+/** Corre `fn` con `PUBLIC_URL` fijado (o borrado si `url` es undefined) y lo restaura. */
+async function withPublicUrl<T>(url: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.PUBLIC_URL
+  if (url === undefined) delete process.env.PUBLIC_URL
+  else process.env.PUBLIC_URL = url
+  try {
+    return await fn()
+  } finally {
+    if (prev === undefined) delete process.env.PUBLIC_URL
+    else process.env.PUBLIC_URL = prev
+  }
+}
+
 interface Over {
   hotel?: any
   reservas?: any[]
@@ -57,6 +69,7 @@ function harness(over: Over = {}) {
   /** Lo encolado por `enqueueNotification` (plantilla `reservation_new_staff`). */
   const notified: any[] = []
   const pushed: any[] = []
+  const warns: Array<{ msg: string; meta?: Record<string, unknown> }> = []
   const reservas = over.reservas ?? [RESERVA]
   const users = over.users ?? USERS
   const emailSender = over.noEmail
@@ -96,9 +109,9 @@ function harness(over: Over = {}) {
         }
       : null,
     platformIdentity: async () => PLATFORM,
-    logger: silentLogger(),
+    logger: { warn: (msg: string, meta?: Record<string, unknown>) => { warns.push({ msg, meta }) } },
   }
-  return { deps, created, sent, notified, pushed }
+  return { deps, created, sent, notified, pushed, warns }
 }
 
 describe('findReservationViewers', () => {
@@ -170,7 +183,6 @@ describe('notifyReservationReceived — web', () => {
     expect(mail.variables.regime).toBe('breakfast')
     expect(mail.variables.total_amount).toBe('150.00 USD')
     expect(mail.variables.payment_status).toBe('Pendiente de pago')
-    expect(mail.variables.panel_link).toContain('/panel/reservations?open=r1')
     // `notes` viene con " | " del motor: en `{details}` va una línea por nota, texto plano.
     expect(mail.variables.details).toBe(
       'Reserva desde widget público\nPedido especial: cuna cerca de la ventana\nTotal: 150.00 (subtotal 150.00 + tax 0.00)',
@@ -178,16 +190,40 @@ describe('notifyReservationReceived — web', () => {
   })
 
   it('panel_link es absoluto con PUBLIC_URL (sin barra final duplicada)', async () => {
-    const prev = process.env.PUBLIC_URL
-    process.env.PUBLIC_URL = 'https://app.prueba.test/'
-    try {
+    await withPublicUrl('https://app.prueba.test/', async () => {
       const h = harness()
       await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1' }, 'web')
       expect(h.notified[0].variables.panel_link).toBe('https://app.prueba.test/panel/reservations?open=r1')
-    } finally {
-      if (prev === undefined) delete process.env.PUBLIC_URL
-      else process.env.PUBLIC_URL = prev
-    }
+      expect(h.warns.some((w) => /PUBLIC_URL/.test(w.msg))).toBe(false)
+    })
+  })
+
+  // Un `href="/panel/reservations?open=…"` relativo dentro de un correo no abre nada: sin base
+  // pública el enlace se omite y queda rastro en el log, en vez de un botón muerto.
+  it('sin PUBLIC_URL: panel_link vacío (nunca relativo) y warn en el log', async () => {
+    await withPublicUrl(undefined, async () => {
+      const h = harness()
+      await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1' }, 'web')
+      expect(h.notified[0].variables.panel_link).toBe('')
+      expect(h.warns.some((w) => /PUBLIC_URL/.test(w.msg) && w.meta?.reservationId === 'r1')).toBe(true)
+      // La campanita y el push siguen con el link relativo: adentro de la app sí abre.
+      expect(h.created[0].metadata.link).toBe('/panel/reservations?open=r1')
+    })
+  })
+
+  it('sin PUBLIC_URL el HTML crudo (fake viejo) sale sin el botón al panel', async () => {
+    await withPublicUrl(undefined, async () => {
+      const h = harness({ legacyEmail: true })
+      await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1' }, 'web')
+      expect(h.sent).toHaveLength(1)
+      expect(h.sent[0].html).not.toContain('Abrir la reserva en el panel')
+      expect(h.sent[0].html).not.toContain('href=')
+    })
+    await withPublicUrl('https://app.prueba.test', async () => {
+      const h = harness({ legacyEmail: true })
+      await notifyReservationReceived(h.deps, { id: 'r1', hotelId: 'h1' }, 'web')
+      expect(h.sent[0].html).toContain('<a href="https://app.prueba.test/panel/reservations?open=r1">Abrir la reserva en el panel</a>')
+    })
   })
 
   it('hasCheckout=false (hotel sin pasarela) → payment_status "SIN PAGO — contactar al huésped"', async () => {

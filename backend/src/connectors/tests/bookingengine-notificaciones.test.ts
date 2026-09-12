@@ -6,13 +6,19 @@
 // `accumulateSockets` del proyecto y se verifica que un evento los corre a TODOS — un aviso que
 // falla no puede dejar sin correr al que asienta la plata.
 
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import type { ConnectorContext } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { reservasBookingengineConnector } from '../reservas-bookingengine'
 import { bookingenginePaymentsConnector } from '../bookingengine-payments'
 import { bookingengineNotificacionesConnector } from '../bookingengine-notificaciones'
+
+// El enlace al panel del correo se arma con PUBLIC_URL; sin ella el usecase lo omite (ver
+// notify-reservation-received.test.ts). Acá se fija para que las aserciones del link sean estables.
+let prevPublicUrl: string | undefined
+beforeAll(() => { prevPublicUrl = process.env.PUBLIC_URL; process.env.PUBLIC_URL = 'https://panel.prueba.test' })
+afterAll(() => { if (prevPublicUrl === undefined) delete process.env.PUBLIC_URL; else process.env.PUBLIC_URL = prevPublicUrl })
 
 const RESERVATION = {
   id: 'res-1', hotelId: 'h1', roomId: 'rm1', guestId: 'g1', status: 'confirmed',
@@ -186,7 +192,7 @@ describe('bookingengineNotificacionesConnector — wiring con los otros connecto
     expect(mail.variables.guest_email).toBe('ana@example.com')
     expect(mail.variables.guest_phone).toBe('+1 809 000 0000')
     expect(mail.variables.room).toBe('101')
-    expect(mail.variables.panel_link).toContain('/panel/reservations?open=res-1')
+    expect(mail.variables.panel_link).toBe('https://panel.prueba.test/panel/reservations?open=res-1')
     // Sin `hasCheckout` en el evento el estado queda como antes: pendiente.
     expect(mail.variables.payment_status).toBe('Pendiente de pago')
     expect(calls.notifications).toHaveLength(2)
@@ -246,7 +252,7 @@ describe('bookingengineNotificacionesConnector — wiring con los otros connecto
     expect(calls.emails[0].to).toBe('recepcion@palma.com')
     expect(calls.emails[0].subject).toBe('[Plataforma] Nueva reserva web — Ana Pérez')
     expect(calls.emails[0].relatedId).toBe('res-1')
-    expect(calls.emails[0].html).toContain('/panel/reservations?open=res-1')
+    expect(calls.emails[0].html).toContain('href="https://panel.prueba.test/panel/reservations?open=res-1"')
     expect(calls.emails[0].html).toContain('Estado del pago: Pendiente de pago')
   })
 
