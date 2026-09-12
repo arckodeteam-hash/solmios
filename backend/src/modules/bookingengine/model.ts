@@ -103,7 +103,9 @@ export const UpsellModel: ModelDefinition = {
     description: { type: 'text' },
     // Precio en la moneda del hotel. >=0 validado en el usecase.
     price: { type: 'number', required: true },
-    // 'per_room' | 'per_person' | 'per_stay' — cómo se calcula al multiplicar por qty/huésped.
+    // 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night' — cómo se
+    // multiplica (qty/huésped/noche). Los dos últimos son de MR-10 (#275); enum cerrado en
+    // `types.ts#UpsellKind`, matemática en `usecases/upsell-pricing.ts`.
     kind: { type: 'string', required: true },
     // Toggle visible desde el panel sin borrar. Default 1 (activo).
     active: { type: 'boolean', default: true },

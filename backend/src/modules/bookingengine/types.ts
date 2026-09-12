@@ -307,8 +307,14 @@ export interface PublicHotelInfoDTO {
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────
-/** Forma de cobro del upsell: cómo se multiplica al sumarlo al total de la reserva. */
-export type UpsellKind = 'per_room' | 'per_person' | 'per_stay'
+/** Forma de cobro del upsell: cómo se multiplica al sumarlo al total de la reserva.
+ *  - `per_room`   → precio × cantidad (tope: habitaciones de la reserva).
+ *  - `per_person` → precio × cantidad (tope: personas sin bebés).
+ *  - `per_stay`   → precio × 1 (cantidad fija 1).
+ *  - `per_night`  → precio × noches (MR-10 #275; cantidad fija 1, el "×" lo pone la estadía).
+ *  - `per_person_per_night` → precio × personas × noches (MR-10 #275; cantidad fija 1).
+ *  La matemática vive en UN solo lugar: `usecases/upsell-pricing.ts#resolveUpsellLines`. */
+export type UpsellKind = 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night'
 
 /** DTO de lectura. Espeja los campos persistidos en `upsells` (model.ts). */
 export interface UpsellDTO {

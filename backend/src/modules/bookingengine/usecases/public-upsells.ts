@@ -3,8 +3,9 @@
 // Lista upsells activos del hotel (sub-dominio de bookingengine, F2 2.3). Público, sin auth,
 // rate-limited. El widget lo consume en el step de upsells (desayuno, transfer, late checkout).
 //
-// Filtrado opcional por `?kind=` ('per_room' | 'per_person' | 'per_stay'). Sin el param, devuelve
-// todos los activos. Orden: `sortOrder` ASC, desempate por `createdAt` ASC (mismo criterio que
+// Filtrado opcional por `?kind=` ('per_room' | 'per_person' | 'per_stay' | 'per_night' |
+// 'per_person_per_night' — los dos últimos desde MR-10 #275). Sin el param, devuelve todos los
+// activos. Orden: `sortOrder` ASC, desempate por `createdAt` ASC (mismo criterio que
 // `upsells-crud.list` del admin, así widget y panel ven el mismo orden).
 //
 // Anti-enumeración: mismo 404 para "no existe" y "no activo" (igual que public-hotel-info y
@@ -23,7 +24,7 @@ export interface PublicUpsellsDeps {
 
 /**
  * @param slug   Slug del hotel (URL param).
- * @param kind   Filtro opcional por kind ('per_room' | 'per_person' | 'per_stay').
+ * @param kind   Filtro opcional por kind (cualquier valor de `UpsellKind`, ver types.ts).
  */
 export async function getPublicUpsells(
   deps: PublicUpsellsDeps,
