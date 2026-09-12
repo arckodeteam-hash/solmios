@@ -18,10 +18,12 @@ Fuentes: `backend/src/modules/reservas/` (model, types, usecases, index),
 
 El sistema MUST rechazar (`409 ConflictError`) crear o editar una reserva cuya habitación
 se solape en fechas con otra reserva activa. La validación la hace el BACKEND en toda
-escritura (`usecases/availability.ts` → `assertRoomAvailable`, usada por create y update),
-sin excluir `cancelled`/`no_show`, permitiendo back-to-back el mismo día
-(checkOut de una = checkIn de la otra). El mensaje de conflicto MUST incluir las fechas y
-el id de la reserva que ocupa (`availability.ts:36`).
+escritura: primero el TIPO (`shared/usecases/type-availability.ts` → `availableOfType`, 409
+`type_sold_out`, ver REQ-HAC-02) y después la unidad (`usecases/assign-room.ts` →
+`assertNoRoomConflict`, 409 `room_overlap`, usada por create, reschedule y el PUT/asignación),
+excluyendo `cancelled`/`no_show`, permitiendo back-to-back el mismo día
+(checkOut de una = checkIn de la otra). El 409 por unidad MUST incluir en `details` las fechas
+(`from`/`to`) y el id/localizador de la reserva que ocupa (`conflictReservationId`, `locator`).
 
 #### Scenario: Solapamiento real rechazado
 

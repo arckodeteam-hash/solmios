@@ -137,6 +137,18 @@ describe('ingesta OTA — applyBookingRevision elige la unidad libre del tipo (R
     expect(created[0].notes).not.toContain('OVERBOOKING')
   })
 
+  it('tipo agotado por 2 reservas SIN unidad (roomId null) → se crea igual con nota ⚠ OVERBOOKING', async () => {
+    const created: any[] = []
+    const orm = ormCon([
+      { id: 'u1', roomId: null, roomType: 'twin', status: 'confirmed', checkIn: '2026-10-09', checkOut: '2026-10-11' },
+      { id: 'u2', roomId: null, roomType: 'twin', status: 'confirmed', checkIn: '2026-10-10', checkOut: '2026-10-12' },
+    ], created)
+    const result = await applyBookingRevision({ orm, channex, hotelId: 'h1', apiKey: 'k', cancelReservation: noopCancel }, { ...DTO })
+    expect(result).toEqual({ created: true })
+    expect(created[0]).toMatchObject({ roomId: 'r1', roomType: 'twin' })
+    expect(created[0].notes).toContain('⚠ OVERBOOKING: sin unidad libre de twin')
+  })
+
   it('las 2 twin ocupadas → igual se crea (nunca dropea) en r1 con nota ⚠ OVERBOOKING', async () => {
     const created: any[] = []
     const orm = ormCon([

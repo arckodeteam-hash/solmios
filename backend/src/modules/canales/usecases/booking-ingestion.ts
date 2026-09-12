@@ -172,7 +172,9 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
       if (chosen && localType && dto.checkIn && dto.checkOut) {
         try {
           const avail = await availableOfType(typeAvailabilityPortFromOrm(orm), hotelId, localType, dto.checkIn, dto.checkOut)
-          const free = avail.sellableRooms.find((r) => !avail.busyRoomIds.has(String(r.id)))
+          // `available` cuenta también las reservas del tipo SIN unidad: con el tipo agotado por
+          // ellas, una habitación sin reserva asignada no está "libre" — es overbooking igual.
+          const free = avail.available >= 1 ? avail.sellableRooms.find((r) => !avail.busyRoomIds.has(String(r.id))) : undefined
           if (free) chosen = free
           else payload.notes = [payload.notes, `⚠ OVERBOOKING: sin unidad libre de ${localType} para esas fechas`].filter(Boolean).join(' | ')
         } catch {
