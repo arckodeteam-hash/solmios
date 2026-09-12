@@ -24,6 +24,7 @@ import { paymentStateBadge } from '@/utils/payment-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -720,6 +721,44 @@ async function onCancelled() {
   emit('changed')
 }
 
+// ── #271 MR-06 — Aprobar / Rechazar desde el detalle (reserva pagada con "confirmación
+// instantánea" apagada). Mismos endpoints que los botones de la fila en pages/reservations:
+// aprobar solo mueve `approvalStatus`; rechazar cancela + reembolsa 100% por Stripe (el grupo
+// entero si tiene `groupId`) + email al huésped con el motivo. `changed` refresca al padre.
+const awaitingApproval = computed(() => d.value?.approvalStatus === 'pending')
+const approving = ref(false)
+const rejecting = ref(false)
+const showReject = ref(false)
+async function approveReservation() {
+  if (!d.value || approving.value) return
+  approving.value = true
+  try {
+    await ReservationService.approve(d.value.id)
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} aprobada`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al aprobar la reserva')
+  } finally {
+    approving.value = false
+  }
+}
+async function rejectReservation(reason: string) {
+  if (!d.value || rejecting.value) return
+  rejecting.value = true
+  try {
+    const res = await ReservationService.reject(d.value.id, reason)
+    showReject.value = false
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} rechazada · reembolsados ${money(Number(res.refundedAmount ?? 0), d.value.currency || undefined)}`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al rechazar la reserva')
+  } finally {
+    rejecting.value = false
+  }
+}
+
 /**
  * Cobro manual guardado (REQ-RWP-06). Se recarga el detalle en silencio para que el badge
  * `payment-state-badge`, "Pendiente de cobro" y el "Historial de cobros" (con `Registró:`)
@@ -1127,6 +1166,29 @@ function facturar() {
     <!-- ═══ BODY: masonry de una sola vista (sin pasos, sin columnas fijas) — las tarjetas
          fluyen para no dejar huecos cuando una condicional no aplica (área de impresión) ═══ -->
     <div v-if="d" :class="'print-' + printMode">
+      <!-- #271 MR-06 — franja de revisión: la reserva está pagada y ocupa la habitación, pero el
+           hotel todavía no la aprobó ni rechazó (confirmación instantánea apagada). -->
+      <div v-if="awaitingApproval && can('reservations','edit')" data-testid="modal-approval-strip"
+        class="print:hidden flex items-center justify-between gap-3 flex-wrap bg-gold/10 border-b-2 border-gold/40 px-5 py-3">
+        <div class="flex items-center gap-2.5">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
+            <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
+          </span>
+          <span class="text-xs text-text-secondary">Reserva pagada pendiente de tu revisión: si la rechazás se reembolsa todo por Stripe.</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button data-testid="modal-approve" @click="approveReservation" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-gold/15 text-gold rounded-lg text-xs font-bold cursor-pointer hover:bg-gold/25 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+            {{ approving ? 'Aprobando…' : 'Aprobar' }}
+          </button>
+          <button data-testid="modal-reject" @click="showReject = true" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-coral/10 text-coral rounded-lg text-xs font-bold cursor-pointer hover:bg-coral/20 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            {{ rejecting ? 'Rechazando…' : 'Rechazar' }}
+          </button>
+        </div>
+      </div>
       <div class="rm-cards rm-print-area p-5 columns-1 lg:columns-2 lg:gap-5">
 
             <!-- Datos de la Reserva -->
@@ -1990,6 +2052,12 @@ function facturar() {
        retenido), así que hay que ver el cálculo y dar un motivo antes de confirmar. -->
   <CancelReservationModal :open="showCancel" :reservation="cancellable"
     @close="showCancel = false" @cancelled="onCancelled" />
+
+  <!-- #271 MR-06 — Rechazar (reserva pendiente de aprobación): apilado igual que Anular. Motivo
+       libre (≥10, lo lee el huésped por email) y monto a reembolsar a la vista antes de confirmar. -->
+  <RejectReservationModal v-if="showReject && d" :guest-name="d.guest?.name ?? ''" :refund-amount="Number(d.paidAmount ?? 0)"
+    :currency="d.currency || undefined" :is-group="!!d.groupId" :loading="rejecting"
+    @confirm="rejectReservation" @close="showReject = false" />
 
   <!-- Registrar pago manual (REQ-RWP-06, #249): apilado igual que Anular. Al guardar se recarga
        el detalle (badge de pago + "Historial de cobros" con quién lo registró) y se avisa al
