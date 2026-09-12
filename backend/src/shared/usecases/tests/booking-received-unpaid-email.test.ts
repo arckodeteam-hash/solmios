@@ -14,10 +14,16 @@ const RESERVA = {
 }
 const GUEST = { id: 'g1', hotelId: 'h1', name: 'E2E Huésped', email: 'huesped@example.com' }
 
-function harness(over: { reserva?: any; guest?: any; hotel?: any; sender?: any; platform?: any } = {}) {
+function harness(over: { reserva?: any; guest?: any; hotel?: any; sender?: any; platform?: any; hermanas?: any[] } = {}) {
   const sent: any[] = []
   const warns: unknown[] = []
+  const findManyCalls: unknown[] = []
   const repo = (row: any) => ({ findById: async () => row, findMany: async () => (row ? [row] : []) })
+  const reserva = over.reserva === undefined ? RESERVA : over.reserva
+  const reservationsRepo = {
+    findById: async () => reserva,
+    findMany: async (where: unknown) => { findManyCalls.push(where); return over.hermanas ?? (reserva ? [reserva] : []) },
+  }
   // silentLogger() es una instancia (métodos en el prototype): no se puede spreadear, se envuelve.
   const base = silentLogger()
   const logger: any = {
@@ -26,7 +32,7 @@ function harness(over: { reserva?: any; guest?: any; hotel?: any; sender?: any; 
   }
   const deps: any = {
     emailSender: over.sender ?? { enqueueNotification: async (i: any) => { sent.push(i); return 'q1' } },
-    reservationsRepo: repo(over.reserva === undefined ? RESERVA : over.reserva),
+    reservationsRepo,
     hotelRepo: repo(over.hotel === undefined ? HOTEL : over.hotel),
     guestRepo: repo(over.guest === undefined ? GUEST : over.guest),
     logger,
@@ -34,7 +40,7 @@ function harness(over: { reserva?: any; guest?: any; hotel?: any; sender?: any; 
       ? { platformIdentity: async () => ({ platformName: 'SolmiOS Test' }) }
       : over.platform === null ? {} : { platformIdentity: over.platform }),
   }
-  return { sent, warns, run: () => sendBookingReceivedUnpaidEmail(deps, RESERVA.id) }
+  return { sent, warns, findManyCalls, run: () => sendBookingReceivedUnpaidEmail(deps, RESERVA.id) }
 }
 
 describe('guard shouldSendReceivedUnpaidEmail', () => {
@@ -79,6 +85,40 @@ describe('correo "recibimos tu pedido" sin pasarela', () => {
     expect(v.total_amount).toBe('76.70 USD')
     expect(v.hotel_phone).toBe('+1 809 555 0100')
     expect(v.hotel_email).toBe('info@palma.com')
+  })
+
+  // Grupo sin pasarela: el huésped pidió 3 habitaciones; el acuse con el total de UNA (la líder)
+  // le decía que debía menos de lo que va a cobrarle el hotel.
+  describe('reserva de grupo', () => {
+    const LIDER = { ...RESERVA, groupId: 'grp1', totalAmount: 100 }
+    const HERMANAS = [
+      LIDER,
+      { ...RESERVA, id: 'res-2', guestId: null, groupId: 'grp1', totalAmount: 120 },
+      { ...RESERVA, id: 'res-3', guestId: null, groupId: 'grp1', totalAmount: 80 },
+    ]
+
+    it('total_amount suma las 3 hermanas del grupo, consultadas por hotelId + groupId', async () => {
+      const h = harness({ reserva: LIDER, hermanas: HERMANAS }); await h.run()
+      expect(h.findManyCalls).toEqual([{ hotelId: 'h1', groupId: 'grp1' }])
+      expect(h.sent[0].variables.total_amount).toBe('300.00 USD')
+      // El localizador sigue siendo el de la líder: es el que el hotel busca.
+      expect(h.sent[0].variables.locator).toBe('9503bb41')
+    })
+
+    it('una hermana cancelada no entra en el total', async () => {
+      const h = harness({
+        reserva: LIDER,
+        hermanas: [...HERMANAS, { ...RESERVA, id: 'res-4', groupId: 'grp1', status: 'cancelled', totalAmount: 500 }],
+      })
+      await h.run()
+      expect(h.sent[0].variables.total_amount).toBe('300.00 USD')
+    })
+
+    it('sin groupId no consulta hermanas', async () => {
+      const h = harness(); await h.run()
+      expect(h.findManyCalls).toEqual([])
+      expect(h.sent[0].variables.total_amount).toBe('76.70 USD')
+    })
   })
 
   it('sin platformIdentity, platform_name va vacío (no hardcodea el nombre)', async () => {

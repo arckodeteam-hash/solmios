@@ -20,6 +20,7 @@ import type { NotificationLanguage } from '../../services/notification-defaults'
 import { resolveGuestLanguage } from '../../services/guest-language'
 import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-schedule'
 import type { PlatformIdentity } from '../utils/platform-identity'
+import { reservationGroupRows } from './reservation-group-rows'
 
 export interface BookingReceivedUnpaidEmailDeps {
   emailSender: EmailSender
@@ -73,6 +74,10 @@ export async function sendBookingReceivedUnpaidEmail(
     const language = resolveGuestLanguage(guest) as NotificationLanguage
     const currency = String(reservation.currency || 'USD').toUpperCase()
     const platformName = deps.platformIdentity ? String((await deps.platformIdentity())?.platformName ?? '') : ''
+    // Grupo (varias habitaciones): el huésped pidió TODO el grupo, así que el total del acuse es
+    // la suma de las hermanas vivas, no el de la líder sola (misma regla que booking-paid-email).
+    const rows = await reservationGroupRows(reservationsRepo, reservation, logger, 'booking-received-unpaid-email')
+    const total = rows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0)
 
     await emailSender.enqueueNotification({
       to,
@@ -89,7 +94,7 @@ export async function sendBookingReceivedUnpaidEmail(
         // Horario EFECTIVO: lo acordado con este huésped pisa el general del hotel.
         checkin_time: effectiveCheckInTime(reservation, hotel),
         checkout_time: effectiveCheckOutTime(reservation, hotel),
-        total_amount: money(reservation.totalAmount, currency),
+        total_amount: money(total, currency),
         locator: String(reservation.id ?? '').slice(0, 8),
         platform_name: platformName,
       },
