@@ -83,6 +83,14 @@ export function mapReservation(r: RawReservation): Reservation {
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
+    // MR-03 (#268) — régimen: `regime` (manual del panel) y el snapshot `mealPlan*` de la reserva
+    // web. Mismo bug histórico que `approvalStatus`: sin declararlos acá, el filtro "Régimen" y el
+    // badge del listado (`pages/reservations/index.vue`) leen `undefined` aunque el backend los mande.
+    regime: r.regime,
+    mealPlan: r.mealPlan ?? null,
+    mealPlanPriceMode: r.mealPlanPriceMode ?? null,
+    mealPlanUnitPrice: r.mealPlanUnitPrice ?? 0,
+    mealPlanTotal: r.mealPlanTotal ?? 0,
   } as Reservation
 }
 

@@ -257,6 +257,35 @@ describe('ReservationModal', () => {
     })
   })
 
+  // ── MR-03 (#268) — régimen reservado desde la web ─────────────────────────────────────────
+  // El backend persiste el snapshot (`mealPlan`, `mealPlanUnitPrice`, `mealPlanTotal`) y el modal
+  // lo explica sin re-cotizar: las personas se derivan de total ÷ (unitario × noches).
+  describe('régimen (MR-03)', () => {
+    const mealPlanRow = () => document.body.querySelector('[data-testid="reservation-meal-plan"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+
+    it('reserva web con media pensión cobrada por persona y noche: etiqueta + detalle + fila en el importe', async () => {
+      // 3 noches (01→04), 2 personas × 3 noches × 15 = 90
+      await open(detailFixture({ mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, regime: 'half_board' }))
+      expect(mealPlanRow()).toContain('Régimen: Media pensión (2 pers × 3 noches · US$90,00)')
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')?.textContent).toContain('US$90,00')
+    })
+
+    it('régimen incluido en la tarifa: "(incluido)" y sin fila de importe', async () => {
+      await open(detailFixture({ mealPlan: 'breakfast', mealPlanPriceMode: 'included', mealPlanUnitPrice: 0, mealPlanTotal: 0 }))
+      expect(mealPlanRow()).toContain('Régimen: Desayuno incluido (incluido)')
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')).toBeNull()
+    })
+
+    it('reserva vieja / del panel: cae al `regime` manual, y sin nada muestra "—"', async () => {
+      await open(detailFixture({ mealPlan: null, regime: 'all_inclusive' }))
+      expect(mealPlanRow()).toBe('Régimen: Todo incluido')
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ mealPlan: null, regime: undefined }))
+      expect(mealPlanRow()).toBe('Régimen: —')
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')).toBeNull()
+    })
+  })
+
   // ── 1. El saldo lo dicta el servidor ───────────────────────────────────────────────────────
   describe('saldo', () => {
     it('muestra el pendiente y el total cobrable que devolvió el backend', async () => {
