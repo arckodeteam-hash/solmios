@@ -15,7 +15,7 @@ import type { RepositoryAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { AbandonRecoveryService } from '../service'
 import type { AbandonRecoveryDeps } from '../service'
-import type { AbandonSweepConfig } from '../types'
+import type { AbandonEmailSender, AbandonSweepConfig } from '../types'
 import { DEFAULT_PENDING_TTL_MINUTES } from '../types'
 
 const log = silentLogger()
@@ -49,11 +49,14 @@ function makeRepo(opts: { rows?: any[]; byId?: Record<string, any> } = {}): Repo
   }
 }
 
-function makeEmailSender(captured: { to: string; subject: string; html: string }[]) {
+type CapturedEnqueue = { to: string; subject: string; html: string; hotelId: string; relatedType?: string; relatedId?: string }
+
+/** Double con la firma real de `EmailService.enqueue` (objeto + devuelve id de fila). */
+function makeEmailSender(captured: CapturedEnqueue[]): AbandonEmailSender {
   return {
-    enqueue: async (to: string, subject: string, html: string) => {
-      captured.push({ to, subject, html })
-      return { sent: true }
+    enqueue: async (input: CapturedEnqueue) => {
+      captured.push(input)
+      return 'email-row-1'
     },
   }
 }
