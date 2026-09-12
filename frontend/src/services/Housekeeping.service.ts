@@ -71,6 +71,16 @@ export interface VideoViewUrl {
   expiresInSeconds?: number
 }
 
+/**
+ * Ítem de la tarea `arrival_setup` (#274): lo que hay que dejar listo antes de la
+ * llegada. Mismo shape que el backend (housekeeping/types.ts); nace de la reserva.
+ */
+export type SetupItem =
+  | { type: 'crib'; qty: number }
+  | { type: 'amenity'; name: string; qty: number }
+  | { type: 'regime'; name: string }
+  | { type: 'request'; text: string }
+
 export interface HousekeepingTask {
   id: string
   roomId: string
@@ -96,6 +106,10 @@ export interface HousekeepingTask {
   /** Hora en que el supervisor estuvo en la habitación (foto de presencia). */
   supOnSiteTime?: string
   cleaningItems?: any
+  /** Qué preparar para la llegada (#274). Solo en `arrival_setup`; tareas viejas lo traen null. */
+  setupItems?: SetupItem[] | null
+  /** Reserva que originó la tarea `arrival_setup` (#274). */
+  reservationId?: string | null
   createdAt: string
   updatedAt: string
 }
