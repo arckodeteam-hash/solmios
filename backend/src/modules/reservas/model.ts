@@ -6,7 +6,16 @@ export const ReservasModel: ModelDefinition = {
   fields: {
     id: { type: 'string', required: true },
     guestId: { type: 'string' },
-    roomId: { type: 'string', required: true },
+    // REQ-HAC-01 (#256/#258) — La habitación se asigna al check-in, no al reservar: `roomId` es
+    // nullable (una reserva sin habitación es válida; `scripts/relax-reservations-roomid.ts` quita el
+    // NOT NULL de las bases viejas). Lo que se vende es el TIPO: `roomType` = `rooms.type` (vacío en
+    // filas anteriores a #258 hasta que corra `scripts/backfill-reservation-room-type.ts`).
+    // `roomAssignedAt`/`roomAssignedBy` (users.id) registran quién y cuándo asignó la unidad
+    // (REQ-HAC-03). Anti-patrón ORM D5: declarados acá, case-sensitive, o se descartan al persistir.
+    roomId: { type: 'string' },
+    roomType: { type: 'string', indexed: true },
+    roomAssignedAt: { type: 'string' },
+    roomAssignedBy: { type: 'string' },
     hotelId: { type: 'string', required: true, indexed: true },
     checkIn: { type: 'string', required: true },
     checkOut: { type: 'string', required: true },
