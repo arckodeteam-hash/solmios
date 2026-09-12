@@ -298,6 +298,12 @@ const messages = {
     'confirm.expiredTitle': 'Tu reserva venció porque no se completó el pago',
     'confirm.expiredBody': 'La habitación volvió a estar disponible. Podés hacer una nueva reserva.',
     'confirm.expiredCta': 'Volver a reservar',
+    // #271 (MR-06) — plazo de revisión del hotel y rama "rechazada" de la confirmación pública.
+    'confirm.approvalDeadline': 'El hotel revisará su reserva en las próximas {hours} h',
+    'confirm.rejectedTitle': 'El hotel no pudo confirmar su reserva',
+    'confirm.rejectedRefund': 'Se reembolsó {amount} al medio de pago original',
+    'confirm.rejectedNoRefund': 'El hotel se pondrá en contacto por la devolución',
+    'confirm.rejectedReason': 'Motivo:',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Código de acceso',
     'confirm.backHome': 'Volver al hotel',
@@ -572,6 +578,12 @@ const messages = {
     'confirm.expiredTitle': 'Your booking expired because the payment was not completed',
     'confirm.expiredBody': 'The room is available again. You can make a new booking.',
     'confirm.expiredCta': 'Book again',
+    // #271 (MR-06) — hotel review deadline and "rejected" branch of the public confirmation.
+    'confirm.approvalDeadline': 'The hotel will review your booking within the next {hours} h',
+    'confirm.rejectedTitle': 'The hotel could not confirm your booking',
+    'confirm.rejectedRefund': '{amount} was refunded to the original payment method',
+    'confirm.rejectedNoRefund': 'The hotel will contact you about the refund',
+    'confirm.rejectedReason': 'Reason:',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Access code',
     'confirm.backHome': 'Back to hotel',
@@ -844,6 +856,12 @@ const messages = {
     'confirm.expiredTitle': 'Sua reserva expirou porque o pagamento não foi concluído',
     'confirm.expiredBody': 'O quarto voltou a ficar disponível. Você pode fazer uma nova reserva.',
     'confirm.expiredCta': 'Reservar novamente',
+    // #271 (MR-06) — prazo de revisão do hotel e ramo "recusada" da confirmação pública.
+    'confirm.approvalDeadline': 'O hotel revisará sua reserva nas próximas {hours} h',
+    'confirm.rejectedTitle': 'O hotel não pôde confirmar sua reserva',
+    'confirm.rejectedRefund': 'Foi reembolsado {amount} ao meio de pagamento original',
+    'confirm.rejectedNoRefund': 'O hotel entrará em contato sobre a devolução',
+    'confirm.rejectedReason': 'Motivo:',
     // F3 3.17 — booking-confirmation standalone (página pública post-redirect Stripe).
     'confirm.accessCode': 'Código de acesso',
     'confirm.backHome': 'Voltar ao hotel',

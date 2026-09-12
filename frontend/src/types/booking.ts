@@ -580,14 +580,21 @@ export interface PublicReservation {
   promoCode?: string | null
   /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación
    *  instantánea" y todavía no revisó esta reserva. null = no aplica. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #271 (MR-06) — plazo (horas) en que el hotel se compromete a revisar una reserva
+   *  pendiente. Default 24 si el hotel no lo configuró. */
+  approvalDeadlineHours?: number
+  /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: el motivo que el hotel
+   *  escribió para el huésped. `null` en cualquier otro estado. */
+  rejectionReason?: string | null
   /** #266 (MR-01) — motivo de cancelación. 'payment_timeout' = venció sin completar el pago
    *  (cron / checkout.session.expired): la confirmación muestra "venció, volvé a reservar". */
   cancellationReason?: string | null
   /** #272 (MR-07) — snapshot de la cancelación y estado REAL del reembolso en Stripe.
    *  `refundStatus`: 'none' = sin reembolso que procesar (o reserva vieja), 'pending' = en curso,
    *  'done' = la pasarela lo aceptó, 'failed' = falló y el hotel lo reintenta desde el panel.
-   *  Ausentes en reservas canceladas antes de esta feature. */
+   *  Ausentes en reservas canceladas antes de esta feature. `refundAmount` es siempre número
+   *  (0 sin nada que devolver); en un rechazo del hotel (#271 MR-06) es el 100% de lo cobrado. */
   cancellationFee?: number
   refundAmount?: number
   refundStatus?: PublicRefundStatus

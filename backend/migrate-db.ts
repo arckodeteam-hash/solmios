@@ -1203,6 +1203,8 @@ async function createTablesBlock3(): Promise<void> {
   // #266 — Vencimiento de pago (ISO; NULL = no vence) y clave de idempotencia del widget.
   await addColumnIfMissing("reservations", "paymentDeadlineAt", "TEXT")
   await addColumnIfMissing("reservations", "idempotencyKey", "TEXT")
+  // #271 MR-06 — Último recordatorio de aprobación pendiente enviado al hotel (dedup del cron).
+  await addColumnIfMissing("reservations", "approvalReminderAt", "TEXT")
   // #266 — La misma idempotencyKey no puede crear dos reservas en el mismo hotel. El ORM no crea
   // UNIQUE compuesto: índice único idempotente, identificadores SIN comillas (portable SQLite + PG,
   // mismo criterio que idx_configuration_hotel_key). Los NULL (reservas del panel / previas a #266)
@@ -1218,6 +1220,8 @@ async function createTablesBlock3(): Promise<void> {
   await addColumnIfMissing('booking_config', 'pendingPaymentTtlHours', 'INTEGER')
   // #266 — Minutos para completar el pago (15–1440; NULL → 60 en el usecase).
   await addColumnIfMissing('booking_config', 'pendingTtlMinutes', 'INTEGER')
+  // #271 MR-06 — Horas que el hotel se da para aprobar/rechazar una reserva pendiente (NULL → 24).
+  await addColumnIfMissing('booking_config', 'approvalDeadlineHours', 'INTEGER')
 
   // CREATE: reservation_addons (F3 match-misterplan — otros servicios y descuentos por reserva).
   await exec(`CREATE TABLE IF NOT EXISTS reservation_addons (

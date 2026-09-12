@@ -5,7 +5,7 @@ import { getCodeDefault, NOTIFICATION_DEFAULTS } from './notification-defaults'
 
 describe('notification-defaults (spec 11.1.6)', () => {
   it('cada evento tiene default en es con subject y body no vacíos', () => {
-    for (const event of ['reservation_confirmed', 'reservation_presale', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder'] as const) {
+    for (const event of ['reservation_confirmed', 'reservation_presale', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder', 'reservation_approved', 'reservation_rejected'] as const) {
       const d = getCodeDefault(event, 'es')
       expect(d.subject.length).toBeGreaterThan(0)
       expect(d.body.length).toBeGreaterThan(0)
@@ -34,7 +34,7 @@ describe('notification-defaults (spec 11.1.6)', () => {
   })
 
   it('NOTIFICATION_DEFAULTS registra todos los eventos × 3 idiomas', () => {
-    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'reservation_confirmed', 'reservation_presale', 'review_request'])
+    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_approved', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'reservation_confirmed', 'reservation_presale', 'reservation_rejected', 'review_request'])
     for (const event of Object.keys(NOTIFICATION_DEFAULTS)) {
       const langs = Object.keys((NOTIFICATION_DEFAULTS as any)[event])
       expect(langs.sort()).toEqual(['en', 'es', 'pt'])

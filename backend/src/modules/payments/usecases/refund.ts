@@ -1,4 +1,4 @@
-// payments/usecases/refund.ts — Devolución de un cobro con tarjeta.
+// payments/usecases/refund.ts — Devolución de un cobro con tarjeta (o por Checkout web).
 //
 // Una devolución NO borra ni edita el cobro original: asienta un `payment` nuevo de tipo `refund`.
 // El rastro de los dos movimientos es lo que permite conciliar contra el extracto del banco, donde
@@ -25,9 +25,11 @@ export async function refundPayment(
 ): Promise<PaymentDTO> {
   const payment = await deps.crud.getById(paymentId, user?.id, user?.role)
   if (payment.status !== 'completed') throw new ValidationError('Payment not completed')
-  // `card` y `link` son los dos métodos que cobra Stripe: el widget público asienta `method:'link'`
-  // (shared/usecases/post-booking-payment.ts) con el id de la Checkout Session en `stripeSessionId`.
-  if (payment.method !== 'card' && payment.method !== 'link') throw new ValidationError('Only card payments can be refunded via Stripe')
+  // #271 MR-06: `link` es el cobro del motor web (shared/usecases/post-booking-payment.ts):
+  // también es un cargo real en Stripe, sólo que su referencia es la Checkout Session.
+  if (payment.method !== 'card' && payment.method !== 'link') {
+    throw new ValidationError('Only card or checkout-link payments can be refunded via Stripe')
+  }
   // El reembolso sale de la cuenta DEL HOTEL que cobró, no de una cuenta global.
   if (!(await deps.stripe.isConfigured(payment.hotelId))) {
     throw new ValidationError('El hotel no tiene pasarela de pago configurada')
@@ -39,8 +41,9 @@ export async function refundPayment(
   // (openspec `fix-refund-pos-card`), estos cobros NO son reembolsables por acá: se devuelven manualmente
   // desde el panel de Stripe. Sin este guard, `stripe.refund` recibe `payment_intent=''` y Stripe tira
   // un error críptico de PI inválido.
-  // #272: el cobro del widget no tiene PI asentado (`stripePaymentId=''`) pero sí la Checkout Session
-  // (`cs_…`); el gateway resuelve el payment_intent desde la sesión.
+  //
+  // #271 MR-06: los cobros web (`method:'link'`) nacen con `stripeSessionId` (`cs_...`) y sin
+  // `stripePaymentId`; el gateway resuelve el PI desde la sesión (stripe-gateway.ts `refund`).
   const providerRef = payment.stripePaymentId || payment.stripeSessionId
   if (!providerRef) {
     throw new ConflictError(
@@ -64,7 +67,7 @@ export async function refundPayment(
   const refundPaymentDoc = await deps.createPayment({
     hotelId: payment.hotelId,
     type: 'refund',
-    // #272: la devolución hereda el método del cobro (`link` → `link`) para que los reportes por método cuadren.
+    // Hereda el método del cobro (card→card, link→link): la devolución sale por donde entró.
     method: payment.method,
     status: 'completed',
     amount: amount ?? payment.amount,

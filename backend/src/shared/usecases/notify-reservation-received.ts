@@ -537,3 +537,58 @@ export async function notifyReservationCancelled(
     return { notified: 0, emailed: false }
   }
 }
+
+export interface ApprovalOverdueInput {
+  /** Plazo del hotel (`booking_config.approvalDeadlineHours`), ya resuelto por el llamador. */
+  deadlineHours: number
+  /** ISO: desde cuándo la reserva espera respuesta (`createdAt`). */
+  pendingSince: string
+}
+
+/** Horas enteras transcurridas desde `since` (0 si no parsea o es futuro). */
+function wholeHoursSince(since: string, now: Date): number {
+  const t = new Date(since).getTime()
+  if (!Number.isFinite(t)) return 0
+  return Math.max(0, Math.floor((now.getTime() - t) / 3_600_000))
+}
+
+/**
+ * #271 MR-06 — Reserva pagada que sigue `approvalStatus: 'pending'` pasado el plazo del hotel:
+ * mismo reparto (campanita a quien ve reservas, correo al buzón del hotel, push), con las horas
+ * de espera en el título. Quién y cuándo se avisa lo decide `approval-reminder.ts` (una sola vez
+ * por reserva vía `reservations.approvalReminderAt`); acá sólo se arma y reparte el aviso.
+ */
+export async function notifyApprovalOverdue(
+  deps: ReservationNotifyDeps,
+  reservation: ReservationRef,
+  input: ApprovalOverdueInput,
+  now: Date = new Date(),
+): Promise<NotifyResult> {
+  try {
+    const s = await loadSummary(deps, reservation)
+    if (!s) return { notified: 0, emailed: false }
+
+    const hours = wholeHoursSince(input.pendingSince, now)
+    const deadlineHours = Number(input.deadlineHours)
+    const title = `Reserva por aprobar hace ${hours} h — ${s.guest}`
+    const advice = `El huésped ya pagó y espera respuesta. Plazo del hotel: ${deadlineHours} h. Aprobá o rechazá desde el panel.`
+    const message = `${summaryMessage(s)}. ${advice}`
+    const html = [
+      summaryHtml(s),
+      `<p>${esc(advice)}</p>`,
+    ].join('\n')
+
+    return await deliver(deps, reservation, {
+      title,
+      message,
+      html,
+      metadata: { link: reservationPanelLink(reservation.id), reservationId: reservation.id, kind: 'approval_overdue' },
+      relatedType: 'reservation:approval_overdue',
+    })
+  } catch (e) {
+    deps.logger?.warn('No se pudo avisar la aprobación vencida', {
+      reservationId: reservation.id, hotelId: reservation.hotelId, error: (e as Error).message,
+    })
+    return { notified: 0, emailed: false }
+  }
+}

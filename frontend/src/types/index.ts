@@ -161,8 +161,9 @@ export interface Reservation {
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
-   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada. */
-  approvalStatus?: 'pending' | 'approved' | null
+   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
+   *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -212,8 +213,10 @@ export interface ReservationApiRecord {
   refundStatus?: RefundStatus
   refundedAt?: string
   refundPaymentId?: string
+  /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
+  createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
 }
 
 /** #272 (MR-07) — `reservations.refundStatus`: 'none' = nada que devolver (o reserva anterior a la
@@ -701,6 +704,9 @@ export interface ReservationDetail {
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
+  /** #271 MR-06 — mismo eje que `Reservation.approvalStatus`: el detalle lo trae del registro
+   *  (`...safeReservation` en `reservas/usecases/detail.ts`). 'pending' habilita Aprobar/Rechazar. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null

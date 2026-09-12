@@ -1,11 +1,11 @@
 // payments/tests/refund-web-checkout.test.ts — #272: devolución de un cobro del widget público.
 //
 // El cobro web se asienta con `method:'link'`, `stripePaymentId=''` y el id de la Checkout Session en
-// `stripeSessionId` (shared/usecases/post-booking-payment.ts). Stripe sólo reembolsa por PaymentIntent,
-// así que `refundPayment` pasa el `cs_…` y el gateway lo resuelve desde la sesión.
+// `stripeSessionId` (shared/usecases/post-booking-payment.ts). El camino `link`/`cs_` y la resolución
+// cs_ → payment_intent del gateway se prueban en refund.test.ts (#271). Acá va lo que #272 suma:
+// el `reason` (descripción + `metadata.reason`), la devolución parcial y el cobro sin referencia.
 import { describe, it, expect } from 'bun:test'
 import { refundPayment } from '../usecases/refund'
-import { StripeGateway } from '../../../services/payment-gateway/stripe-gateway'
 import type { CreatePaymentDTO, PaymentDTO } from '../types'
 
 const SYSTEM = { id: 'system', role: 'system' }
@@ -68,64 +68,5 @@ describe('payments — refund de un cobro del widget (method link + stripeSessio
       .rejects.toThrow(/no tiene un cargo de Stripe asociado/)
     expect(h.refundCalls).toHaveLength(0)
     expect(h.created).toHaveLength(0)
-  })
-
-  it('un cobro cash sigue rechazado: sólo card/link son de Stripe', async () => {
-    const h = harness({ method: 'cash' })
-    await expect(refundPayment(h.deps, 'p1', undefined, SYSTEM)).rejects.toThrow(/Only card payments/)
-    expect(h.refundCalls).toHaveLength(0)
-  })
-})
-
-describe('StripeGateway.refund — cs_ → payment_intent', () => {
-  function gatewayWith(fake: any) {
-    const gw = new StripeGateway({ secretKey: 'sk_test_fake' }, 'test')
-    ;(gw as any).stripe = fake
-    return gw
-  }
-
-  it('con una Checkout Session resuelve el payment_intent y reembolsa por él', async () => {
-    const calls: any[] = []
-    const retrieved: string[] = []
-    const gw = gatewayWith({
-      checkout: { sessions: { retrieve: async (id: string) => { retrieved.push(id); return { payment_intent: 'pi_y' } } } },
-      refunds: { create: async (p: any) => { calls.push(p); return { id: 're_1', status: 'succeeded' } } },
-    })
-    const r = await gw.refund('cs_x', 10000)
-    expect(retrieved).toEqual(['cs_x'])
-    expect(calls).toEqual([{ payment_intent: 'pi_y', amount: 10000 }])
-    expect(r).toEqual({ refundId: 're_1', status: 'succeeded' })
-  })
-
-  it('con la sesión expandida (payment_intent como objeto) usa su id', async () => {
-    const calls: any[] = []
-    const gw = gatewayWith({
-      checkout: { sessions: { retrieve: async () => ({ payment_intent: { id: 'pi_obj' } }) } },
-      refunds: { create: async (p: any) => { calls.push(p); return { id: 're_2', status: 'pending' } } },
-    })
-    await gw.refund('cs_x')
-    expect(calls).toEqual([{ payment_intent: 'pi_obj' }])
-  })
-
-  it('con un pi_ directo NO consulta la sesión', async () => {
-    const calls: any[] = []
-    let retrieveCalled = false
-    const gw = gatewayWith({
-      checkout: { sessions: { retrieve: async () => { retrieveCalled = true; return {} } } },
-      refunds: { create: async (p: any) => { calls.push(p); return { id: 're_3', status: 'succeeded' } } },
-    })
-    await gw.refund('pi_z', 500)
-    expect(retrieveCalled).toBe(false)
-    expect(calls).toEqual([{ payment_intent: 'pi_z', amount: 500 }])
-  })
-
-  it('sesión sin payment_intent (no se pagó) → error claro y no crea el refund', async () => {
-    let createCalled = false
-    const gw = gatewayWith({
-      checkout: { sessions: { retrieve: async () => ({ payment_intent: null }) } },
-      refunds: { create: async () => { createCalled = true; return { id: 're_x', status: 'succeeded' } } },
-    })
-    await expect(gw.refund('cs_unpaid')).rejects.toThrow(/no tiene payment_intent/)
-    expect(createCalled).toBe(false)
   })
 })
