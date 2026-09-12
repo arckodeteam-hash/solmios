@@ -2,7 +2,7 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
-import { validateRoomAssignment, type RoomAssignmentDeps } from './assign-room'
+import { validateRoomAssignment, CLOSED_STATUSES, type RoomAssignmentDeps } from './assign-room'
 import { auditSafely } from '../../../shared/usecases/audit'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
@@ -328,6 +328,11 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   let roomAssignment: { patch: Partial<ReservasDTO>; typeChanged: boolean } | null = null
   if (changesRoom) {
     if (!dto.roomId) throw new ConflictError('Para soltar la habitación usá DELETE /reservas/:id/assign-room', { reason: 'use_unassign_endpoint' })
+    // Mismo cierre que POST /assign-room: una reserva terminada o anulada no cambia de habitación
+    // (dispararía onRoomAssigned → código de puerta sobre una estadía que ya no existe).
+    if (CLOSED_STATUSES.has(String(existing.status))) {
+      throw new ConflictError(`No se puede asignar habitación a una reserva ${existing.status}`, { reason: 'invalid_status', status: existing.status })
+    }
     if (existing.status === 'checked_in') {
       throw new ConflictError('La reserva está en estadía: reasignala con POST /reservas/:id/assign-room', { reason: 'use_assign_endpoint' })
     }

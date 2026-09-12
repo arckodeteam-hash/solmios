@@ -46,11 +46,12 @@ function memRepo(rows: any[], updates: any[] = []) {
 }
 
 /** Folios/Rooms en memoria + `transaction` secuencial. Cuenta las transacciones para probar que el PUT NO mueve estadía. */
-function fakeQueries(folios: any[], rooms: any[]) {
+function fakeQueries(folios: any[], rooms: any[], repo: any) {
   const writer: FolioRoomWriter = {
     findOpenFolioByReservation: async (reservationId) => folios.find((f) => f.reservationId === reservationId && f.status === 'open') ?? null,
     updateFolio: async (id, patch) => { Object.assign(folios.find((f) => f.id === id), patch) },
     updateRoom: async (roomId, patch) => { Object.assign(rooms.find((r) => r.id === roomId), patch) },
+    updateReservation: async (id, patch) => { await repo.update(id, patch) },
   }
   const q = { txCalls: 0, transaction: async (fn: (w: FolioRoomWriter) => Promise<any>) => { q.txCalls++; return fn(writer) } }
   return q as any
@@ -81,7 +82,7 @@ function harness(res: any, opts: { withAssignment?: boolean; otherReservations?:
   const repo = memRepo([res, ...(opts.otherReservations ?? [])], updates)
   const roomRepo = memRepo(rooms)
   const sockets = { onRoomAssigned: async (d: any) => { emitted.push(d) } }
-  const queries = fakeQueries(folios, rooms)
+  const queries = fakeQueries(folios, rooms, repo)
   const roomAssignment: RoomAssignmentDeps = {
     repo, roomRepo, blockRepo: memRepo([]), queries, sockets,
     auditPort: { record: async (e) => { audits.push(e) } }, logger: noopLogger, cache: noopCache, auth: realAuth,

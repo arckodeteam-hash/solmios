@@ -170,6 +170,15 @@ describe('PUT /reservas/:id con roomId distinto — delega en validateRoomAssign
     expect(h.assigned).toHaveLength(0)
   })
 
+  it.each(['cancelled', 'no_show', 'checked_out'])('reserva %s → 409 invalid_status (mismo cierre que POST /assign-room)', async (status) => {
+    const h = harness([baseRes({ status })])
+    const e = await rejects(h.put('r1', { roomId: 'room-102' }))
+    expect(e.httpStatus).toBe(409)
+    expect(e.details).toMatchObject({ reason: 'invalid_status', status })
+    expect(h.updates).toHaveLength(0)
+    expect(h.assigned).toHaveLength(0)
+  })
+
   it('sin roomRepo (caller viejo) → 409 fail-closed, no persiste', async () => {
     const h = harness([baseRes()])
     const e = await rejects(updateReservation(h.repo, noopLogger, noopCache, h.sockets, 'r1', { roomId: 'room-102' } as any, user))

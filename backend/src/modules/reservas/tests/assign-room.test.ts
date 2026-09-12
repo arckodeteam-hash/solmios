@@ -42,13 +42,22 @@ function memRepo(rows: any[], updates: any[] = []) {
 }
 
 /** Folios/Rooms en memoria + `transaction` secuencial (lo que hace ReservasQueries sin orm.transaction). */
-function fakeQueries(folios: any[], rooms: any[]) {
+function fakeQueries(folios: any[], rooms: any[], repo: any) {
   const writer: FolioRoomWriter = {
     findOpenFolioByReservation: async (reservationId) => folios.find((f) => f.reservationId === reservationId && f.status === 'open') ?? null,
     updateFolio: async (id, patch) => { Object.assign(folios.find((f) => f.id === id), patch) },
     updateRoom: async (roomId, patch) => { Object.assign(rooms.find((r) => r.id === roomId), patch) },
+    updateReservation: async (id, patch) => { await repo.update(id, patch) },
   }
-  return { transaction: async (fn: (q: FolioRoomWriter) => Promise<any>) => fn(writer), txCalls: 0 } as any
+  // Simula el rollback de una tx real: si `fn` tira, restaura reservas/folios/rooms al snapshot.
+  const transaction = async (fn: (q: FolioRoomWriter) => Promise<any>) => {
+    const snap = { rows: repo.rows.map((r: any) => ({ ...r })), folios: folios.map((f) => ({ ...f })), rooms: rooms.map((r) => ({ ...r })) }
+    try { return await fn(writer) } catch (e) {
+      repo.rows.splice(0, repo.rows.length, ...snap.rows); folios.splice(0, folios.length, ...snap.folios); rooms.splice(0, rooms.length, ...snap.rooms)
+      throw e
+    }
+  }
+  return { transaction, txCalls: 0 } as any
 }
 
 const ROOMS = () => [
@@ -74,11 +83,12 @@ function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[]; folios?
   const emitted: any[] = []
   const rooms = opts.rooms ?? ROOMS()
   const folios = opts.folios ?? []
+  const repo = memRepo(reservas, updates)
   const deps: RoomAssignmentDeps = {
-    repo: memRepo(reservas, updates),
+    repo,
     roomRepo: memRepo(rooms),
     blockRepo: memRepo(opts.blocks ?? []),
-    queries: fakeQueries(folios, rooms),
+    queries: fakeQueries(folios, rooms, repo),
     sockets: { onRoomAssigned: async (d: any) => { emitted.push(d) } },
     auditPort: { record: async (e) => { audits.push(e) } },
     logger: noopLogger,
@@ -233,6 +243,21 @@ describe('assignRoom — efectos', () => {
     expect(rooms.find((r) => r.id === 'room-102')!.status).toBe('occupied')
     expect(h.emitted).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-102', previousRoomId: 'room-101' }])
     expect(JSON.parse(h.audits[0].detail!)).toEqual({ from: 'room-101', to: 'room-102' })
+  })
+
+  it('checked_in: si mover folio/estados falla, la reserva NO queda con la habitación nueva (misma tx)', async () => {
+    const rooms = ROOMS()
+    const folios = [{ id: 'f1', hotelId: HOTEL, reservationId: 'r1', roomId: 'room-101', status: 'open' }]
+    const h = harness([baseRes({ status: 'checked_in', roomId: 'room-101', folioId: 'f1' })], { rooms, folios })
+    const q = h.deps.queries as any
+    const inner = q.transaction
+    q.transaction = (fn: any) => inner(async (w: FolioRoomWriter) => fn({ ...w, updateRoom: async () => { throw new Error('db caída') } }))
+    const e = await rejects(assignRoom(h.deps, 'r1', { roomId: 'room-102' }, user))
+    expect(e.message).toBe('db caída')
+    expect((await h.deps.repo.findById('r1'))!.roomId).toBe('room-101')
+    expect(folios[0].roomId).toBe('room-101')
+    expect(h.emitted).toEqual([])
+    expect(h.audits).toEqual([])
   })
 
   it('socket que falla no rompe la asignación', async () => {

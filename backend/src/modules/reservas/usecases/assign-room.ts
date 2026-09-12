@@ -54,7 +54,7 @@ export interface AssignableRoom {
 }
 
 /** Estados en los que la habitación ya no se puede tocar: la estadía terminó o nunca ocurrió. */
-const CLOSED_STATUSES = new Set(['cancelled', 'no_show', 'checked_out'])
+export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['cancelled', 'no_show', 'checked_out'])
 
 const day = (v: unknown): string => String(v ?? '').slice(0, 10)
 
@@ -146,9 +146,12 @@ export async function validateRoomAssignment(
 }
 
 /** Reasignación en estadía: el folio abierto y los estados de ambas habitaciones siguen a la reserva. */
-async function moveStay(deps: RoomAssignmentDeps, reservationId: string, previousRoomId: string | null, roomId: string): Promise<void> {
+async function moveStay(deps: RoomAssignmentDeps, reservationId: string, previousRoomId: string | null, roomId: string, patch: Partial<ReservasDTO>): Promise<void> {
   // `queries.transaction` corre en una transacción real si el ORM la ofrece; si no, secuencial.
+  // La reserva se escribe ADENTRO (como checkin.ts/checkout.ts): si mover el folio o los estados
+  // falla, no queda una reserva apuntando a una habitación cuyo folio sigue en la anterior.
   await deps.queries.transaction(async (q: FolioRoomWriter) => {
+    await q.updateReservation(reservationId, patch)
     const folio = await q.findOpenFolioByReservation(reservationId)
     if (folio) await q.updateFolio(folio.id, { roomId })
     if (previousRoomId && previousRoomId !== roomId) await q.updateRoom(previousRoomId, { status: 'cleaning' })
@@ -171,8 +174,13 @@ export async function assignRoom(deps: RoomAssignmentDeps, id: string, dto: Assi
   if (dto.roomId === previousRoomId) return existing
 
   const { patch, typeChanged } = await validateRoomAssignment(deps, existing, dto.roomId, { allowTypeChange: dto.allowTypeChange, userId: currentUser.id })
-  const updated = (await deps.repo.update(id, patch as any)) as ReservasDTO
-  if (existing.status === 'checked_in') await moveStay(deps, id, previousRoomId, dto.roomId)
+  let updated: ReservasDTO
+  if (existing.status === 'checked_in') {
+    await moveStay(deps, id, previousRoomId, dto.roomId, patch)
+    updated = ((await deps.repo.findById(id)) ?? { ...existing, ...patch }) as ReservasDTO
+  } else {
+    updated = (await deps.repo.update(id, patch as any)) as ReservasDTO
+  }
 
   const base = { hotelId: existing.hotelId, userId: currentUser.id, entity: 'reservation', entityId: id }
   await auditSafely(deps.auditPort, deps.logger, { ...base, action: 'reservation.room_assigned', detail: JSON.stringify({ from: previousRoomId, to: dto.roomId }) })

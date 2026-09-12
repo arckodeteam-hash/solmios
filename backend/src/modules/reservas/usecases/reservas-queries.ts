@@ -10,6 +10,8 @@ export interface FolioRoomWriter {
   findOpenFolioByReservation(reservationId: string): Promise<any | null>
   updateFolio(id: string, patch: any): Promise<void>
   updateRoom(roomId: string, patch: any): Promise<void>
+  /** La fila de la reserva se escribe DENTRO de la misma tx que folio y habitaciones (revisión #258). */
+  updateReservation(reservationId: string, patch: any): Promise<void>
 }
 
 function folioRoomWriter(db: any): FolioRoomWriter {
@@ -20,6 +22,7 @@ function folioRoomWriter(db: any): FolioRoomWriter {
     },
     async updateFolio(id, patch) { await db.update('Folios', id, patch) },
     async updateRoom(roomId, patch) { await db.update('Rooms', roomId, patch) },
+    async updateReservation(reservationId, patch) { await db.update('Reservations', reservationId, patch) },
   }
 }
 
