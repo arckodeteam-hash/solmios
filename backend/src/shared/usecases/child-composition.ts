@@ -363,7 +363,7 @@ export async function resolveChildPolicy(
         ? Math.min(100, Math.max(1, Math.round(childrenRatePercent)))
         : DEFAULT_CHILD_POLICY.childrenRatePercent,
       cribAvailable: raw.cribAvailable === true,
-      maxFreeChildrenPerRoom: raw.maxFreeChildrenPerRoom != null && raw.maxFreeChildrenPerRoom !== ''
+      maxFreeChildrenPerRoom: raw.maxFreeChildrenPerRoom != null && (raw.maxFreeChildrenPerRoom as unknown) !== ''
         && Number.isFinite(maxFreeChildrenPerRoom) && maxFreeChildrenPerRoom >= 0
         ? Math.floor(maxFreeChildrenPerRoom)
         : null,
