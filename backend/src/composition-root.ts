@@ -901,9 +901,10 @@ const { emailService, startWorker } = bootstrapEmail(orm, logger, (name) => syst
 const monitoring = system.resolveModule<MonitoringService>('monitoring')
 monitoringErrorSink = (e) => monitoring.recordError(e)
 
-// Post-init: ai-recepcionista usa pushAvailability (reservas IA bypassan el módulo reservas).
-const aiRecepcionista = system.resolveModule<{ channexPusher: ((hotelId: string, roomId: string) => void) | null }>('ai-recepcionista')
-if (aiRecepcionista) aiRecepcionista.channexPusher = pushAvailability
+// Post-init: ai-recepcionista empuja a Channex por sí misma (reservas IA bypassan el módulo reservas).
+// REQ-HAC-05 (#260): la reserva de la IA nace por TIPO sin unidad → push por `roomType`.
+const aiRecepcionista = system.resolveModule<{ channexPusher: ((hotelId: string, roomType: string) => void) | null }>('ai-recepcionista')
+if (aiRecepcionista) aiRecepcionista.channexPusher = pushAvailabilityByType
 
 // F3 3.6/3.7 post-init — Wallet pass: el módulo necesita el puerto TTLock para generar el
 // lockCode de reservas que no tienen uno previo. Se inyecta acá (post system.start) porque

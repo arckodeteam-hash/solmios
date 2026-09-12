@@ -86,12 +86,13 @@ export function AiRecepcionistaModule() {
 
       const log = logger.child('ai-recepcionista')
 
-      // Callback: when AI creates a reservation, push availability to Channex.
+      // Callback: when AI creates a reservation, push availability to Channex — por TIPO
+      // (REQ-HAC-05 #260: la reserva de la IA nace sin unidad, sólo con `roomType`).
       // system.resolveModule is NOT available inside create(); the pusher is injected from
       // composition-root via service.channexPusher (see composition-root.ts).
       let service: AiRecepcionistaService
-      const onReservationCreated = async (hotelId: string, roomId: string) => {
-        try { service?.channexPusher?.(hotelId, roomId) } catch {}
+      const onReservationCreated = async (hotelId: string, roomType: string) => {
+        try { service?.channexPusher?.(hotelId, roomType) } catch {}
       }
       service = new AiRecepcionistaService(
         conversationRepo, messageRepo, intentRepo, templateRepo,

@@ -36,7 +36,7 @@ describe('PublicapiService', () => {
     it('createReservation delega en el reservations port', async () => {
       const svc = new PublicapiService(log)
       const created: PublicReservationDTO = {
-        id: 'r1', hotelId: 'hotel-1', roomId: 'room-1', checkIn: '2026-08-01', checkOut: '2026-08-05',
+        id: 'r1', hotelId: 'hotel-1', roomId: 'room-1', roomType: 'double', checkIn: '2026-08-01', checkOut: '2026-08-05',
         totalAmount: 100, createdAt: '', updatedAt: '',
       }
       const reservations: PublicApiReservationsPort = {
@@ -53,7 +53,7 @@ describe('PublicapiService', () => {
     it('getReservation rechaza si la reserva es de otro hotel (ownership)', async () => {
       const svc = new PublicapiService(log)
       const foreign: PublicReservationDTO = {
-        id: 'r1', hotelId: 'OTHER-HOTEL', roomId: 'room-1', checkIn: '2026-08-01', checkOut: '2026-08-05',
+        id: 'r1', hotelId: 'OTHER-HOTEL', roomId: 'room-1', roomType: 'double', checkIn: '2026-08-01', checkOut: '2026-08-05',
         totalAmount: 100, createdAt: '', updatedAt: '',
       }
       svc.setDeps({ reservations: { create: async () => foreign, getById: async () => foreign } })
@@ -63,7 +63,7 @@ describe('PublicapiService', () => {
     it('getReservation devuelve la reserva si pertenece al hotel de la key', async () => {
       const svc = new PublicapiService(log)
       const mine: PublicReservationDTO = {
-        id: 'r1', hotelId: 'hotel-1', roomId: 'room-1', checkIn: '2026-08-01', checkOut: '2026-08-05',
+        id: 'r1', hotelId: 'hotel-1', roomId: 'room-1', roomType: 'double', checkIn: '2026-08-01', checkOut: '2026-08-05',
         totalAmount: 100, createdAt: '', updatedAt: '',
       }
       svc.setDeps({ reservations: { create: async () => mine, getById: async () => mine } })

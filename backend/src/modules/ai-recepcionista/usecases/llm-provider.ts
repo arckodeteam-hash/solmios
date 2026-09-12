@@ -173,12 +173,12 @@ export const RECEPTIONIST_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'create_reservation',
-      description: 'Crear una reserva. Si no tenés roomId, pasá el roomType (double, single, suite, family) y se asigna automáticamente.',
+      description: 'Crear una reserva por TIPO de habitación (double, single, suite, family). La habitación concreta se asigna en recepción al check-in, no acá: nunca prometas un número de habitación.',
       parameters: {
         type: 'object',
         properties: {
-          roomId: { type: 'string', description: 'ID de habitación (opcional si pasás roomType)' },
-          roomType: { type: 'string', enum: ['single', 'double', 'suite', 'family'], description: 'Tipo de habitación si no tenés roomId' },
+          roomId: { type: 'string', description: 'ID de una habitación de search_availability (opcional): sólo sirve para deducir el tipo, no se reserva esa unidad' },
+          roomType: { type: 'string', enum: ['single', 'double', 'suite', 'family'], description: 'Tipo de habitación a reservar' },
           checkIn: { type: 'string', description: 'Fecha entrada YYYY-MM-DD' },
           checkOut: { type: 'string', description: 'Fecha salida YYYY-MM-DD' },
           guestName: { type: 'string', description: 'Nombre completo del huésped' },
