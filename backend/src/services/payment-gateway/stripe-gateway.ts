@@ -40,12 +40,13 @@ function pickCard(card: any): PaymentOutcome['card'] | undefined {
 // Epic #265 — Knob SÓLO para pruebas: si `STRIPE_API_HOST` está seteado, el SDK apunta a ese host
 // (un doble HTTP local de la API de Stripe que levanta el e2e) en vez de api.stripe.com. Sin la var
 // no agrega NADA a las opciones del SDK, así que en producción (donde nunca se setea) el cliente
-// queda exactamente como antes. Y con una clave `sk_live_` se ignora aunque esté seteada: una var
-// olvidada no puede mandar la clave real (va en `Authorization: Bearer`) a un host ajeno.
+// queda exactamente como antes. Y sólo aplica con claves de prueba (`sk_test_` / `rk_test_`): con
+// cualquier otra (live, restringida, formato desconocido) se ignora aunque esté seteada — una var
+// olvidada no puede mandar una clave real (va en `Authorization: Bearer`) a un host ajeno.
 type StripeHostConfig = Pick<NonNullable<ConstructorParameters<typeof Stripe>[1]>, 'host' | 'port' | 'protocol'>
 function stripeTestHostOverride(secretKey: string): StripeHostConfig {
   const host = process.env.STRIPE_API_HOST
-  if (!host || secretKey.startsWith('sk_live_')) return {}
+  if (!host || !/^(sk|rk)_test_/.test(secretKey)) return {}
   const port = process.env.STRIPE_API_PORT
   const protocol = (process.env.STRIPE_API_PROTOCOL || 'http') as StripeHostConfig['protocol']
   return { host, ...(port ? { port } : {}), protocol }

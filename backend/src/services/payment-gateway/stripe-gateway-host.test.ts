@@ -38,13 +38,21 @@ describe('StripeGateway — STRIPE_API_HOST (test-only)', () => {
     expect(api.protocol).toBe('https')
   })
 
-  it('con clave sk_live_ ignora STRIPE_API_HOST: la clave real nunca sale a otro host', () => {
+  for (const key of ['sk_live_dummy', 'rk_live_dummy', 'sk_dummy_sin_prefijo']) {
+    it(`con clave ${key} ignora STRIPE_API_HOST: una clave que no es de prueba nunca sale a otro host`, () => {
+      process.env.STRIPE_API_HOST = '127.0.0.1'
+      process.env.STRIPE_API_PORT = '4242'
+      const api = apiOf(build(key))
+      expect(api.host).toBe('api.stripe.com')
+      expect(String(api.port)).toBe('443')
+      expect(api.protocol).toBe('https')
+    })
+  }
+
+  it('con clave restringida rk_test_ sí aplica el knob', () => {
     process.env.STRIPE_API_HOST = '127.0.0.1'
     process.env.STRIPE_API_PORT = '4242'
-    const api = apiOf(build('sk_live_dummy'))
-    expect(api.host).toBe('api.stripe.com')
-    expect(String(api.port)).toBe('443')
-    expect(api.protocol).toBe('https')
+    expect(apiOf(build('rk_test_dummy')).host).toBe('127.0.0.1')
   })
 
   it('con STRIPE_API_HOST + PORT apunta al doble local por http (default de protocol)', () => {
