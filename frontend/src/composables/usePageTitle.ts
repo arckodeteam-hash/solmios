@@ -116,6 +116,7 @@ export const ROUTE_LABELS: Record<string, string> = {
   restaurante: 'Restaurante',
   carta: 'Carta',
   cocina: 'Cocina y Bar (KDS)',
+  kds: 'Pantalla de cocina',   // /panel/kds — KDS en kiosco, sin layout del panel
   salon: 'Salón',
   'rrhh-dashboard': 'Panel RRHH',
   suscripcion: 'Suscripción',
