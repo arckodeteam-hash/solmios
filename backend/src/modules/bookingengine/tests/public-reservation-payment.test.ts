@@ -22,7 +22,10 @@ function ormWith(over: { reserva?: any; payments?: any[]; addons?: any[] } = {})
     findMany: async (table: string, filter: any) => {
       if (table === 'Reservations') return reserva && reserva.id === filter.id ? [reserva] : []
       if (table === 'Guests') return [{ id: 'g1', name: 'LUIS BERNIEL', email: 'l@x.com' }]
-      if (table === 'Payments') return over.payments ?? []
+      // #312 — 'Payment', SINGULAR, que es como lo registra `payments/model.ts:73`. Este mock decía
+      // 'Payments' igual que el código, así que los dos estaban equivocados de la misma forma y el
+      // test de acá abajo ("cuenta el cobro en efectivo") pasaba sin ejercer nunca el camino real.
+      if (table === 'Payment') return over.payments ?? []
       if (table === 'ReservationAddons') return over.addons ?? []
       return []
     },
