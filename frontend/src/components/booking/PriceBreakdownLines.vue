@@ -71,7 +71,8 @@
 import { computed } from 'vue'
 import type { MealPlanCode, TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
 import type { MealPlanLine } from '@/composables/useBooking'
-import { useBookingI18nStore, type BookingMessageKey } from '@/composables/useBookingI18n'
+import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 
 const props = defineProps<{
   breakdown: TotalBreakdown | null | undefined
@@ -85,13 +86,7 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Código → key i18n (mismo mapa que RoomsStep.vue). */
-const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode, BookingMessageKey> = {
-  breakfast: 'rooms.board.breakfast',
-  half_board: 'rooms.board.halfBoard',
-  all_inclusive: 'rooms.board.allInclusive',
-}
-
+/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts). */
 function mealPlanLabel(code: MealPlanCode): string {
   return t(MEAL_PLAN_LABEL_KEY[code])
 }

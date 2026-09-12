@@ -153,6 +153,8 @@ export interface Reservation {
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (persistido; null en reservas anteriores). */
+  mealPlanPersons?: number | null
   createdAt: Date
   roomNumber?: string
   roomType?: string
@@ -240,6 +242,7 @@ export interface ReservationApiRecord {
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
+  mealPlanPersons?: number | null
   /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
   needsCrib?: boolean | null
   cribCount?: number | null
@@ -697,11 +700,17 @@ export interface ReservationDetail {
   depositStatus?: string
   regime?: string
   /** MR-03 (#268) — snapshot del régimen reservado desde la web (`Reservations.mealPlan*`).
-   *  `mealPlanTotal` ya está DENTRO de `totalAmount`; null/ausente en reservas viejas o del panel. */
+   *  En una reserva suelta `mealPlanTotal` está DENTRO de `totalAmount`; en una de grupo
+   *  (`groupId`) NO: cada fila persiste el unitario pero su `totalAmount` es solo la habitación y
+   *  el régimen se cobró con el total del grupo. null/ausente en reservas viejas o del panel.
+   *  El régimen que se MUESTRA es `regime ?? mealPlan` (`utils/meal-plans.ts`). */
   mealPlan?: string | null
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
+  /** Personas que pagaron el régimen al reservar (adultos + niños con plaza). null = reserva
+   *  anterior a la columna: la UI no muestra personas (no las deriva de las fechas). */
+  mealPlanPersons?: number | null
   notes?: string | null
   otaNotes?: string | null
   ownerNotes?: string | null
@@ -936,8 +945,11 @@ export interface CheckinGuest {
   /** MR-03 (#268) — etiqueta del régimen ("Desayuno incluido", "Media pensión"…) para que
    *  recepción lo vea en la fila de llegadas. Null si es solo alojamiento o no hay régimen. */
   mealPlanLabel: string | null
-  /** MR-03 (#268) — importe del régimen ya incluido en `totalAmount` (0 si incluido en tarifa). */
+  /** MR-03 (#268) — importe del régimen reservado en la web (0 si incluido en tarifa o cargado
+   *  a mano). En una reserva de grupo (`groupId`) NO está dentro de `totalAmount`. */
   mealPlanTotal: number
+  /** `Reservations.groupId`: la reserva es una habitación de una reserva de varias. */
+  groupId: string | null
 }
 
 // === FEEDBACK ===

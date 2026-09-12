@@ -73,7 +73,7 @@
           <option value="expedia">Expedia</option>
           <option value="airbnb">Airbnb</option>
         </select>
-        <!-- MR-03 (#268) — régimen: `mealPlan` (snapshot web) o `regime` (manual del panel/OTA). -->
+        <!-- MR-03 (#268) — régimen: `regime` (editable en el panel) o, si no vino, `mealPlan` (snapshot web). -->
         <select id="reservations-filter-meal-plan" name="filterMealPlan" aria-label="Filtrar reservas por régimen" data-testid="reservations-filter-meal-plan" v-model="filterMealPlan" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los regímenes</option>
           <option v-for="(label, code) in MEAL_PLAN_LABELS" :key="code" :value="code">{{ label }}</option>
@@ -123,8 +123,10 @@
                   <Icon name="crib" :size="12" />{{ r.needsCrib ? 'Cuna' : 'Bebé' }}
                 </span>
               </div>
-              <!-- MR-03 (#268) — régimen reservado desde la web (solo si no es "solo alojamiento"). -->
-              <span v-if="r.mealPlanLabel" data-testid="reservation-meal-plan-badge" :title="r.mealPlanTotal > 0 ? `Régimen: $${r.mealPlanTotal} incluido en el total` : 'Régimen incluido en la tarifa'"
+              <!-- MR-03 (#268) — régimen (solo si no es "solo alojamiento"). El tooltip no afirma que el
+                   importe esté dentro del total: en una reserva de grupo NO lo está (se cobró con el
+                   total del grupo). -->
+              <span v-if="r.mealPlanLabel" data-testid="reservation-meal-plan-badge" :title="mealPlanTitle(r)"
                 class="block mt-1 w-fit px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple/10 text-purple whitespace-nowrap">{{ r.mealPlanLabel }}</span>
             </td>
             <td class="px-4 py-5">
@@ -295,6 +297,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
 import { paymentStateBadge } from '@/utils/payment-state'
+import { effectiveMealPlan, hasMealPlan, mealPlanLabel, MEAL_PLAN_LABELS } from '@/utils/meal-plans'
 import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
 import Icon from '@/components/ui/Icon.vue'
 import ReservationModal from '@/components/features/ReservationModal.vue'
@@ -325,11 +328,14 @@ const filterChannel = ref('')
 const filterApproval = ref('')
 // REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
 const filterPayment = ref('')
-// MR-03 (#268) — '' | código de régimen. Compara contra `mealPlan ?? regime` de cada fila.
+// MR-03 (#268) — '' | código de régimen. Compara contra `effectiveMealPlan` de cada fila
+// (`regime` editable manda; `mealPlan` es el snapshot web). Etiquetas: `utils/meal-plans.ts`.
 const filterMealPlan = ref('')
-// Mismo mapa que `regimeLabel()` de ReservationModal.vue (no se importa desde un .vue).
-const MEAL_PLAN_LABELS: Record<string, string> = { room_only: 'Solo alojamiento', breakfast: 'Desayuno incluido', half_board: 'Media pensión', full_board: 'Pensión completa', all_inclusive: 'Todo incluido' }
-function mealPlanLabel(code?: string | null): string { return code ? (MEAL_PLAN_LABELS[code] || code) : '' }
+/** Tooltip del badge: importe del régimen reservado en la web y, en grupo, dónde se cobró. */
+function mealPlanTitle(r: { mealPlanTotal: number; groupId?: string | null }): string {
+  if (!(r.mealPlanTotal > 0)) return 'Régimen sin cargo aparte'
+  return `Régimen: $${r.mealPlanTotal}${r.groupId ? ' · cobrado con el total del grupo (reserva principal)' : ''}`
+}
 // #274 — "Llegan hoy": toggle del KPI "Check-ins Hoy". Mismo criterio que `checkinsTodayCount`.
 const filterArrivalsToday = ref(false)
 const list = ref<any[]>([])
@@ -429,8 +435,8 @@ const statsCards = computed(() => [
 
 const filtered = computed(() => {
   let l = list.value
-  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || mealPlanLabel(r.mealPlan ?? r.regime).toLowerCase().includes(q)) }
-  if (filterMealPlan.value) l = l.filter((r: any) => (r.mealPlan ?? r.regime ?? '') === filterMealPlan.value)
+  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || mealPlanLabel(effectiveMealPlan(r), '').toLowerCase().includes(q)) }
+  if (filterMealPlan.value) l = l.filter((r: any) => (effectiveMealPlan(r) ?? '') === filterMealPlan.value)
   if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
@@ -520,11 +526,11 @@ async function load() {
         paidAmount: r.paidAmount ?? 0, groupId: r.groupId, createdAt: r.createdAt,
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
-        // MR-03 (#268) — régimen: snapshot web (`mealPlan`) o manual (`regime`). El badge solo
-        // se muestra cuando hay algo más que alojamiento.
+        // MR-03 (#268) — régimen: `regime` (editable) manda, `mealPlan` (snapshot web) cubre.
+        // El badge solo se muestra cuando hay algo más que alojamiento.
         mealPlan: r.mealPlan ?? null, regime: r.regime ?? null,
         mealPlanTotal: r.mealPlanTotal ?? 0,
-        mealPlanLabel: (r.mealPlan ?? r.regime) && (r.mealPlan ?? r.regime) !== 'room_only' ? mealPlanLabel(r.mealPlan ?? r.regime) : '',
+        mealPlanLabel: hasMealPlan(effectiveMealPlan(r)) ? mealPlanLabel(effectiveMealPlan(r), '') : '',
         // #274 — badge de cuna con tooltip (`childSetupSummary`).
         needsCrib: r.needsCrib ?? false, cribCount: r.cribCount ?? 0, childAmenities: r.childAmenities ?? null,
       }

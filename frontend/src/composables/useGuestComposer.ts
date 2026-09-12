@@ -9,6 +9,9 @@
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
 import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal, type CartLine } from './useBooking'
+// `round2` compartido del frontend (espejo de `shared/utils/money.ts` del backend) — nada de
+// copias locales por archivo.
+import { round2 } from '@/utils/cash-arqueo'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import { CRIB_AMENITY_KEY, type MealPlanCode, type MealPlanPriceMode, type RoomOccupancyRate, type RoomTypeRate } from '@/types/booking'
 /** MR-03 (#268) — una opción del radio de régimen de una tarjeta. "Solo alojamiento" siempre va
@@ -23,12 +26,6 @@ export interface MealPlanOption {
   available: boolean
 }
 
-/** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
- *  import cruzado solo por esto. Espejo de `shared/utils/money.ts` del backend. */
-function round2(n: number): number {
-  if (!Number.isFinite(n)) return 0
-  return Math.round((n + Number.EPSILON) * 100) / 100
-}
 
 interface ComposerState {
   adults: number

@@ -224,18 +224,13 @@
 import { computed, ref } from 'vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import { CRIB_AMENITY_KEY, type MealPlanCode, type PromoValidationReason } from '@/types/booking'
-import type { BookingMessageKey } from '@/composables/useBookingI18n'
+import { CRIB_AMENITY_KEY, type PromoValidationReason } from '@/types/booking'
+import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 import { classifyAge } from '@/utils/child-composition'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
-// MR-03 (#268) — etiqueta del régimen por código (mismas claves que RoomsStep/PriceBreakdownLines).
-const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode, BookingMessageKey> = {
-  breakfast: 'rooms.board.breakfast',
-  half_board: 'rooms.board.halfBoard',
-  all_inclusive: 'rooms.board.allInclusive',
-}
+// MR-03 (#268) — etiqueta del régimen por código: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts).
 
 // FIX 2026-08-22 — paridad con BookingModal.vue (`termsAccepted`): arranca en `false` siempre.
 // Sin `watch` de reset acá: a diferencia del modal (que queda montado con TODOS los steps

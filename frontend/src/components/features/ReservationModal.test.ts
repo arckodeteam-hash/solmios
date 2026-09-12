@@ -271,16 +271,53 @@ describe('ReservationModal', () => {
   })
 
   // ── MR-03 (#268) — régimen reservado desde la web ─────────────────────────────────────────
-  // El backend persiste el snapshot (`mealPlan`, `mealPlanUnitPrice`, `mealPlanTotal`) y el modal
-  // lo explica sin re-cotizar: las personas se derivan de total ÷ (unitario × noches).
+  // El backend persiste el snapshot (`mealPlan`, `mealPlanUnitPrice`, `mealPlanTotal`,
+  // `mealPlanPersons`) y el modal lo explica sin re-cotizar ni derivar nada de las fechas.
   describe('régimen (MR-03)', () => {
     const mealPlanRow = () => document.body.querySelector('[data-testid="reservation-meal-plan"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+    const totalRow = () => document.body.querySelector('[data-testid="reservation-meal-plan-total"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
 
     it('reserva web con media pensión cobrada por persona y noche: etiqueta + detalle + fila en el importe', async () => {
-      // 3 noches (01→04), 2 personas × 3 noches × 15 = 90
-      await open(detailFixture({ mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, regime: 'half_board' }))
+      // 3 noches (01→04), 2 personas × 3 noches × 15 = 90 — las personas vienen PERSISTIDAS.
+      await open(detailFixture({ mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: 2, regime: 'half_board' }))
       expect(mealPlanRow()).toContain('Régimen: Media pensión (2 pers × 3 noches · US$90,00)')
-      expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')?.textContent).toContain('US$90,00')
+      expect(totalRow()).toContain('US$90,00')
+    })
+
+    it('las personas NO se derivan de las fechas: sin `mealPlanPersons` (reserva anterior a la columna) solo se muestra el importe', async () => {
+      // Antes: persons = round(90 / (15 × 3)) = 2 "inventado" desde las fechas actuales; al
+      // reagendar a 2 noches daba 3 personas. Ahora sin el campo persistido no hay personas.
+      await open(detailFixture({ checkIn: '2026-09-01', checkOut: '2026-09-03', mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: null, regime: 'half_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Media pensión (US$90,00)')
+      expect(mealPlanRow()).not.toContain('pers')
+    })
+
+    it('reagendada: las personas persistidas se mantienen aunque las noches cambien', async () => {
+      // 2 personas reservaron 3 noches; reagendada a 2 noches → "2 pers × 2 noches", no 3 pers.
+      await open(detailFixture({ checkIn: '2026-09-01', checkOut: '2026-09-03', mealPlan: 'half_board', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 15, mealPlanTotal: 90, mealPlanPersons: 2, regime: 'half_board' }))
+      expect(mealPlanRow()).toContain('(2 pers × 2 noches · US$90,00)')
+    })
+
+    it('`regime` (editable en el panel) manda sobre el snapshot web `mealPlan`', async () => {
+      // Reservó desayuno en la web; recepción lo cambió a media pensión desde el wizard.
+      await open(detailFixture({ mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'half_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Media pensión')
+      // El importe congelado es del desayuno reservado: la fila lo dice con SU código.
+      expect(totalRow()).toContain('Régimen · Desayuno incluido')
+      expect(totalRow()).toContain('US$60,00')
+    })
+
+    it('reserva suelta: la fila del importe no afirma que esté "incluido"/"sumado" en el total', async () => {
+      await open(detailFixture({ groupId: null, mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'breakfast' }))
+      expect(totalRow()).toBe('Régimen · Desayuno incluidoUS$60,00') // dos <span> pegados, sin blanco entre medio
+      expect(totalRow()).not.toMatch(/sumado|en el total|en el importe|grupo/)
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-group-note"]')).toBeNull()
+    })
+
+    it('reserva de grupo (groupId): cada fila persiste el régimen unitario pero NO está en su `totalAmount` → leyenda "cobrado con el total del grupo"', async () => {
+      await open(detailFixture({ groupId: 'grp-1', totalAmount: 300, mealPlan: 'breakfast', mealPlanPriceMode: 'per_person_per_night', mealPlanUnitPrice: 10, mealPlanTotal: 60, mealPlanPersons: 2, regime: 'breakfast' }))
+      expect(document.body.querySelector('[data-testid="reservation-meal-plan-group-note"]')?.textContent).toContain('cobrado con el total del grupo')
+      expect(totalRow()).toContain('US$60,00')
     })
 
     it('régimen incluido en la tarifa: "(incluido)" y sin fila de importe', async () => {
@@ -289,9 +326,12 @@ describe('ReservationModal', () => {
       expect(document.body.querySelector('[data-testid="reservation-meal-plan-total"]')).toBeNull()
     })
 
-    it('reserva vieja / del panel: cae al `regime` manual, y sin nada muestra "—"', async () => {
+    it('reserva vieja / del panel: `regime` manual (incluido full_board, que la web no ofrece), y sin nada muestra "—"', async () => {
       await open(detailFixture({ mealPlan: null, regime: 'all_inclusive' }))
       expect(mealPlanRow()).toBe('Régimen: Todo incluido')
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ mealPlan: null, regime: 'full_board' }))
+      expect(mealPlanRow()).toBe('Régimen: Pensión completa')
       wrapper?.unmount(); document.body.innerHTML = ''
       await open(detailFixture({ mealPlan: null, regime: undefined }))
       expect(mealPlanRow()).toBe('Régimen: —')

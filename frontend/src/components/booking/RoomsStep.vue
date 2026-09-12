@@ -382,6 +382,7 @@ import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestCom
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
 import { CRIB_AMENITY_KEY, type MealPlanCode, type OccupancyUnavailableReason, type RoomTypeRate } from '@/types/booking'
+import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import { classifyAge } from '@/utils/child-composition'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
@@ -466,16 +467,9 @@ function cartHasType(roomTypeId: string): boolean {
 }
 
 // ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable) ─────────────────────
-/** Código → key i18n de la etiqueta. Mapa explícito para que un código nuevo en el backend rompa
- *  el typecheck acá en vez de mostrar la key cruda al huésped. Las opciones (disponibilidad,
- *  precio para la composición actual) las arma `useGuestComposer.mealPlanOptions`. */
-const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode | 'room_only', BookingMessageKey> = {
-  room_only: 'rooms.board.roomOnly',
-  breakfast: 'rooms.board.breakfast',
-  half_board: 'rooms.board.halfBoard',
-  all_inclusive: 'rooms.board.allInclusive',
-}
-
+/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` de `utils/meal-plans.ts` (mapa único del widget). Las
+ *  opciones (disponibilidad, precio para la composición actual) las arma
+ *  `useGuestComposer.mealPlanOptions`. */
 function mealPlanLabel(code: MealPlanCode | 'room_only'): string {
   return t(MEAL_PLAN_LABEL_KEY[code])
 }

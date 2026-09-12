@@ -446,7 +446,8 @@ import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
-import { useBookingI18nStore, type BookingMessageKey } from '@/composables/useBookingI18n'
+import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import { mealPlanLabelKey } from '@/utils/meal-plans'
 import { useTracking, initTracking } from '@/composables/useTracking'
 import AppModal from '@/components/ui/AppModal.vue'
 import {
@@ -456,7 +457,7 @@ import {
 import {
   formatStayDate, nightsBetween, displayName, publicAddressLine, shortBookingCode, hotelTimeOrEmpty,
 } from '@/utils/booking-confirmation-format'
-import type { PublicReservationResponse, CancelReservationResponse, MealPlanCode } from '@/types/booking'
+import type { PublicReservationResponse, CancelReservationResponse } from '@/types/booking'
 import type { PublicHotelInfo } from '@/types/public-hotel'
 import { CurrencyCode } from '@/types/currency'
 
@@ -492,17 +493,12 @@ const nights = computed(() => nightsBetween(reservation.value?.reservation?.chec
 const guestDisplayName = computed(() => displayName(reservation.value?.guest?.name))
 
 // ── MR-03 (#268) — régimen elegido (snapshot en la reserva) ─────────────────
-/** Código → key i18n (mismo mapa que RoomsStep.vue / PriceBreakdownLines.vue). */
-const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode, BookingMessageKey> = {
-  breakfast: 'rooms.board.breakfast',
-  half_board: 'rooms.board.halfBoard',
-  all_inclusive: 'rooms.board.allInclusive',
-}
-/** Etiqueta del régimen, o '' con solo alojamiento / reserva anterior a la feature. */
+/** Etiqueta del régimen (`mealPlanLabelKey`, mapa único en utils/meal-plans.ts), o '' con solo
+ *  alojamiento / reserva anterior a la feature. */
 const mealPlanLabel = computed(() => {
   const code = reservation.value?.reservation?.mealPlan
   if (!code || code === 'room_only') return ''
-  const key = MEAL_PLAN_LABEL_KEY[code as MealPlanCode]
+  const key = mealPlanLabelKey(code)
   return key ? t(key) : ''
 })
 const mealPlanTotal = computed(() => Number(reservation.value?.reservation?.mealPlanTotal ?? 0))
