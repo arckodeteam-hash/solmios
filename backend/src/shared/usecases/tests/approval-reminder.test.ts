@@ -184,6 +184,19 @@ describe('runApprovalReminder', () => {
     for (const r of w.reservations) expect(r.approvalReminderAt).toBeNull()
   })
 
+  it('notify que tira en un grupo → el error se reporta con la representante (la que se pasó a notify), no con la hermana iterada', async () => {
+    const w = world({
+      reservations: [
+        pendingApproval({ id: 'g-2', groupId: 'grp', createdAt: hoursAgo(25) }),
+        pendingApproval({ id: 'g-1', groupId: 'grp', createdAt: hoursAgo(26) }),
+      ],
+      notifyThrows: true,
+    })
+    const out = await runApprovalReminder(w.deps, NOW)
+    expect(w.notifyCalls[0].ref.id).toBe('g-1')
+    expect(out.errors).toEqual([{ reservationId: 'g-1', reason: 'notificaciones caído' }])
+  })
+
   it('update que tira → error registrado, el aviso ya salió y no se propaga', async () => {
     const w = world({ reservations: [pendingApproval()] })
     w.deps.reservations.update = async () => { throw new Error('db ro') }

@@ -93,7 +93,9 @@ export async function runApprovalReminder(
   const seenGroups = new Set<string>()
 
   for (const r of candidates) {
-    const id = String(r.id)
+    // Id que se reporta en `errors`: en grupo es la representante (`oldest`, la que se pasa a
+    // `notify`), no la hermana que tocó iterar — si no, el log manda a mirar la reserva equivocada.
+    let reportedId = String(r.id)
     try {
       const groupKey = r.groupId ? `${r.hotelId}:${r.groupId}` : null
       if (groupKey && seenGroups.has(groupKey)) continue // ya contabilizada con la hermana más antigua
@@ -102,6 +104,7 @@ export async function runApprovalReminder(
       const batch = groupKey ? groups.get(groupKey) ?? [r] : [r]
       const oldest = batch.reduce((a, b) => (ms(b.createdAt) < ms(a.createdAt) ? b : a), batch[0])
       if (groupKey) seenGroups.add(groupKey)
+      reportedId = String(oldest.id)
 
       const pendingSinceMs = ms(oldest.createdAt)
       if (!Number.isFinite(pendingSinceMs)) {
@@ -129,7 +132,7 @@ export async function runApprovalReminder(
         }
       }
     } catch (e) {
-      result.errors.push({ reservationId: id, reason: errMessage(e) })
+      result.errors.push({ reservationId: reportedId, reason: errMessage(e) })
     }
   }
 
