@@ -478,99 +478,6 @@
       </div>
     </div>
 
-    <!-- ========== NIÑOS (Requerimiento 1) ========== -->
-    <div v-if="(activeTab as string) === 'children'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 class="font-extrabold text-navy">Política de niños</h3>
-            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
-              Define cómo cuentan los niños en las reservas del motor público (adultos + niños + edad de cada uno).
-            </p>
-          </div>
-          <button @click="saveChildPolicy" :disabled="childPolicySaving || !!childPolicyError"
-            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
-            {{ childPolicySaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-
-        <div class="space-y-4">
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
-            <div>
-              <div class="text-sm font-bold text-navy">Aceptar niños</div>
-              <div class="text-[10px] text-text-muted">Si está apagado, la página de reservas no deja agregar niños</div>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input v-model="childPolicy.acceptChildren" type="checkbox" class="sr-only peer">
-              <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
-            </label>
-          </div>
-
-          <template v-if="childPolicy.acceptChildren">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima considerada niño</label>
-                <input v-model.number="childPolicy.maxChildAge" type="number" min="0" max="17" class="w-full px-3 py-2 rounded-full border border-border text-sm font-bold text-navy text-right">
-              </div>
-              <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima sin consumir plaza</label>
-                <input v-model.number="childPolicy.maxFreeAge" type="number" min="0" max="17" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
-              </div>
-            </div>
-            <!-- Tarea 21 (Identificar bebés, 2026-09-08) — subconjunto de "sin consumir plaza": el
-                 huésped y Administración ven "Bebé" en vez de "Niño" hasta esta edad. -->
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima considerada bebé</label>
-              <input v-model.number="childPolicy.maxBabyAge" type="number" min="0" :max="childPolicy.maxFreeAge" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
-            </div>
-            <!-- REQ-03 (#235) — el tope de niños/bebés que no consumen plaza por habitación se
-                 mudó a Página pública → Motor de reservas (mismo patrón que #291/#79): esta
-                 pantalla ya no lo edita, solo lo consumido por el motor sigue leyendo la misma
-                 clave `configuration('child_policy')`. -->
-            <p v-if="childPolicyError" class="text-[10px] font-bold text-danger">{{ childPolicyError }}</p>
-            <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
-              Con estos valores: 0–{{ childPolicy.maxBabyAge }} años se considera BEBÉ (no consume plaza, no genera cargo) ·
-              {{ childPolicy.maxBabyAge + 1 }}–{{ childPolicy.maxFreeAge }} años no consume plaza (no genera cargo de alojamiento) ·
-              {{ childPolicy.maxFreeAge + 1 }}–{{ childPolicy.maxChildAge }} años consume plaza y se cobra como un ocupante más ·
-              mayor de {{ childPolicy.maxChildAge }} años se trata como adulto.
-            </p>
-
-            <!-- Tarea "Cobro % niños" (2026-09-09) — solo afecta a quien YA consume plaza (el
-                 rango de arriba); bebés y niños libres nunca reciben esta regla. -->
-            <div class="pt-2 border-t border-border">
-              <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
-                <div>
-                  <div class="text-sm font-bold text-navy">Cobro reducido para niños</div>
-                  <div class="text-[10px] text-text-muted">
-                    Si está prendido, cada niño que consume plaza paga un % del valor de un adulto, en vez del precio completo de ocupante
-                  </div>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
-                  <input v-model="childPolicy.childrenDiscountEnabled" type="checkbox" class="sr-only peer">
-                  <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
-                </label>
-              </div>
-
-              <div v-if="childPolicy.childrenDiscountEnabled" class="mt-3">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Porcentaje de tarifa para niños</label>
-                <div class="flex items-center gap-2">
-                  <input v-model.number="childPolicy.childrenRatePercent" type="number" min="1" max="100"
-                    class="w-24 px-3 py-2 rounded-full border text-sm font-bold text-navy text-right"
-                    :class="childPolicyError ? 'border-danger' : 'border-border'">
-                  <span class="text-sm font-bold text-text-muted">%</span>
-                </div>
-                <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3 mt-2">
-                  Ejemplo: si el valor de un adulto en la reserva es $100 y configurás {{ childPolicy.childrenRatePercent || 0 }}%,
-                  cada niño con plaza paga ${{ childPolicy.childrenRatePercent || 0 }}.
-                  No aplica a bebés ni a niños que no consumen plaza — esos siguen las reglas de arriba.
-                </p>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
-
     <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
     <!-- La pestaña "Integraciones" se mudó a su propia sección del menú (/panel/integraciones,
          pages/integraciones): WhatsApp, pasarelas, cerraduras, dispositivos y facturación
@@ -918,74 +825,11 @@ async function saveRoomInfo() {
 // (pages/integraciones/facturacion.vue), con su propio estado y su propio aviso de cambios
 // sin guardar.
 
-// ─── Política de niños (Requerimiento 1, 2026-09-03) ───────────────────────────────────────
-// configuration('child_policy'), mismo patrón que automation_config/electronic_invoicing.
-// Consumida por el motor público (backend `resolveChildPolicy`) y por el wizard `/book/:slug`
-// (`childPolicy` de `GET /public/hotel/:slug`) para decidir si ofrece el stepper de niños.
-// Tarea 21 (Identificar bebés, 2026-09-08) — `maxBabyAge` es un SUBCONJUNTO de "no consume
-// plaza": 0 ≤ maxBabyAge ≤ maxFreeAge (ver backend/src/shared/usecases/child-composition.ts).
-// Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
-// NUNCA hardcodeado a 50): cada niño que consume plaza paga ese % del "valor de un adulto" en vez
-// del precio completo de ocupante, SOLO si el hotel lo habilita.
-// #292 — la cuna ya no es config global (el toggle "Ofrece cuna" se dio de baja): es la amenidad
-// `custom:cuna` de cada habitación, configurada en Habitaciones.
-// REQ-03 (#235) — `maxFreeChildrenPerRoom` (tope de niños/bebés que no consumen plaza por
-// habitación) se mudó a Página pública → Motor de reservas (`pages/booking-engine/index.vue`):
-// esta pantalla ya no lo lee ni lo edita, así que el guardado de acá NUNCA pisa esa clave
-// (merge parcial del lado del backend en `configuration`, mismo criterio que el resto de esta
-// pantalla — ver comentario de FIELD_TAB más abajo).
-const childPolicy = reactive({
-  acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50,
-})
-const childPolicySaving = ref(false)
-async function loadChildPolicy() {
-  try {
-    const c = await ConfigService.get('child_policy') as {
-      acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number; maxBabyAge?: number
-      childrenDiscountEnabled?: boolean; childrenRatePercent?: number
-    } | null
-    if (c) {
-      childPolicy.acceptChildren = c.acceptChildren !== false
-      childPolicy.maxChildAge = Number.isFinite(c.maxChildAge) ? Number(c.maxChildAge) : 17
-      childPolicy.maxFreeAge = Number.isFinite(c.maxFreeAge) ? Number(c.maxFreeAge) : 0
-      childPolicy.maxBabyAge = Number.isFinite(c.maxBabyAge) ? Number(c.maxBabyAge) : 0
-      childPolicy.childrenDiscountEnabled = c.childrenDiscountEnabled === true
-      childPolicy.childrenRatePercent = Number.isFinite(c.childrenRatePercent) ? Number(c.childrenRatePercent) : 50
-    }
-  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años, nadie es "bebé", sin descuento */ }
-}
-// "La edad máxima sin consumir plaza no puede ser superior a la edad máxima considerada niño."
-// Tarea 21 — mismo criterio para maxBabyAge, pero contra maxFreeAge (del cual es subconjunto).
-// Tarea "Cobro % niños" — el % solo se valida mientras la regla está prendida (apagada, cualquier
-// valor guardado antes queda inerte, no hace falta bloquear el guardado por él).
-const childPolicyError = computed(() => {
-  if (childPolicy.maxFreeAge > childPolicy.maxChildAge) return 'La edad sin consumir plaza no puede ser mayor que la edad máxima de niño'
-  if (childPolicy.maxBabyAge > childPolicy.maxFreeAge) return 'La edad máxima de bebé no puede ser mayor que la edad sin consumir plaza'
-  if (childPolicy.childrenDiscountEnabled) {
-    const pct = childPolicy.childrenRatePercent
-    if (!Number.isFinite(pct) || pct < 1 || pct > 100) return 'El porcentaje de tarifa para niños debe estar entre 1% y 100%'
-  }
-  return ''
-})
-async function saveChildPolicy() {
-  if (childPolicyError.value) { toast.error(childPolicyError.value); return }
-  childPolicySaving.value = true
-  try {
-    await ConfigService.set('child_policy', {
-      acceptChildren: childPolicy.acceptChildren, maxChildAge: childPolicy.maxChildAge,
-      maxFreeAge: childPolicy.maxFreeAge, maxBabyAge: childPolicy.maxBabyAge,
-      childrenDiscountEnabled: childPolicy.childrenDiscountEnabled, childrenRatePercent: childPolicy.childrenRatePercent,
-    })
-    await nextTick()
-    markClean()
-    toast.success('Política de niños guardada')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    childPolicySaving.value = false
-  }
-}
+// La "Política de niños" (Requerimiento 1, 2026-09-03 → REQ-03 #235) se mudó ENTERA a Página
+// pública → Motor de reservas (`pages/booking-engine/index.vue`), mismo patrón que #291/#292:
+// ya vivía duplicada ahí campo por campo, y esta pantalla no aportaba nada que Página pública no
+// tuviera. Sigue siendo `configuration('child_policy')`, consumida igual por el motor público
+// (backend `resolveChildPolicy`) y el wizard `/book/:slug` — solo cambió desde dónde se edita.
 
 // Políticas de cancelación y reembolso para factura (configuration['invoice_policy_text']).
 // Texto libre que se imprime al pie de cada factura A4 emitida. Vacío = no se imprime el bloque.
@@ -1039,13 +883,14 @@ type SettingsTabGroup = { label: string; tabs: SettingsTab[] }
 //   habitación (cuna, cama extra, precio, disponibilidad) se configuran en Habitaciones y
 //   los del HOTEL (piscina, gimnasio, los de la landing) en Página pública → General.
 // - "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
+// - "Niños" (Política de niños) se fue ENTERA a Página pública → Motor de reservas (REQ-03
+//   #235): ya vivía duplicada campo por campo en las dos pantallas.
 const tabGroups: SettingsTabGroup[] = [
   {
     label: 'Config. administrativo',
     tabs: [
       { value: 'hotel', label: 'Hotel' },
       { value: 'conditions', label: 'Condiciones' },
-      { value: 'children', label: 'Niños' },
       // "Tipos de habitación" se mudó a Habitaciones (pestaña "Tipos y capacidad"): definir el
       // inventario estaba partido entre dos entradas distintas del mismo menú.
       { value: 'emergency', label: 'Emergencias' },
@@ -1118,7 +963,6 @@ function snapshot(): string {
     form: form.value, ownerUserName: ownerUserName.value,
     emergencyContacts: emergencyContacts.value,
     currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, roomInfo,
-    childPolicy,
     // Slug, servicios hotel-level, traducciones públicas y flags de reseñas públicas
     // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
     // de habitación y días laborables, desde Habitaciones y Asistencia respectivamente.
@@ -1269,7 +1113,6 @@ onMounted(async () => {
     await loadGuaranteePin()
     await loadAutomation()
     await loadRoomInfo()
-    await loadChildPolicy()
     await loadInvoicePolicy()
   } catch (e) {
     toast.error('Error al cargar datos')
