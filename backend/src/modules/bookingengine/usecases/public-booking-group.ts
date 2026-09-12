@@ -35,6 +35,7 @@
 // LA MISMA transacción: si una sola habitación se vende concurrentemente, se aborta el grupo
 // ENTERO (todo o nada) — no puede quedar una reserva de grupo a medias.
 import type { RepositoryAdapter } from 'arckode-framework'
+import { safeParse } from '../../../shared/utils/safe-parse'
 import { readHotelTaxes, taxLinesOn, sumTaxLines } from './hotel-taxes'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
@@ -42,7 +43,7 @@ import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from '.
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem, ChildAmenityLine } from './public-booking'
-import { normalizeChildAmenityIds, resolveChildAmenityLines } from './public-booking'
+import { normalizeChildAmenityIds, resolveChildAmenityLines, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
@@ -152,12 +153,23 @@ export async function createPublicBookingGroup(
     // Tarea 3.1 (solmi-direct-booking-qa-fixes) — mismos campos que public-booking.ts.
     estimatedArrival,
     specialRequests,
+    // #266 — clave de idempotencia del widget (opcional), mismo criterio que public-booking.ts.
+    idempotencyKey: rawIdempotencyKey,
   } = body
 
   if (!hotelId || !guestName || !guestEmail || !checkIn || !checkOut) {
     return { status: 400, body: { error: 'Campos requeridos: hotelId, guestName, guestEmail, checkIn, checkOut, rooms' } }
   }
   if (checkIn >= checkOut) return { status: 400, body: { error: 'checkIn debe ser anterior a checkOut' } }
+
+  // #266 — Idempotencia del grupo: la key se guarda SOLO en la LÍDER (las hermanas van sin key,
+  // si no chocarían entre sí contra el índice único (hotelId, idempotencyKey)). Un reintento con
+  // la misma key devuelve el grupo entero ya creado con 200 — ver `replayPublicBookingGroup`.
+  const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey)
+  if (idempotencyKey) {
+    const lead = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+    if (lead) return replayPublicBookingGroup(orm, lead, stripe, logger, stripeUrls)
+  }
 
   const lines = normalizeRoomLines(body.rooms)
   if (!lines) {
@@ -508,6 +520,8 @@ export async function createPublicBookingGroup(
   // Un solo token para TODO el grupo: el huésped consulta "su reserva" (todas las habitaciones)
   // con un solo link, no N links distintos.
   const sharedAccessToken = crypto.randomUUID()
+  // #266 — un solo instante para todo el grupo (ver `resolvePaymentDeadlineAt`).
+  const paymentDeadlineAt = resolvePaymentDeadlineAt(bookingConfig)
 
   try {
     await orm.transaction(async (tx: any) => {
@@ -578,6 +592,11 @@ export async function createPublicBookingGroup(
             // LÍDER, la primera creada, que es la que Stripe cobra. Las demás no tienen desglose
             // propio: su `totalAmount` es contable, no lo que se le mostró a nadie.
             priceBreakdown: reservations.length === 0 ? totalBreakdown : undefined,
+            // #266 — mismo límite de pago para todas las unidades del grupo (el cron vence el
+            // grupo entero y marca `groups.status='cancelled'`, ver pending-payment-expiry.ts).
+            paymentDeadlineAt,
+            // #266 — la key va SOLO en la líder (índice único por hotel).
+            idempotencyKey: reservations.length === 0 && idempotencyKey ? idempotencyKey : undefined,
           })
           reservations.push(reservation)
         }
@@ -607,45 +626,114 @@ export async function createPublicBookingGroup(
       logger?.warn(`Promo ${promoCode} agotado concurrentemente para hotel ${hotelId}`)
       return { status: 409, body: { error: 'promo_invalid', promoReason: 'max_uses_reached' } }
     }
+    // #266 — carrera entre dos POST con la misma key: el índice único rechazó al segundo; se
+    // relee la líder ganadora y se responde el replay 200 (mismo criterio que public-booking.ts).
+    if (idempotencyKey && isUniqueViolation(e)) {
+      const lead = await orm.findOne('Reservations', { hotelId, idempotencyKey })
+      if (lead) {
+        logger?.warn('Grupo público duplicado por idempotencyKey concurrente — replay', { hotelId, reservationId: lead.id })
+        return replayPublicBookingGroup(orm, lead, stripe, logger, stripeUrls)
+      }
+    }
     throw e
   }
 
   for (const r of reservations) pushAvailability?.(hotelId, r.roomId)
 
   // ─── UNA sola Checkout Session, sobre la reserva LÍDER (primera creada), por el total combinado ──
-  let checkoutUrl: string | null = null
-  let paymentError: string | null = null
   const lead = reservations[0]
-  if (stripe && stripeUrls && lead) {
-    try {
-      const session = await stripe.createReservationCheckout(
-        lead.id, totalAmount, stripeUrls.successUrl, stripeUrls.cancelUrl,
-      )
-      checkoutUrl = session.url || null
-    } catch (e: any) {
-      paymentError = e?.message || 'payment_gateway_unavailable'
-      logger?.warn(`Grupo ${group?.id} creado pero Stripe falló — checkoutUrl null`, { hotelId, groupId: group?.id })
-    }
-  }
+  const { checkoutUrl, paymentError } = await createGroupCheckoutSafely(stripe, stripeUrls, lead, totalAmount, group?.id, hotelId, logger)
+  const roomTypeOf = (roomId: string) => resolvedLines.find((l) => l.roomIds.includes(roomId))?.roomType
 
+  return groupResponse(201, group, reservations, roomTypeOf, lead, sharedAccessToken, guest, checkoutUrl, totalBreakdown, paymentError)
+}
+
+/** Ver `createCheckoutSafely` en public-booking.ts — misma robustez, sobre la LÍDER del grupo. */
+async function createGroupCheckoutSafely(
+  stripe: PublicBookingStripeDeps | undefined,
+  stripeUrls: { successUrl: string; cancelUrl: string } | undefined,
+  lead: any,
+  amount: number,
+  groupId: string | undefined,
+  hotelId: string,
+  logger?: PublicBookingLogger,
+): Promise<{ checkoutUrl: string | null; paymentError: string | null }> {
+  if (!stripe || !stripeUrls || !lead) return { checkoutUrl: null, paymentError: null }
+  try {
+    const session = await stripe.createReservationCheckout(lead.id, amount, stripeUrls.successUrl, stripeUrls.cancelUrl)
+    return { checkoutUrl: session.url || null, paymentError: null }
+  } catch (e: any) {
+    const paymentError: string = e?.message || 'payment_gateway_unavailable'
+    logger?.warn(`Grupo ${groupId} creado pero Stripe falló — checkoutUrl null`, { hotelId, groupId })
+    return { checkoutUrl: null, paymentError }
+  }
+}
+
+/**
+ * #266 — Replay idempotente del grupo: la LÍDER ya existe para (hotelId, idempotencyKey). Se
+ * reconstruye la misma respuesta que el 201 (grupo + hermanas por `groupId`) con `status: 200` y
+ * `replayed: true`. El `checkoutUrl` se vuelve a pedir sobre la líder por el total del grupo
+ * (`groups.totalAmount`): Stripe reutiliza la sesión por `Idempotency-Key: reservationId` — si ya
+ * expiró, el cron vence el grupo por `paymentDeadlineAt` y el huésped vuelve a reservar (ver
+ * `replayPublicBooking` en public-booking.ts). Líder `cancelled` → 409 `reservation_expired`.
+ */
+async function replayPublicBookingGroup(
+  orm: any,
+  lead: any,
+  stripe?: PublicBookingStripeDeps,
+  logger?: PublicBookingLogger,
+  stripeUrls?: { successUrl: string; cancelUrl: string },
+): Promise<any> {
+  if (lead.status === 'cancelled') return { status: 409, body: { error: 'reservation_expired' } }
+  const hotelId = String(lead.hotelId ?? '')
+  const group = lead.groupId ? await Promise.resolve(orm.findById?.('Groups', lead.groupId)).catch(() => null) ?? null : null
+  const siblings: any[] = lead.groupId
+    ? ((await Promise.resolve(orm.findMany?.('Reservations', { groupId: lead.groupId })).catch(() => [])) ?? [])
+    : []
+  // La líder primero (mismo orden que el 201: `reservations[0]` es la que cobra Stripe).
+  const reservations = [lead, ...siblings.filter((r: any) => r.id !== lead.id)]
+  const guest = lead.guestId ? await Promise.resolve(orm.findById?.('Guests', lead.guestId)).catch(() => null) ?? null : null
+  const rooms: any[] = (await Promise.resolve(orm.findMany?.('Rooms', { hotelId })).catch(() => [])) ?? []
+  const roomTypeOf = (roomId: string) => rooms.find((r: any) => r.id === roomId)?.type
+  const amount = Number(group?.totalAmount ?? lead.totalAmount) || 0
+  const { checkoutUrl, paymentError } = await createGroupCheckoutSafely(stripe, stripeUrls, lead, amount, group?.id, hotelId, logger)
+  const totalBreakdown = safeParse(lead.priceBreakdown) ?? null
+  return groupResponse(200, group, reservations, roomTypeOf, lead, lead.accessToken, guest, checkoutUrl, totalBreakdown, paymentError, true)
+}
+
+function groupResponse(
+  status: 200 | 201,
+  group: any,
+  reservations: any[],
+  roomTypeOf: (roomId: string) => string | undefined,
+  lead: any,
+  accessToken: string,
+  guest: any,
+  checkoutUrl: string | null,
+  totalBreakdown: TotalBreakdown | null,
+  paymentError: string | null,
+  replayed = false,
+): any {
   return {
-    status: 201,
+    status,
     body: {
       group: group ? { id: group.id, totalRooms: group.totalRooms, checkIn: group.checkIn, checkOut: group.checkOut, totalAmount: group.totalAmount } : null,
       // Allow-list estricta, mismo criterio que `createPublicBookingDirect` — nada interno sale.
       reservations: reservations.map((r) => ({
-        id: r.id, roomId: r.roomId, roomType: resolvedLines.find((l) => l.roomIds.includes(r.roomId))?.roomType,
+        id: r.id, roomId: r.roomId, roomType: roomTypeOf(r.roomId),
         checkIn: r.checkIn, checkOut: r.checkOut, status: r.status, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount,
       })),
       // `accessToken`/`reservationId` LÍDER: el widget usa esto para el link de confirmación/
       // consulta pública, igual que el flujo de 1 habitación (mismo contrato de respuesta).
       reservationId: lead?.id ?? null,
-      accessToken: sharedAccessToken,
+      accessToken,
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       checkoutUrl,
       totalBreakdown,
       ...(paymentError !== null ? { paymentError } : {}),
+      // #266 — solo en el replay idempotente (misma key, mismo hotel).
+      ...(replayed ? { replayed: true } : {}),
     },
   }
 }

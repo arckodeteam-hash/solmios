@@ -373,8 +373,11 @@ export class BookingengineController {
     // Antes `req.body` iba crudo al usecase, que validaba a mano solo los required; campos
     // malformados (ej. `adults: "abc"`) llegaban al ORM y generaban 500 o datos corruptos.
     // Ahora `validateSchema(ExtendedPublicBookingSchema, ...)` valida tipos + required (incl.
-    // `roomId` nuevo en el schema). `upsells` (array) y `idempotencyKey` se leen crudo del
-    // body porque el framework no soporta `type:'json'` en validators (documentado en schema).
+    // `roomId` nuevo en el schema). `upsells` (array) se lee crudo del body porque el framework
+    // no soporta `type:'json'` en validators (documentado en schema).
+    // #266 — `idempotencyKey` (string opcional) también va crudo: el usecase la normaliza
+    // (`normalizeIdempotencyKey`: no vacía, máx. 128 chars) y la persiste en la reserva; la
+    // misma key en el mismo hotel devuelve la reserva ya creada con 200 en vez de duplicarla.
     const rawBody = (req.body || {}) as Record<string, unknown>
     const validated = validateSchema(ExtendedPublicBookingSchema, rawBody) as Record<string, unknown>
     // Reincorporar `upsells`/`idempotencyKey` crudos si vienen (no validados por el schema).
@@ -445,6 +448,7 @@ export class BookingengineController {
       ...validated,
       ...(Array.isArray(rawBody.rooms) ? { rooms: rawBody.rooms } : {}),
       ...(Array.isArray(rawBody.upsells) ? { upsells: rawBody.upsells } : {}),
+      // #266 — misma idempotencia que el handler de 1 habitación; la key se guarda en la LÍDER.
       ...(typeof rawBody.idempotencyKey === 'string' ? { idempotencyKey: rawBody.idempotencyKey } : {}),
     } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
 
