@@ -62,6 +62,7 @@ import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 
 const MS_PER_DAY = 86_400_000
 
@@ -620,6 +621,9 @@ export async function createPublicBookingDirect(
   const upsellItems = Array.isArray(upsells) ? upsells.filter((u: any) => u && typeof u.id === 'string') : []
   let upsellsTotal = 0
   const upsellSummary: string[] = []
+  // #269 — líneas resueltas (nombre, qty, unitario del catálogo) para materializarlas como
+  // `ReservationAddons` en la tx de abajo.
+  const upsellLines: BookingEngineUpsellInput[] = []
   if (upsellItems.length > 0 && extraDeps?.upsells) {
     const hotelUpsells = await extraDeps.upsells.findMany({ hotelId })
     const byId = new Map(hotelUpsells.map((u: any) => [u.id, u]))
@@ -633,6 +637,7 @@ export async function createPublicBookingDirect(
       const lineTotal = Number(found.price) * qty
       upsellsTotal += lineTotal
       upsellSummary.push(`${found.name}×${qty}=${lineTotal.toFixed(2)}`)
+      upsellLines.push({ name: String(found.name ?? ''), quantity: qty, unitPrice: Number(found.price) || 0 })
     }
   } else if (upsellItems.length > 0 && !extraDeps?.upsells) {
     // F0 0.16 — Sin repo de upsells, dejamos el resumen crudo (id×qty) para que el recepcionista
@@ -840,6 +845,15 @@ export async function createPublicBookingDirect(
         // #266 — Clave de idempotencia del widget (única por hotel, ver migrate-db.ts).
         idempotencyKey: idempotencyKey ?? undefined,
       })
+
+      // #269 — Cada extra pagado online queda como fila `ReservationAddons` (source
+      // booking_engine, fuera del total cobrable: su importe YA está en `totalAmount`). Misma tx
+      // que la reserva: o se crean todas o ninguna. `notes`/`priceBreakdown` no cambian.
+      const addonRows = buildBookingEngineAddons({
+        reservationId: reservation.id, hotelId, taxRate: totalTaxRateOf(hotelTaxes),
+        upsells: upsellLines, childAmenities: childAmenityLines, roomAmenities: roomAmenityLines,
+      })
+      for (const row of addonRows) await tx.create('ReservationAddons', row)
 
       // F2 2.5 — Incremento atómico de promo.uses DENTRO de la tx. Re-lectura para detectar
       // races concurrentes. Si se agotó entre validate y commit, aborta (rollback de guest +
