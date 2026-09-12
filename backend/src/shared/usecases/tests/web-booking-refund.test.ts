@@ -21,6 +21,10 @@ interface Over {
   payments?: Record<string, any[]>
   refundThrows?: boolean
   withNotify?: boolean
+  /** Puerto `claimRefund`: `true`/`false` fijo, o una función. Sin él (undefined) el puerto no se cablea. */
+  claim?: boolean | ((id: string) => Promise<boolean>)
+  /** Si el doble de `refundPayment` asienta la fila `refund` en `payments` (como hace el módulo real). */
+  recordRefundRow?: boolean
 }
 
 function harness(over: Over = {}) {
@@ -29,13 +33,16 @@ function harness(over: Over = {}) {
   const refunds: any[] = []
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = []
   const notified: any[] = []
+  const claims: string[] = []
   const deps: any = {
     payments: {
       paymentsLinkedTo: async (_hotelId: string, ref: { reservationId: string }) => payments[ref.reservationId] ?? [],
       refundPayment: async (paymentId: string, amount?: number, user?: any, reason?: string) => {
         refunds.push({ paymentId, amount, user, reason })
         if (over.refundThrows) throw new Error('stripe caído')
-        return { id: 're-1', type: 'refund', amount }
+        const row = { id: 're-1', type: 'refund', status: 'completed', amount, metadata: { refundOf: paymentId, reason }, createdAt: '2026-09-10T10:00:00.000Z' }
+        if (over.recordRefundRow) for (const list of Object.values(payments)) if (list.some((p) => p.id === paymentId)) list.push(row)
+        return row
       },
     },
     reservations: {
@@ -48,13 +55,19 @@ function harness(over: Over = {}) {
         if (row) Object.assign(row, patch)
         return row
       },
+      ...(over.claim === undefined ? {} : {
+        claimRefund: async (id: string) => {
+          claims.push(id)
+          return typeof over.claim === 'function' ? over.claim(id) : over.claim
+        },
+      }),
     },
     notifyHotel: over.withNotify === false
       ? undefined
       : async (hotelId: string, n: any) => { notified.push({ hotelId, ...n }) },
     logger: silentLogger(),
   }
-  return { deps, rows, refunds, updates, notified }
+  return { deps, rows, refunds, updates, notified, claims }
 }
 
 describe('refundCancelledWebBooking', () => {
@@ -167,6 +180,108 @@ describe('refundCancelledWebBooking', () => {
     expect(out).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 40 })
     expect(h.refunds[0].paymentId).toBe('p5')
     expect(h.updates.map((u) => u.id)).toEqual(['s1', 's1'])
+  })
+
+  // ── Idempotencia contra el doble reembolso (hallazgo del revisor): Stripe NO rechaza dos refunds
+  //    parciales del mismo cobro (200 cobrados, dos refunds de 100 salen los dos). ──────────────
+  it('ya hay fila refund con refundOf al cobro (la reserva no lo sabía) → NO llama a la pasarela, repara done con esa fila', async () => {
+    const REFUND_ROW = { id: 'rf-1', type: 'refund', status: 'completed', amount: 100, metadata: { refundOf: 'p1', reason: 'guest_cancellation' }, createdAt: '2026-09-09T12:00:00.000Z' }
+    const h = harness({ payments: { r1: [CHARGE, REFUND_ROW] }, claim: true })
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+
+    expect(out).toEqual({ status: 'done', refundPaymentId: 'rf-1', amount: 100 })
+    expect(h.refunds).toHaveLength(0)
+    expect(h.claims).toHaveLength(0) // ni siquiera reclama: no hay nada que ejecutar
+    for (const r of h.rows) {
+      expect(r.refundStatus).toBe('done')
+      expect(r.refundPaymentId).toBe('rf-1')
+      expect(r.refundedAt).toBe('2026-09-09T12:00:00.000Z')
+    }
+    expect(h.updates.filter((u) => u.patch.refundStatus === 'pending')).toHaveLength(0)
+    expect(h.notified).toHaveLength(0)
+  })
+
+  it('una fila refund de OTRO cobro (refundOf distinto) no bloquea el reembolso', async () => {
+    const OTHER = { id: 'rf-9', type: 'refund', status: 'completed', amount: 30, metadata: { refundOf: 'p-otro', reason: 'guest_cancellation' } }
+    const h = harness({ payments: { r1: [OTHER, CHARGE] } })
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+    expect(out).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 100 })
+    expect(h.refunds).toHaveLength(1)
+  })
+
+  it('claimRefund devuelve false (otra invocación en curso) → skipped in_progress, sin llamar ni escribir', async () => {
+    const h = harness({ claim: false })
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+
+    expect(out).toEqual({ status: 'skipped', reason: 'in_progress' })
+    expect(h.claims).toEqual(['r1'])
+    expect(h.refunds).toHaveLength(0)
+    expect(h.updates).toHaveLength(0)
+    expect(h.notified).toHaveLength(0)
+    for (const r of h.rows) expect(r.refundStatus).toBe('none')
+  })
+
+  it('claimRefund true → reclama ANTES de pending/Stripe y sigue el camino normal', async () => {
+    const order: string[] = []
+    const h = harness({ claim: async () => { order.push('claim'); return true } })
+    const origRefund = h.deps.payments.refundPayment
+    h.deps.payments.refundPayment = async (...a: any[]) => { order.push('stripe'); return origRefund(...a) }
+    const origUpdate = h.deps.reservations.update
+    h.deps.reservations.update = async (id: string, patch: any) => { order.push(`update:${patch.refundStatus}`); return origUpdate(id, patch) }
+
+    const out = await refundCancelledWebBooking(h.deps, { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 })
+    expect(out.status).toBe('done')
+    expect(order[0]).toBe('claim')
+    expect(order.indexOf('claim')).toBeLessThan(order.indexOf('update:pending'))
+    expect(order.indexOf('update:pending')).toBeLessThan(order.indexOf('stripe'))
+  })
+
+  it('dos invocaciones concurrentes con un claim CAS real → UN solo refund; el perdedor sale in_progress', async () => {
+    let claimed = false
+    const h = harness({ claim: async () => { if (claimed) return false; claimed = true; return true } })
+    const input = { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 }
+    const [a, b] = await Promise.all([refundCancelledWebBooking(h.deps, input), refundCancelledWebBooking(h.deps, input)])
+
+    expect([a.status, b.status].sort()).toEqual(['done', 'skipped'])
+    expect([a, b].find((o) => o.status === 'skipped')).toEqual({ status: 'skipped', reason: 'in_progress' })
+    expect(h.refunds).toHaveLength(1)
+    for (const r of h.rows) expect(r.refundStatus).toBe('done')
+  })
+
+  it('invocación repetida sobre el mismo doble (la segunda ya ve done) → un solo refund', async () => {
+    const h = harness({ claim: true, recordRefundRow: true })
+    const input = { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 }
+    const first = await refundCancelledWebBooking(h.deps, input)
+    const second = await refundCancelledWebBooking(h.deps, input)
+
+    expect(first).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 100 })
+    expect(second).toEqual({ status: 'skipped', reason: 'already_done' })
+    expect(h.refunds).toHaveLength(1)
+    expect(h.claims).toEqual(['r1'])
+  })
+
+  it('el refund salió pero la escritura de done falló → el reintento ve el asiento en payments y NO repite el refund', async () => {
+    const h = harness({ claim: true, recordRefundRow: true })
+    // Primera vez: `update` de 'done' revienta en todas las filas (updateAll traga el error). Queda 'pending'.
+    const origUpdate = h.deps.reservations.update
+    h.deps.reservations.update = async (id: string, patch: any) => {
+      if (patch.refundStatus === 'done') throw new Error('db caída')
+      return origUpdate(id, patch)
+    }
+    const input = { reservationId: 'r1', hotelId: HOTEL, refundAmount: 100 }
+    const first = await refundCancelledWebBooking(h.deps, input)
+    expect(first).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 100 })
+    expect(h.rows.map((r) => r.refundStatus)).toEqual(['pending', 'pending', 'pending'])
+
+    // Reintento con la base sana: no hay segundo refundPayment, se repara el estado con la fila re-1.
+    h.deps.reservations.update = origUpdate
+    const second = await refundCancelledWebBooking(h.deps, input)
+    expect(second).toEqual({ status: 'done', refundPaymentId: 're-1', amount: 100 })
+    expect(h.refunds).toHaveLength(1)
+    for (const r of h.rows) {
+      expect(r.refundStatus).toBe('done')
+      expect(r.refundPaymentId).toBe('re-1')
+    }
   })
 
   it('sin notifyHotel el fallo no rompe', async () => {
