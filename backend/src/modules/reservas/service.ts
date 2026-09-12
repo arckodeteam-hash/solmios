@@ -1,6 +1,7 @@
 // reservas/service.ts — Facade pública del módulo. Casos de uso, sin HTTP ni imports de otros módulos.
 // Depende de RepositoryAdapter<ReservasDTO> (no del ORM directo); lógica en ./usecases/.
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
+import { OrmRepository } from 'arckode-framework'
 import type { StorageService, FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from './types'
 import type { ReservasSockets } from './sockets'
@@ -8,6 +9,7 @@ import { checkinValidation, checkoutValidation, executeCheckin } from './usecase
 import type { WhatsappSendPort } from './usecases/send-whatsapp'
 import { executeCheckout as executeCheckoutUsecase } from './usecases/checkout'
 import { sendLockCodeEmail as sendLockCodeEmailUsecase } from './usecases/lock-code-email'
+import { sendCheckinLinkEmail as sendCheckinLinkEmailUsecase } from './usecases/checkin-link-email'
 import { NullEmailSender, type EmailSender } from '../../services/email-sender'
 import { dispatchCreateEmail } from './usecases/reservation-notifications'
 import { setGuaranteePin as setGuaranteePinUsecase, getGuaranteeHasPin as getGuaranteeHasPinUsecase, unlockGuaranteeCard as unlockGuaranteeCardUsecase } from './usecases/guarantee'
@@ -194,5 +196,9 @@ export class ReservasService {
   async getBookingEngineDashboard(user: any): Promise<any> { return getBookingEngineDashboardUsecase(this.queries, user) }
   async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> {
     return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)
+  }
+  /** #336: enlace del check-in digital por email. `messageLogRepo` lo inyecta setEmailDeps; sin él cae al OrmRepository, como lock-code-email. */
+  async sendCheckinLinkEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string; checkinUrl: string }> {
+    return sendCheckinLinkEmailUsecase({ reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo, emailSender: this.emailSender, messageLogRepo: this.messageLogRepo ?? new OrmRepository<any>(deps.orm, 'MessageLogs'), publicUrl: process.env.PUBLIC_URL ?? '', logger: this.logger }, id, user)
   }
 }

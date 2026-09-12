@@ -428,6 +428,12 @@ export const ReservationService = {
     return { sentTo: data.sentTo }
   },
 
+  /** #336 — envía el enlace de check-in digital al email del huésped (tarjeta "Check-in digital" del modal). */
+  async sendCheckinLinkEmail(id: string): Promise<{ sentTo: string; checkinUrl: string }> {
+    const data = await http.post<{ success: boolean; sentTo: string; checkinUrl: string }>(`/reservas/${id}/send-checkin-link-email`, {})
+    return { sentTo: data.sentTo, checkinUrl: data.checkinUrl }
+  },
+
   /**
    * Deja constancia en `message_logs` de un envío MANUAL al huésped (plantillas de WhatsApp
    * del modal). El envío lo hace el staff en su propio WhatsApp: por eso el estado es

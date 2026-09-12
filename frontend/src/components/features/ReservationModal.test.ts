@@ -19,6 +19,8 @@ vi.mock('@/services/Reservation.service', () => ({
     unlockGuaranteeCard: vi.fn(),
     logManualMessage: vi.fn(),
     sendLockCodeEmail: vi.fn(),
+    // #336 — POST /reservas/:id/send-checkin-link-email desde la tarjeta "Check-in digital".
+    sendCheckinLinkEmail: vi.fn(),
     // Requerimiento 13 — hermanas de una reserva de varias habitaciones (mismo groupId).
     list: vi.fn(),
     // REQ-FDR-02 (#254) — POST /reservas/:id/invoice desde el botón Facturar.
@@ -938,6 +940,97 @@ describe('ReservationModal', () => {
     it('sin billing:create no hay botón Facturar en el header (antes bastaba billing:view)', async () => {
       await open(detailFixture({ invoices: [] }), BILLING_VIEW)
       expect(byTestId('invoice-issue-button')).toBeNull()
+    })
+  })
+
+  // #336 — la tarjeta "Check-in digital" ofrece mandar el enlace por WhatsApp (wa.me + traza
+  // `queued`, como las plantillas) y por correo (el backend envía y registra). Sin teléfono o
+  // sin correo el botón correspondiente queda deshabilitado y se explica por qué.
+  describe('check-in digital #336', () => {
+    const byTestId = (id: string) => document.body.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)
+    const withCode = (over: Partial<ReservationDetail> = {}) => detailFixture({ checkinCode: 'abc123def456', ...over })
+
+    it('con checkinCode renderiza los dos botones habilitados', async () => {
+      await open(withCode())
+      expect(byTestId('checkin-link-wa')).not.toBeNull()
+      expect(byTestId('checkin-link-wa')!.disabled).toBe(false)
+      expect(byTestId('checkin-link-email')).not.toBeNull()
+      expect(byTestId('checkin-link-email')!.disabled).toBe(false)
+      expect(byTestId('checkin-link-no-phone')).toBeNull()
+      expect(byTestId('checkin-link-no-email')).toBeNull()
+    })
+
+    it('WhatsApp: abre wa.me con el enlace, hotel y referencia, y deja traza queued', async () => {
+      vi.mocked(ReservationService.logManualMessage).mockResolvedValue({ id: 'ml1', manual: true } as never)
+      await open(withCode())
+
+      byTestId('checkin-link-wa')!.click()
+      await flushPromises()
+
+      const openMock = vi.mocked(globalThis.open)
+      expect(openMock).toHaveBeenCalledTimes(1)
+      const url = String(openMock.mock.calls[0]![0])
+      expect(url.startsWith('https://wa.me/18095550000?text=')).toBe(true)
+      const text = decodeURIComponent(url.slice('https://wa.me/18095550000?text='.length))
+      expect(text).toContain('/checkin/abc123def456')
+      expect(text).toContain('Hotel Demo')
+      expect(text).toContain('res-1'.slice(-8))
+      expect(text).toContain('check-in digital')
+      expect(text).toContain('Ana Pérez')
+      // Sin emojis: los code points de 4 bytes se corrompen en wa.me (ver lockCodeWaLink).
+      expect(/[\u{10000}-\u{10FFFF}]/u.test(text)).toBe(false)
+
+      expect(vi.mocked(ReservationService.logManualMessage)).toHaveBeenCalledWith('res-1', expect.objectContaining({
+        messageType: 'whatsapp', reference: 'Enlace de check-in digital', status: 'queued',
+      }))
+    })
+
+    it('correo: llama al endpoint con el id de la reserva y confirma el destinatario', async () => {
+      vi.mocked(ReservationService.sendCheckinLinkEmail).mockResolvedValue({ sentTo: 'ana@x.com', checkinUrl: 'http://localhost/checkin/abc123def456' })
+      await open(withCode())
+
+      byTestId('checkin-link-email')!.click()
+      await flushPromises()
+
+      expect(vi.mocked(ReservationService.sendCheckinLinkEmail)).toHaveBeenCalledWith('res-1')
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('ana@x.com'))
+    })
+
+    it('correo: si el backend falla muestra el error y no rompe el modal', async () => {
+      vi.mocked(ReservationService.sendCheckinLinkEmail).mockRejectedValue(new Error('El huésped no tiene email'))
+      await open(withCode())
+
+      byTestId('checkin-link-email')!.click()
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledWith('El huésped no tiene email')
+      expect(byTestId('checkin-link-email')!.disabled).toBe(false)
+    })
+
+    it('sin teléfono: WhatsApp deshabilitado y aviso visible', async () => {
+      await open(withCode({ guest: { id: 'g1', name: 'Ana Pérez', email: 'ana@x.com' } } as Partial<ReservationDetail>))
+      expect(byTestId('checkin-link-wa')!.disabled).toBe(true)
+      expect(byTestId('checkin-link-no-phone')).not.toBeNull()
+      expect(byTestId('checkin-link-email')!.disabled).toBe(false)
+    })
+
+    it('sin correo: email deshabilitado y aviso visible', async () => {
+      await open(withCode({ guest: { id: 'g1', name: 'Ana Pérez', phone: '+18095550000' } } as Partial<ReservationDetail>))
+      expect(byTestId('checkin-link-email')!.disabled).toBe(true)
+      expect(byTestId('checkin-link-no-email')).not.toBeNull()
+      expect(byTestId('checkin-link-wa')!.disabled).toBe(false)
+    })
+
+    it('sin reservations:edit los dos botones quedan deshabilitados', async () => {
+      await open(withCode(), READ_ONLY)
+      expect(byTestId('checkin-link-wa')!.disabled).toBe(true)
+      expect(byTestId('checkin-link-email')!.disabled).toBe(true)
+    })
+
+    it('sin checkinCode la tarjeta no aparece', async () => {
+      await open()
+      expect(byTestId('checkin-link-wa')).toBeNull()
+      expect(byTestId('checkin-link-email')).toBeNull()
     })
   })
 
