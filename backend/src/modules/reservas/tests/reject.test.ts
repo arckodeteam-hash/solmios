@@ -252,6 +252,111 @@ describe('rejectReservation — grupo (un solo cobro en la líder)', () => {
   })
 })
 
+describe('rejectReservation — orden refund → cancelar por reserva (fix revisión #271)', () => {
+  it('afectada checked_in → 409 ANTES de mover plata: refundPayment NO se llama', async () => {
+    const h = harness([pendingItem({ status: 'checked_in' })], { r1: [webCharge('p1', 'r1', 100)] })
+
+    await expect(rejectReservation(h.deps, 'r1', { reason: REASON }, userSameHotel, realAuth)).rejects.toThrow(ConflictError)
+
+    expect(h.refunds).toHaveLength(0)
+    expect(h.repo.store.get('r1').status).toBe('checked_in')
+    expect(h.repo.store.get('r1').approvalStatus).toBe('pending')
+    expect(h.emitted).toHaveLength(0)
+  })
+
+  it('grupo: una hermana checked_in bloquea TODO el rechazo sin reembolsar a la líder', async () => {
+    const lead = pendingItem({ id: 'r1', groupId: 'grp-1', roomId: 'room-1' })
+    const s2 = pendingItem({ id: 'r2', groupId: 'grp-1', roomId: 'room-2', status: 'checked_in' })
+    const h = harness([lead, s2], { r1: [webCharge('p1', 'r1', 200)] })
+
+    await expect(rejectReservation(h.deps, 'r1', { reason: REASON }, userSameHotel, realAuth)).rejects.toThrow(ConflictError)
+
+    expect(h.refunds).toHaveLength(0)
+    expect(h.repo.store.get('r1').status).toBe('confirmed')
+    expect(h.repo.store.get('r2').status).toBe('checked_in')
+  })
+
+  it('grupo con cobro en cada hermana: si el refund de la #2 tira, la #1 queda reembolsada Y cancelada, la #2 intacta, el error propaga', async () => {
+    const lead = pendingItem({ id: 'r1', groupId: 'grp-1', roomId: 'room-1' })
+    const s2 = pendingItem({ id: 'r2', groupId: 'grp-1', roomId: 'room-2' })
+    const refunds: string[] = []
+    const h = harness([lead, s2], { r1: [webCharge('p1', 'r1', 100)], r2: [webCharge('p2', 'r2', 150)] }, {
+      refund: {
+        refundPayment: async (paymentId, amount) => {
+          refunds.push(paymentId)
+          if (paymentId === 'p2') throw new Error('Stripe: rate limited')
+          return { id: `re_${paymentId}`, amount }
+        },
+      },
+    })
+
+    await expect(rejectReservation(h.deps, 'r1', { reason: REASON }, userSameHotel, realAuth)).rejects.toThrow(/Stripe/)
+
+    // Se intentó el refund de cada una, una sola vez.
+    expect(refunds).toEqual(['p1', 'p2'])
+    // #1: consistente — reembolsada y cancelada con su snapshot.
+    const r1 = h.repo.store.get('r1')
+    expect(r1.status).toBe('cancelled')
+    expect(r1.approvalStatus).toBe('rejected')
+    expect(r1.refundAmount).toBe(100)
+    expect(r1.policyApplied?.policyId).toBe('hotel_rejected')
+    expect(h.emitted.map((e) => e.reservationId)).toEqual(['r1'])
+    // #2: sin tocar — el reintento la resuelve.
+    const r2 = h.repo.store.get('r2')
+    expect(r2.status).toBe('confirmed')
+    expect(r2.approvalStatus).toBe('pending')
+    expect(r2.refundAmount).toBeUndefined()
+    // Efectos blandos no corrieron: el rechazo no terminó.
+    expect(h.pushed).toHaveLength(0)
+    expect(h.groupUpdates).toHaveLength(0)
+    expect(h.notified).toHaveLength(0)
+  })
+
+  it('reintento: el cobro ya está `refunded` (Stripe devolvió en el intento anterior) → no llama a Stripe, cancela con refundAmount = ese monto y el email lo lleva', async () => {
+    const alreadyRefunded = { ...webCharge('p1', 'r1', 100), status: 'refunded' }
+    const h = harness([pendingItem()], { r1: [alreadyRefunded] })
+
+    const out = await rejectReservation(h.deps, 'r1', { reason: REASON }, userSameHotel, realAuth)
+
+    expect(h.refunds).toHaveLength(0)
+    expect(out.status).toBe('cancelled')
+    expect(out.approvalStatus).toBe('rejected')
+    expect(out.refundAmount).toBe(100)
+    expect(out.refundedAmount).toBe(100)
+    expect(h.emitted[0].refundAmount).toBe(100)
+
+    await new Promise((r) => setTimeout(r, 0))
+    expect(h.notified).toHaveLength(1)
+    expect(h.notified[0].variables.refund_amount).toBe('100.00 USD')
+  })
+
+  it('reintento de grupo: la #1 ya cancelada no se toca; la #2 (fila ya refunded) se cancela sin volver a Stripe', async () => {
+    const lead = pendingItem({ id: 'r1', groupId: 'grp-1', roomId: 'room-1', status: 'cancelled', approvalStatus: 'rejected', refundAmount: 100 })
+    const s2 = pendingItem({ id: 'r2', groupId: 'grp-1', roomId: 'room-2' })
+    const h = harness([lead, s2], { r1: [{ ...webCharge('p1', 'r1', 100), status: 'refunded' }], r2: [{ ...webCharge('p2', 'r2', 150), status: 'refunded' }] })
+
+    const out = await rejectReservation(h.deps, 'r2', { reason: REASON }, userSameHotel, realAuth)
+
+    expect(h.refunds).toHaveLength(0)
+    expect(out.rejectedCount).toBe(1)
+    expect(out.refundedAmount).toBe(150)
+    expect(h.repo.store.get('r2').status).toBe('cancelled')
+    expect(h.repo.store.get('r2').refundAmount).toBe(150)
+    expect(h.repo.store.get('r1').refundAmount).toBe(100) // intacta
+    expect(h.emitted.map((e) => e.reservationId)).toEqual(['r2'])
+  })
+
+  it('cobro completado + otro ya refunded en la misma reserva: Stripe sólo para el completado, el snapshot suma ambos', async () => {
+    const h = harness([pendingItem()], { r1: [{ ...webCharge('p0', 'r1', 40), status: 'refunded' }, webCharge('p1', 'r1', 60)] })
+
+    const out = await rejectReservation(h.deps, 'r1', { reason: REASON }, userSameHotel, realAuth)
+
+    expect(h.refunds.map(([id]) => id)).toEqual(['p1'])
+    expect(out.refundAmount).toBe(100)
+    expect(out.refundedAmount).toBe(100)
+  })
+})
+
 // ── Controller: validación del body y mapeo de errores a HTTP ──────────────────────────────
 function makeController(service: { reject: (id: string, dto: any, user: any) => Promise<any> }) {
   return new ReservasController(

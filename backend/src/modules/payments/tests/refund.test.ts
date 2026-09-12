@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'bun:test'
 import { refundPayment } from '../usecases/refund'
 import type { CreatePaymentDTO, PaymentDTO } from '../types'
+import { StripeGateway } from '../../../services/payment-gateway/stripe-gateway'
 
 describe('payments — refund (devolución)', () => {
   it('crea el payment de reembolso con status completed (no pending) para que cashFlow y reportes lo resten', async () => {
@@ -180,5 +181,76 @@ describe('payments — refund (devolución)', () => {
     await expect(refundPayment(deps as any, 'p1', undefined, { id: 'u1', role: 'hotel_admin' }))
       .rejects.toThrow(/Only card or checkout-link/)
     expect(stripeCalled).toBe(false)
+  })
+})
+
+// ── #271 MR-06: StripeGateway.refund resuelve `cs_...` → payment_intent antes de refunds.create ──
+// Patrón de payment-gateways/tests/stripe-gateway-confirm.test.ts: gateway REAL, cliente interno
+// de Stripe stubeado. Cualquier llamada no stubeada rompería el test (no hay red).
+describe('StripeGateway.refund (#271)', () => {
+  function makeGateway() {
+    return new StripeGateway({ secretKey: 'sk_test_x', currency: 'usd' }, 'test')
+  }
+
+  /** Stubea sessions.retrieve y refunds.create; registra las llamadas. */
+  function stubStripe(gw: StripeGateway, session: any | (() => Promise<any>)) {
+    const calls = { retrieve: [] as any[], create: [] as any[] }
+    const stripe = (gw as any).stripe
+    stripe.checkout.sessions.retrieve = async (id: string) => {
+      calls.retrieve.push(id)
+      return typeof session === 'function' ? session() : session
+    }
+    stripe.refunds.create = async (params: any) => {
+      calls.create.push(params)
+      return { id: 're_1', status: 'succeeded' }
+    }
+    return calls
+  }
+
+  it('providerRef cs_x → retrieve(cs_x) y refunds.create({ payment_intent: pi_y, amount }) con payment_intent string', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: 'pi_y' })
+
+    const out = await gw.refund('cs_x', 10000)
+
+    expect(calls.retrieve).toEqual(['cs_x'])
+    expect(calls.create).toEqual([{ payment_intent: 'pi_y', amount: 10000 }])
+    expect(out).toEqual({ refundId: 're_1', status: 'succeeded' })
+  })
+
+  it('payment_intent expandido como objeto { id } también sirve', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: { id: 'pi_obj', status: 'succeeded' } })
+
+    await gw.refund('cs_x', 500)
+
+    expect(calls.create).toEqual([{ payment_intent: 'pi_obj', amount: 500 }])
+  })
+
+  it('sesión sin payment_intent → lanza con el id de la sesión en el mensaje y NO llama a refunds.create', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: null })
+
+    await expect(gw.refund('cs_x', 500)).rejects.toThrow(/cs_x/)
+    expect(calls.create).toHaveLength(0)
+  })
+
+  it('providerRef pi_z → NO llama a sessions.retrieve y va directo a refunds.create', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, async () => { throw new Error('no debió consultar la sesión') })
+
+    await gw.refund('pi_z', 700)
+
+    expect(calls.retrieve).toHaveLength(0)
+    expect(calls.create).toEqual([{ payment_intent: 'pi_z', amount: 700 }])
+  })
+
+  it('sin amountMinor → refund total (sin `amount` en los params)', async () => {
+    const gw = makeGateway()
+    const calls = stubStripe(gw, { id: 'cs_x', payment_intent: 'pi_y' })
+
+    await gw.refund('pi_y')
+
+    expect(calls.create).toEqual([{ payment_intent: 'pi_y' }])
   })
 })
