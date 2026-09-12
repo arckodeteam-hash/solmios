@@ -580,7 +580,16 @@ export interface PublicReservation {
   promoCode?: string | null
   /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación
    *  instantánea" y todavía no revisó esta reserva. null = no aplica. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #271 (MR-06) — plazo (horas) en que el hotel se compromete a revisar una reserva
+   *  pendiente. Default 24 si el hotel no lo configuró. */
+  approvalDeadlineHours?: number
+  /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: el motivo que el hotel
+   *  escribió para el huésped. `null` en cualquier otro estado. */
+  rejectionReason?: string | null
+  /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: lo reembolsado al medio de
+   *  pago original. `null` en cualquier otro estado. */
+  refundAmount?: number | null
   /** #266 (MR-01) — motivo de cancelación. 'payment_timeout' = venció sin completar el pago
    *  (cron / checkout.session.expired): la confirmación muestra "venció, volvé a reservar". */
   cancellationReason?: string | null
