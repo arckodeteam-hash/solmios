@@ -13,6 +13,9 @@ import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
 import { buildOpenChannelMappings, roomTypesFromRooms } from './usecases/open-channel-connect'
 import { CHANNEX_WEBHOOK_PATH, handleChannexWebhook, registerChannexWebhook, buildCallbackUrl, getOrCreateWebhookSecret } from './usecases/channex-webhook'
+import { setChannexHttpEventSink } from './usecases/channex-http'
+import { createChannexTrail, createPropertyResolver } from './usecases/channex-trail'
+import { SYNC_ACTIONS, SYNC_STATUSES, listChannexLog } from './usecases/sync-log'
 import {
   requestChannel, updateChannelRequest, scheduleAppointment, addChannelRequestNote, forHotel,
   CHANNEL_REQUEST_TRANSITIONS,
@@ -67,6 +70,17 @@ export function CanalesModule() {
       const userRepo = new OrmRepository<any>(orm, 'Users')
       const log = logger.child('canales')
       const syncLogRepo = new OrmRepository<any>(orm, 'SyncLog')
+
+      // #347 — Todo lo que le pasa al transporte contra Channex (espera por rate limit, 429, 5xx,
+      // timeout, reintentos agotados, 4xx) queda en `sync_log` del hotel dueño de la property, o en
+      // `platform` si no se puede saber. Es lo que hace visible en /admin/channex-queue › Registro si
+      // un push salió, cuándo, y si no salió por qué. Sin esto todo eso vivía solo en journalctl.
+      const trail = createChannexTrail({
+        syncLogRepo,
+        resolveHotel: createPropertyResolver((model, q) => orm.findMany(model, q)),
+        logger: log,
+      })
+      setChannexHttpEventSink(trail.onHttpEvent)
       const queries = new CanalesQueries(orm)
       const service = new CanalesService(repo, userRepo, log, cache, auth, queries, syncLogRepo)
       const controller = new CanalesController(service, log)
@@ -159,6 +173,22 @@ export function CanalesModule() {
         const body = (req.body || {}) as Record<string, unknown>
         if (body.planExpiresAt !== undefined) validateSchema(ChannexAccountSchema, { planExpiresAt: body.planExpiresAt })
         return { status: 200, body: await channexAdmin.save(body) }
+      })
+
+      // GET /api/admin/channex/log — el registro de TODOS los hoteles (#347), paginado y filtrable.
+      // Es la fuente de la pestaña "Registro" de /admin/channex-queue: ahí se ve si un push salió
+      // (fila con task ids), si esperó (throttled), si Channex lo rechazó (429/5xx/4xx) y qué hizo
+      // el webhook con cada reserva. `hotelId=platform` son las filas de cuenta.
+      router.get('/api/admin/channex/log', adminOnly, async (req: any) => {
+        const q = req.query || {}
+        const page = await listChannexLog(syncLogRepo, {
+          hotelId: q.hotelId ? String(q.hotelId) : undefined,
+          status: q.status ? String(q.status) : undefined,
+          action: q.action ? String(q.action) : undefined,
+          page: Number(q.page) || 1,
+          limit: Number(q.limit) || 50,
+        })
+        return { status: 200, body: { ...page, filters: { actions: SYNC_ACTIONS, statuses: SYNC_STATUSES } } }
       })
 
       // Estado del registro: qué callbacks tiene hoy la cuenta y cuál usaríamos nosotros. Si Channex
@@ -372,6 +402,7 @@ export function CanalesModule() {
         ingestRevision: (revisionId: string) => service.syncOneBookingRevision(revisionId),
         // Sin `payload` (webhook viejo con send_data:false, #342) se barre el feed entero: mismo `run` del cron.
         syncFeed: () => service.syncAllBookingRevisions(),
+        trail,   // #347: cada callback deja fila en sync_log (ingestada / plan B / rechazada)
         logger: log,
       }
       router.post(CHANNEX_WEBHOOK_PATH, async (req: any) => handleChannexWebhook(webhookDeps, req))
