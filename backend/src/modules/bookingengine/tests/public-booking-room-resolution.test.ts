@@ -1,23 +1,28 @@
-// bookingengine/tests/public-booking-room-resolution.test.ts — FIX 2026-07-30.
+// bookingengine/tests/public-booking-room-resolution.test.ts — REQ-HAC-05 (#260).
 //
-// Bug confirmado por QA visual (Playwright): el flujo público de reserva daba 404 "Habitación
-// no encontrada" en el 100% de los intentos. Root cause: `public-rates.ts` no tiene entidad
-// RoomType propia — el `id` que devuelve por tipo de habitación ES el string `room.type`
-// ("double"), NO un UUID de `Rooms`. El widget lo mandaba tal cual como `roomId` →
-// `orm.findById('Rooms', 'double')` → siempre null → 404.
+// Antecedente (FIX 2026-07-30): `public-rates.ts` no tiene entidad RoomType propia — el `id` que
+// publica por tipo ES el string `room.type` ("double"), y el widget lo mandaba como `roomId` →
+// 404 siempre. Desde entonces el guest elige un TIPO. Hasta HAC-05 el backend elegía además la
+// unidad física al crear; ahora NO: la reserva del widget nace POR TIPO, con `roomType` y
+// `roomId: null`, y la unidad la asigna recepción (`reservas/usecases/assign-room.ts`). La venta
+// la decide SOLO `availableOfType` (rooms − booked por noche, contando reservas asignadas o sin
+// asignar y bloqueos).
 //
-// Fix: `createPublicBookingDirect` ahora resuelve la habitación física en el momento de crear
-// la reserva (no en la cotización) a partir de `roomType` + `hotelId` + disponibilidad para las
-// fechas pedidas, minimizando la ventana de carrera. `roomId` real sigue soportado (compat).
-//
-// Cubre (spec del fix):
-//  (a) reserva exitosa mandando SOLO `roomType` (sin `roomId`) → elige la unidad libre más
-//      barata entre las del type.
-//  (b) 409 cuando el type existe pero no hay unidades libres para esas fechas (overlap).
-//  (c) 404 cuando el type no existe en absoluto para el hotel.
-//  (d) compat: reserva exitosa mandando un `roomId` real (comportamiento viejo intacto, no pasa
-//      por la resolución por tipo).
+// Cubre:
+//  (a) alta mandando SOLO `roomType` → 201, fila con `roomId === null` y `roomType`; respuesta
+//      con `roomType` y `roomId` null.
+//  (a2) unidades no vendibles (mantenimiento) no cuentan como inventario del tipo.
+//  (b) N unidades del tipo con N reservas activas (asignadas o sin asignar) → 409; N−1 → 201.
+//  (b2) reservas cancelled/no_show NO consumen inventario.
+//  (c) compat: `roomId` real → 201, fila con `roomType = room.type` y `roomId` null (la unidad
+//      pedida NO se asigna); `roomId` de otro hotel → assertOwnership.
+//  (d) tipo inexistente en el hotel → 404 (no confundir con 409); sin `roomId` resoluble ni
+//      `roomType` → 404 "Habitación no encontrada".
 //  (e) 400 cuando no viene ni `roomId` ni `roomType`.
+//  (f) capacidad contra el PERFIL del tipo (la mayor unidad vendible): no entra → 409; entra en
+//      alguna → 201 sin unidad; sin `capacity` en la fila no bloquea.
+//  (g) precio: fallback = MÍNIMO `basePrice` entre las unidades vendibles del tipo.
+//  (h) carrera: el re-chequeo por tipo dentro de la tx rebota con 409 si el tipo se agotó.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 
@@ -32,16 +37,20 @@ const baseBody = {
   children: 0,
 }
 
+const OVERSOLD = 'No hay habitaciones de este tipo disponibles para esas fechas'
+
 /** Mock de orm con soporte real para `findMany('Rooms', {hotelId, type})` (a diferencia de los
  *  mocks de otros archivos de test, que ignoran los filtros — acá los necesitamos para probar
- *  la resolución por tipo). */
+ *  la venta por tipo). `Reservations` acumula lo creado para que el re-chequeo de la tx lo vea. */
 function makeOrm(opts: {
   rooms?: any[]
   reservations?: any[]
+  blocks?: any[]
 } = {}) {
   const created: any[] = []
   const rooms = opts.rooms ?? []
-  const reservations = opts.reservations ?? []
+  const reservations = [...(opts.reservations ?? [])]
+  const lockCalls: Array<{ model: string; filter: any }> = []
   const orm: any = {
     findById: async (model: string, id: string) => {
       if (model !== 'Rooms') return null
@@ -54,73 +63,133 @@ function makeOrm(opts: {
           (!filters?.type || r.type === filters.type))
       }
       if (model === 'Reservations') return reservations
+      if (model === 'RoomBlocks') return opts.blocks ?? []
       return []
     },
     create: async (model: string, payload: any) => {
       const row = { id: payload.id || crypto.randomUUID(), ...payload }
       created.push({ model, row })
+      if (model === 'Reservations') reservations.push(row)
       return row
+    },
+    updateMany: async (model: string, filter: any) => {
+      lockCalls.push({ model, filter })
+      return model === 'Rooms' ? rooms.filter((r) => r.hotelId === filter.hotelId && r.type === filter.type).length : 0
     },
     transaction: async (cb: (tx: any) => Promise<any>) => cb(orm),
     update: async () => null,
     findOne: async () => null,
   }
-  return { orm, created }
+  return { orm, created, reservations, lockCalls }
 }
 
-describe('createPublicBookingDirect — resolución de habitación por roomType (FIX 2026-07-30)', () => {
-  it('(a) roomType sin roomId → elige la unidad libre más barata del tipo', async () => {
-    const { orm, created } = makeOrm({
-      rooms: [
-        { id: 'r-expensive', hotelId: 'h1', type: 'double', basePrice: 150, status: 'available' },
-        { id: 'r-cheap', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' },
-      ],
+const double = (id: string, extra: any = {}) => ({ id, hotelId: 'h1', type: 'double', basePrice: 100, status: 'available', ...extra })
+const active = (over: any = {}) => ({ id: crypto.randomUUID(), hotelId: 'h1', roomType: 'double', roomId: null, status: 'confirmed', checkIn: '2026-08-09', checkOut: '2026-08-11', ...over })
+
+describe('createPublicBookingDirect — alta por TIPO sin unidad (REQ-HAC-05 #260)', () => {
+  it('(a) roomType sin roomId → 201, fila con roomId null y roomType; la respuesta trae roomType', async () => {
+    const { orm, created, lockCalls } = makeOrm({
+      rooms: [double('r-expensive', { basePrice: 150 }), double('r-cheap')],
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-cheap')
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('double')
     const reservationCreate = created.find((c) => c.model === 'Reservations')
-    expect(reservationCreate.row.roomId).toBe('r-cheap')
+    expect(reservationCreate.row.roomId).toBeNull()
+    expect(reservationCreate.row.roomType).toBe('double')
+    // El lock de la tx es sobre las unidades del TIPO, no sobre una unidad (el de `Hotels` es del
+    // helper de huéspedes, MR-08).
+    expect(lockCalls.filter((l) => l.model === 'Rooms')).toEqual([{ model: 'Rooms', filter: { hotelId: 'h1', type: 'double' } }])
   })
 
-  it('(a2) roomType ignora habitaciones no disponibles (status != available)', async () => {
+  it('(a2) unidades no vendibles (status != available) no cuentan como inventario del tipo', async () => {
     const { orm } = makeOrm({
-      rooms: [
-        { id: 'r-oos', hotelId: 'h1', type: 'double', basePrice: 50, status: 'mantenimiento' },
-        { id: 'r-ok', hotelId: 'h1', type: 'double', basePrice: 100, status: 'disponible' },
-      ],
+      rooms: [double('r-oos', { basePrice: 50, status: 'mantenimiento' }), double('r-ok', { status: 'disponible' })],
+      reservations: [active()],
     })
-    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
-    expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-ok')
-  })
-
-  it('(b) 409 cuando el tipo existe pero todas las unidades están ocupadas en esas fechas', async () => {
-    const { orm } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }],
-      reservations: [
-        { roomId: 'r1', status: 'confirmed', checkIn: '2026-08-09', checkOut: '2026-08-11' },
-      ],
-    })
+    // 1 vendible + 1 activa sin asignar → agotado, aunque la de mantenimiento "exista".
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
     expect(res.status).toBe(409)
-    expect(res.body.error).toBe('No hay habitaciones de este tipo disponibles para esas fechas')
+    expect(res.body.error).toBe(OVERSOLD)
+  })
+
+  it('(b) N unidades con N reservas activas (asignadas o sin asignar) → 409; N−1 → 201', async () => {
+    const rooms = [double('r1'), double('r2'), double('r3')]
+    const full = makeOrm({
+      rooms,
+      reservations: [active({ roomId: 'r1' }), active(), active({ status: 'pending' })],
+    })
+    const res = await createPublicBookingDirect(full.orm, { ...baseBody, roomType: 'double' })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe(OVERSOLD)
+    expect(full.created.find((c) => c.model === 'Reservations')).toBeUndefined()
+
+    const oneLeft = makeOrm({ rooms, reservations: [active({ roomId: 'r1' }), active()] })
+    const ok = await createPublicBookingDirect(oneLeft.orm, { ...baseBody, roomType: 'double' })
+    expect(ok.status).toBe(201)
+    expect(ok.body.reservation.roomId).toBeNull()
   })
 
   it('(b2) reservas cancelled/no_show NO cuentan como ocupación → sigue disponible', async () => {
     const { orm } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }],
+      rooms: [double('r1')],
       reservations: [
-        { roomId: 'r1', status: 'cancelled', checkIn: '2026-08-10', checkOut: '2026-08-12' },
-        { roomId: 'r1', status: 'no_show', checkIn: '2026-08-10', checkOut: '2026-08-12' },
+        active({ roomId: 'r1', status: 'cancelled', checkIn: '2026-08-10', checkOut: '2026-08-12' }),
+        active({ status: 'no_show', checkIn: '2026-08-10', checkOut: '2026-08-12' }),
       ],
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r1')
+    expect(res.body.reservation.roomId).toBeNull()
   })
 
-  it('(c) 404 cuando el tipo no existe en absoluto para el hotel (no confundir con 409)', async () => {
+  it('(b3) un bloqueo (room_blocks) descuenta una unidad del tipo', async () => {
+    const { orm } = makeOrm({
+      rooms: [double('r1')],
+      blocks: [{ id: 'b1', hotelId: 'h1', roomId: 'r1', startDate: '2026-08-11', endDate: '2026-08-11' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe(OVERSOLD)
+  })
+
+  it('(c) compat — roomId real → 201, fila con roomType = room.type y roomId null (la unidad NO se asigna)', async () => {
+    const { orm, created } = makeOrm({ rooms: [double('r1'), double('r-other', { basePrice: 10 })] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1' })
+    expect(res.status).toBe(201)
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('double')
+    const reservationCreate = created.find((c) => c.model === 'Reservations')
+    expect(reservationCreate.row.roomId).toBeNull()
+    expect(reservationCreate.row.roomType).toBe('double')
+  })
+
+  it('(c2) compat — roomId real + roomType distinto a la vez → manda el tipo de la unidad real', async () => {
+    const { orm, created } = makeOrm({
+      rooms: [double('r1'), { id: 's1', hotelId: 'h1', type: 'suite', basePrice: 300, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 's1', roomType: 'double' })
+    expect(res.status).toBe(201)
+    expect(created.find((c) => c.model === 'Reservations').row.roomType).toBe('suite')
+  })
+
+  it('(c3) compat — roomId real con el tipo agotado → 409 (no se saltea la venta por tipo mandando el id físico)', async () => {
+    const { orm } = makeOrm({ rooms: [double('r1')], reservations: [active()] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1' })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe(OVERSOLD)
+  })
+
+  it('(c4) compat — roomId real pasa por assertOwnership contra el hotel del body', async () => {
+    const { orm } = makeOrm({ rooms: [double('r1', { hotelId: 'h-otro' })] })
+    const calls: any[] = []
+    const auth = { assertOwnership: (a: any, b: any) => { calls.push([a, b]); if (a !== b) throw new Error('forbidden') } }
+    await expect(createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1' }, undefined, auth)).rejects.toThrow('forbidden')
+    expect(calls).toEqual([['h-otro', 'h1']])
+  })
+
+  it('(d) 404 cuando el tipo no existe en absoluto para el hotel (no confundir con 409)', async () => {
     const { orm } = makeOrm({
       rooms: [{ id: 'r1', hotelId: 'h1', type: 'suite', basePrice: 300, status: 'available' }],
     })
@@ -129,28 +198,18 @@ describe('createPublicBookingDirect — resolución de habitación por roomType 
     expect(res.body.error).toBe('Tipo de habitación no encontrado')
   })
 
-  it('(d) compat — roomId real sigue funcionando sin pasar por la resolución por tipo', async () => {
-    const { orm, created } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }],
-    })
-    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1' })
-    expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r1')
-    const reservationCreate = created.find((c) => c.model === 'Reservations')
-    expect(reservationCreate.row.roomId).toBe('r1')
+  it('(d2) roomId que no resuelve y sin roomType → 404 "Habitación no encontrada" (como antes)', async () => {
+    const { orm } = makeOrm({ rooms: [double('r1')] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'no-existe' })
+    expect(res.status).toBe(404)
+    expect(res.body.error).toBe('Habitación no encontrada')
   })
 
-  it('(d2) compat — roomId real + roomType presente a la vez → gana roomId (no busca por tipo)', async () => {
-    const { orm } = makeOrm({
-      rooms: [
-        { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' },
-        { id: 'r-other', hotelId: 'h1', type: 'double', basePrice: 10, status: 'available' },
-      ],
-    })
-    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1', roomType: 'double' })
+  it('(d3) roomId que no resuelve pero roomType válido → se vende por tipo (el `id` de /rates es el type)', async () => {
+    const { orm } = makeOrm({ rooms: [double('r1')] })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'double', roomType: 'double' })
     expect(res.status).toBe(201)
-    // Si hubiera caído al path de roomType, habría elegido 'r-other' (más barata).
-    expect(res.body.reservation.roomId).toBe('r1')
+    expect(res.body.reservation.roomType).toBe('double')
   })
 
   it('(e) 400 cuando no viene ni roomId ni roomType', async () => {
@@ -160,18 +219,16 @@ describe('createPublicBookingDirect — resolución de habitación por roomType 
     expect(res.body.error).toContain('roomId o roomType')
   })
 
-  // ─── Capacidad física (defensa en profundidad — la matriz de /rates ya deshabilita esto en
-  // la UI, pero un POST directo no pasa por ahí, ver comentario del fix en public-booking.ts) ──
-  it('(f) roomType con TODAS las unidades sin capacidad para adults+children → 409, no crea nada', async () => {
-    const { orm, created } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, capacity: 2, status: 'available' }],
-    })
+  // ─── Capacidad contra el PERFIL del tipo (la mayor unidad vendible) ────────────────────────
+  it('(f) ninguna unidad del tipo admite adults+children → 409, no crea nada', async () => {
+    const { orm, created } = makeOrm({ rooms: [double('r1', { capacity: 2 })] })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 3, children: 1 })
     expect(res.status).toBe(409)
+    expect(res.body.error).toContain('admite hasta 2')
     expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
   })
 
-  it('(f2) roomType con capacidad MIXTA → salta la más barata que no entra y elige la que sí', async () => {
+  it('(f2) capacidad MIXTA: entra en la unidad grande del tipo → 201 sin unidad (recepción elige cuál)', async () => {
     const { orm } = makeOrm({
       rooms: [
         { id: 'r-cheap-chica', hotelId: 'h1', type: 'familiar', basePrice: 80, capacity: 2, status: 'available' },
@@ -180,13 +237,12 @@ describe('createPublicBookingDirect — resolución de habitación por roomType 
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 4, children: 0 })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-grande')
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('familiar')
   })
 
-  it('(f3) roomId explícito (path de compat) también respeta la capacidad — 409, no crea nada', async () => {
-    const { orm, created } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, capacity: 2, status: 'available' }],
-    })
+  it('(f3) roomId explícito (compat) también respeta la capacidad del tipo — 409, no crea nada', async () => {
+    const { orm, created } = makeOrm({ rooms: [double('r1', { capacity: 2 })] })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1', adults: 5, children: 0 })
     expect(res.status).toBe(409)
     expect(res.body.error).toContain('admite hasta 2')
@@ -194,10 +250,40 @@ describe('createPublicBookingDirect — resolución de habitación por roomType 
   })
 
   it('(f4) sin `capacity` en la fila (dato viejo/incompleto) no bloquea — mismo criterio que availability.ts', async () => {
-    const { orm } = makeOrm({
-      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }],
-    })
+    const { orm } = makeOrm({ rooms: [double('r1')] })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 6, children: 0 })
     expect(res.status).toBe(201)
+  })
+
+  // ─── Precio ────────────────────────────────────────────────────────────────────────────────
+  it('(g) el fallback nightly es el MÍNIMO basePrice entre las unidades vendibles del tipo (lo que publica /rates)', async () => {
+    const { orm, created } = makeOrm({
+      rooms: [double('r-expensive', { basePrice: 150 }), double('r-cheap', { basePrice: 100 }), double('r-oos', { basePrice: 10, status: 'mantenimiento' })],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
+    expect(res.status).toBe(201)
+    // 2 noches × 100 (la de 10 está fuera de servicio: no es vendible).
+    expect(res.body.totalBreakdown.subtotal).toBe(200)
+    expect(created.find((c) => c.model === 'Reservations').row.totalAmount).toBe(200)
+  })
+
+  // ─── Carrera: re-chequeo por tipo dentro de la tx ──────────────────────────────────────────
+  it('(h) el tipo se agota entre el chequeo de afuera y la tx → 409 y no se crea la fila', async () => {
+    const { orm, created } = makeOrm({ rooms: [double('r1')] })
+    const outer = orm.findMany
+    let outerChecks = 0
+    orm.findMany = async (model: string, filters?: any) => {
+      const rows = await outer(model, filters)
+      // Después de la primera lectura por tipo (afuera de la tx), "alguien" vende la última unidad.
+      if (model === 'Reservations' && filters?.roomType === 'double' && outerChecks++ === 0) {
+        rows.push(active())
+        return rows.slice(0, -1)
+      }
+      return rows
+    }
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double' })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe(OVERSOLD)
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
   })
 })

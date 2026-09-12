@@ -136,6 +136,9 @@ export class CanalesService {
   }
   async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return withAvailabilityTrail(this.syncLogRepo, hotelId, () => pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType)) }
   async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> { return withAvailabilityTrail(this.syncLogRepo, hotelId, () => pushAvailabilityForRoom(this.availDeps(), hotelId, roomId)) }
+  /** REQ-HAC-05 (#260) — push por TIPO vendido: la reserva del widget nace sin unidad (`roomId` null),
+   *  así que no hay `roomId` desde el que resolver el tipo. Lo consume `shared/utils/push-availability.ts#createPushAvailabilityByType`. */
+  async pushAvailabilityByRoomType(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return withAvailabilityTrail(this.syncLogRepo, hotelId, () => pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType)) }
 
   // ─── Channel API delegado a usecase ──────────────────────────────────
   async testConnection(hotelId: string, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> { return this.channelApi.testConnection(await this.getConfig(hotelId), channel, otaHotelId) }

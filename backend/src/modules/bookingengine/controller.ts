@@ -134,6 +134,10 @@ export class BookingengineController {
     /** #272 — `Groups`: la cancelación pública de un grupo marca `groups.status='cancelled'`.
      *  Al final, mismo motivo que el resto de los deps nuevos. Opcional, best-effort. */
     private readonly groupsRepo?: RepositoryAdapter<any>,
+    /** REQ-HAC-05 (#260) — push de disponibilidad a las OTAs por TIPO: la reserva del widget nace
+     *  sin unidad (`roomId` null), así que `pushAvailability` (por habitación) ya no aplica al
+     *  alta individual. Al final, mismo motivo que el resto de los deps nuevos. */
+    private readonly pushAvailabilityByType?: (hotelId: string, roomType: string) => void,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -436,6 +440,8 @@ export class BookingengineController {
       this.service, this.logger,
       stripeUrls,
       extraDeps,
+      // REQ-HAC-05 — la reserva nace por tipo: el push a las OTAs va por `roomType`.
+      this.pushAvailabilityByType,
     )
     // Bug Playwright (auditoría E2E 2026-09-04): sin este aviso, `onBookingCreated` nunca se
     // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el

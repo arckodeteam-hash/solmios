@@ -18,15 +18,15 @@
 //     taxes, total } se devuelve en la respuesta para que el widget muestre el detalle y Stripe
 //     cobre el `total`.
 //   - `roomAmenities` (REQ-01 #290): keys `custom:*` de las amenidades PERSONALIZADAS de la
-//     habitación (filas `RoomAmenities` con name/price). El catálogo es POR HABITACIÓN FÍSICA:
-//     se prefiere la unidad del tipo que las ofrece y se cobra el precio real de la asignada
+//     habitación (filas `RoomAmenities` con name/price). El catálogo es POR HABITACIÓN FÍSICA,
+//     pero la reserva nace sin unidad (REQ-HAC-05): se resuelve contra la UNIÓN de las unidades
+//     vendibles del tipo y se cobra el precio real de esa fila — el más barato si dos la ofrecen
 //     (nunca el del body). Ver `public-room-amenities.ts`.
 //   - `needsCrib` (#292): la cuna ES la amenidad personalizada `custom:cuna` de la habitación
-//     (`CRIB_AMENITY_KEY`). Sí/No; sólo cuenta si la composición tiene un bebé Y la unidad
-//     FINALMENTE asignada la publica. "Sí" fuerza esa key en `roomAmenities` (se prefiere una
-//     unidad con cuna — antes que otras keys — y se cobra SU precio); "No" la quita aunque el
-//     body la mande. `needsCrib`/`cribCount` (1/0) se persisten como espejo EXACTO de esa línea:
-//     `needsCrib === (roomAmenities tiene custom:cuna)`, decidido después de resolverla.
+//     (`CRIB_AMENITY_KEY`). Sí/No; sólo cuenta si la composición tiene un bebé Y alguna unidad
+//     del tipo la publica. "Sí" fuerza esa key en `roomAmenities` (y se cobra SU precio); "No" la
+//     quita aunque el body la mande. `needsCrib`/`cribCount` (1/0) se persisten como espejo EXACTO
+//     de esa línea: `needsCrib === (roomAmenities tiene custom:cuna)`, decidido después de resolverla.
 //   - `childAmenities` en el body se IGNORA (#292: el catálogo global `child_amenities` se dio de
 //     baja). `Reservations.childAmenities`/`childAmenitiesTotal` y `priceBreakdown.
 //     childAmenitiesTotal` se siguen escribiendo como `[]`/`0` para que los lectores de reservas
@@ -39,43 +39,51 @@
 //   panel la muestra como "pendiente de pago". NO tirar 500: rompería la creación de reserva
 //   por un problema de Stripe, que es una dependencia opcional por hotel.
 //
-// FIX 2026-07-30 (bug 404 "Habitación no encontrada" en el 100% de los intentos) — Resolución
-// de habitación por `roomType`:
-//   Root cause: `public-rates.ts` no tiene entidad RoomType propia — el `id` que devuelve por
-//   tipo de habitación ES el string `room.type` ("double"), NO un UUID de `Rooms`. El widget
-//   lo mandaba tal cual como `roomId`, y la búsqueda por id en `Rooms` con ese string nunca
-//   matcheaba → siempre 404.
-//   Decisión de diseño: el guest elige un TIPO, no una unidad física concreta. La asignación
-//   de la habitación física pasa a ser responsabilidad del BACKEND, en el momento de crear la
-//   reserva (no en la cotización), para minimizar la ventana de carrera:
-//     - Si el body trae `roomId` Y resuelve a una fila real de `Rooms` → se usa esa habitación
-//       tal cual (compat con callers/integradores viejos que ya mandan un id real).
-//     - Si no, y trae `roomType` → REQ-HAC-02 (#257): la venta se decide por TIPO con
-//       `availableOfType` (`shared/usecases/type-availability.ts`): `rooms − booked` por noche,
-//       contando reservas del tipo asignadas O sin asignar (desde HAC-01 una `confirmed` puede
-//       vivir sin `roomId`). Si el tipo no tiene inventario → 409. Sólo después se elige la
-//       unidad física entre las vendibles del tipo sin reserva asignada ni bloqueo, con
-//       capacidad suficiente, la de menor `basePrice` (determinístico — la más barata).
-//     - La red de seguridad final (antes de crear la reserva) repite `availableOfType` para el
-//       caso borde de que el tipo se agote justo entre la cotización y el submit → 409.
-//     - Tipo inexistente en el hotel → 404. Tipo existente pero sin unidades libres → 409 (no
-//       404: el tipo SÍ existe, solo no hay disponibilidad para esas fechas).
+// REQ-HAC-05 (#260) — La reserva del widget nace POR TIPO, sin unidad (`roomId: null`):
+//   Antecedente (FIX 2026-07-30): `public-rates.ts` no tiene entidad RoomType propia — el `id`
+//   que publica por tipo ES el string `room.type` ("double"), y el widget lo mandaba como
+//   `roomId` → 404 siempre. Desde entonces el guest elige un TIPO y el backend resolvía la
+//   unidad física al crear. Con HAC-01/02 (#256/#257) la habitación se asigna al check-in
+//   (`reservas/usecases/assign-room.ts`) y la disponibilidad se cuenta por tipo, así que elegir
+//   unidad acá era trabajo de más y la fuente del overbooking cruzado con las OTAs (una unidad
+//   "elegida" acá que la ingesta también asignaba).
+//   Decisión de diseño: el widget NO asigna habitación. La fila se crea con `roomType` (string
+//   = `rooms.type`) y `roomId: null`; la unidad la elige recepción después.
+//     - Entrada: `roomType`. Compat: si el body trae `roomId` y resuelve a una fila real de
+//       `Rooms`, se deriva `roomType = room.type` (y se valida que sea del hotel) — pero la
+//       reserva IGUAL nace sin unidad. Sin tipo resoluble → 404 "Habitación no encontrada";
+//       tipo sin inventario en el hotel → 404 "Tipo de habitación no encontrado".
+//     - Venta: SOLO `availableOfType` (`shared/usecases/type-availability.ts`): `rooms − booked`
+//       por noche contando reservas del tipo asignadas O sin asignar, más los bloqueos de sus
+//       unidades. `available < 1` → 409. Un tipo con la tarifa cerrada (stop-sell) → 409.
+//     - Capacidad: se valida contra el "perfil del tipo" — el máximo `capacity`/`maxAdults`/
+//       `maxChildren` entre las unidades vendibles (o la política `room_type_capacity` si el
+//       hotel la configuró). Si no entra en ninguna unidad del tipo → 409.
+//     - Precio: la tarifa sale por tipo (`baseRates`/`pickRate`), con fallback al MÍNIMO
+//       `basePrice` entre las unidades vendibles — lo mismo que `/rates` publica como "desde".
+//     - Amenidades de habitación (#290) y cuna (#292): el catálogo es la UNIÓN de `RoomAmenities`
+//       de las unidades vendibles del tipo (misma key → la más barata). `cribUnavailable` = ninguna
+//       unidad del tipo ofrece la cuna.
+//     - Concurrencia: dentro de la tx se lockean las unidades del tipo (UPDATE sobre
+//       `Rooms {hotelId, type}`) y se REPITE `availableOfType` con el lock tomado; si ya no entra
+//       → 409 y rollback.
+//     - Push a las OTAs por TIPO (`pushAvailabilityByType`), no por unidad.
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
-import { availableOfType, countAvailableOfType, stayOverlaps, typeAvailabilityPortFromOrm, type TypeAvailabilityResult } from '../../../shared/usecases/type-availability'
+import { availableOfType, typeAvailabilityPortFromOrm } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
-import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
+import { closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
-import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
+import { CRIB_AMENITY_KEY, customRoomAmenities, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
 import { round2 } from '../../../shared/utils/money'
 import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
@@ -161,8 +169,8 @@ export interface TotalBreakdown {
    *  #233) se dio de baja. Se conserva en el tipo porque `priceBreakdown` de reservas anteriores
    *  lo trae con importe y los lectores (confirmación pública, modal del panel) lo suman. */
   childAmenitiesTotal: number
-  /** REQ-01 (#290) — Σ amenidad.price × unidades de las amenidades PERSONALIZADAS de la
-   *  habitación asignada (`RoomAmenities` custom), INCLUIDA la cuna (`custom:cuna`, #292) cuando
+  /** REQ-01 (#290) — Σ amenidad.price × unidades de las amenidades PERSONALIZADAS del tipo
+   *  vendido (`RoomAmenities` custom de sus unidades), INCLUIDA la cuna (`custom:cuna`, #292) cuando
    *  `needsCrib`. 0 si no se pidió ninguna. Ya incluido en `subtotal`. */
   roomAmenitiesTotal: number
   /** MR-03 (#268) — régimen: unitPrice × (adultos + niños con plaza) × noches (0 si `room_only`
@@ -177,53 +185,18 @@ export interface TotalBreakdown {
 }
 
 /**
+ * Error centinela para abortar cuando el TIPO se agotó entre nuestro `availableOfType` de afuera y
+ * el insert (REQ-HAC-05). Mismo mecanismo que el del promo: se atrapa afuera de la tx y devuelve 409.
+ */
+class RoomTypeSoldOutConcurrentlyError extends Error {
+  constructor() { super('room_type_sold_out_concurrently'); this.name = 'RoomTypeSoldOutConcurrentlyError' }
+}
+
+/**
  * Error centinela para abortar la transacción cuando el promo se agotó concurrentemente
  * (alguien más lo usó entre la validación upfront y el commit). No se relanza — se atrapa
  * afuera de la tx y se devuelve 409 con `promoReason: 'max_uses_reached'`.
  */
-/**
- * Error centinela para abortar cuando la habitación se vendió entre nuestro chequeo de solape y
- * el insert. Mismo mecanismo que el del promo: se atrapa afuera de la tx y devuelve 409.
- */
-/**
- * REQ-HAC-02 — disponibilidad por TIPO para la unidad YA resuelta (red de seguridad final de
- * `createPublicBookingDirect`). Es `countAvailableOfType` con las mismas lecturas acotadas de
- * `availableOfType` más dos que la consulta por `roomType` sola no cubre:
- *  - la unidad resuelta SIEMPRE forma parte del inventario del tipo aunque `Rooms {hotelId, type}`
- *    no la devuelva (fila vieja sin `type`): sin eso el guard contaría "0 unidades" y rechazaría
- *    una habitación que existe;
- *  - las reservas ASIGNADAS a esa unidad se leen aparte (`Reservations {roomId}`): una reserva
- *    asignada a la unidad con OTRO `roomType` (upgrade desde el panel) no sale en la consulta por
- *    tipo y aun así la ocupa. Es la misma lectura que la tx repite con el lock tomado.
- */
-async function availabilityForResolvedRoom(
-  orm: any,
-  hotelId: string,
-  room: any,
-  checkIn: string,
-  checkOut: string,
-): Promise<TypeAvailabilityResult> {
-  const type = String(room.type ?? '')
-  const port = typeAvailabilityPortFromOrm(orm)
-  const [rawRooms, byType, byRoom, blocks] = await Promise.all([
-    port.rooms.findMany({ hotelId, type }),
-    port.reservations.findMany({ hotelId, roomType: type }),
-    port.reservations.findMany({ roomId: room.id }),
-    port.blocks!.findMany({ hotelId }),
-  ])
-  const rooms = (rawRooms ?? []).some((r: any) => r && r.id === room.id) ? rawRooms : [{ ...room, type }, ...(rawRooms ?? [])]
-  const reservations = [...(byType ?? [])]
-  for (const r of byRoom ?? []) {
-    if (!r || reservations.includes(r) || (r.id && reservations.some((m: any) => m?.id === r.id))) continue
-    reservations.push(r)
-  }
-  return countAvailableOfType(type, rooms, reservations, blocks ?? [], checkIn, checkOut)
-}
-
-class RoomTakenConcurrentlyError extends Error {
-  constructor() { super('room_taken_concurrently'); this.name = 'RoomTakenConcurrentlyError' }
-}
-
 class PromoUsesExhaustedError extends Error {
   constructor() { super('promo_uses_exhausted_concurrently'); this.name = 'PromoUsesExhaustedError' }
 }
@@ -297,23 +270,27 @@ export async function getPublicBookingBySlug(orm: any, slug: string, query: any)
  *
  * @param orm            ORM del framework (mockeable en tests).
  * @param body           Body del POST `/api/public/booking`. Requiere `hotelId` + `roomId` O
- *                       `roomType` (al menos uno) + datos del guest + fechas. `roomId` real
- *                       (fila existente de `Rooms`) tiene prioridad; si no resuelve, se usa
- *                       `roomType` para que el backend elija la unidad libre más barata (ver
- *                       cabecera del archivo, FIX 2026-07-30).
- * @param pushAvailability Callback opcional para invalidar cache de disponibilidad.
- * @param auth           Wrapper de auth (solo para assertOwnership del room).
+ *                       `roomType` (al menos uno) + datos del guest + fechas. REQ-HAC-05 (#260):
+ *                       la reserva nace por TIPO sin unidad; un `roomId` real (fila existente de
+ *                       `Rooms`) sólo sirve para derivar el tipo (compat, ver cabecera).
+ * @param pushAvailability (Legado) Push de disponibilidad POR UNIDAD. Desde REQ-HAC-05 la reserva
+ *                       nace sin unidad, así que acá NO se invoca; se conserva en la firma para no
+ *                       romper a los callers (controller/tests) que lo pasan posicionalmente.
+ * @param auth           Wrapper de auth (solo para assertOwnership del room en el path `roomId`).
  * @param stripe         (F0 0.16) Servicio que crea la Checkout Session. Si no se pasa, la
  *                       reserva se crea igual sin intentar cobro (compat con callers viejos
  *                       como `reservas/tests/ownership.test.ts` que no pasan este arg).
  * @param logger         (F0 0.16) Logger para avisar si Stripe falla (no rompe el flujo).
  * @param stripeUrls     (F0 0.16) URLs de success/cancel. Si no se pasan, no se intenta cobro.
  *                       El controller las arma desde el referer/host del request en F0 wiring.
+ * @param extraDeps      (F2 2.5) Repos para promo/upsells/régimen/config. Ver `PublicBookingExtraDeps`.
+ * @param pushAvailabilityByType REQ-HAC-05 — push de disponibilidad a las OTAs POR TIPO
+ *                       (`canales.pushAvailabilityByRoomType`). Es el que se invoca al crear.
  */
 export async function createPublicBookingDirect(
   orm: any,
   body: any,
-  pushAvailability?: (hotelId: string, roomId: string) => void,
+  _pushAvailability?: (hotelId: string, roomId: string) => void,
   auth?: any,
   stripe?: PublicBookingStripeDeps,
   logger?: PublicBookingLogger,
@@ -321,9 +298,10 @@ export async function createPublicBookingDirect(
   // F2 2.5 — Deps para procesar promo + upsells. Opcional para no romper tests legacy
   // (que llaman con 2 args) ni callers viejos que todavía no cablean estos repos.
   extraDeps?: PublicBookingExtraDeps,
+  pushAvailabilityByType?: (hotelId: string, roomType: string) => void,
 ): Promise<any> {
   const {
-    hotelId, roomId, roomType, guestName, guestEmail, guestPhone,
+    hotelId, roomId, roomType: rawRoomType, guestName, guestEmail, guestPhone,
     checkIn, checkOut, adults, children: kids,
     // Feature adultos+niños+edades (2026-09-02). Lo manda el widget nuevo. MR-10 (#275): un
     // caller que solo manda `children` como contador plano YA NO se queda afuera del motor de
@@ -333,7 +311,7 @@ export async function createPublicBookingDirect(
     promoCode,
     upsells,
     // REQ-01 (#290) — amenidades personalizadas de la habitación: `[{key: 'custom:<slug>'}]`. Se
-    // resuelven contra las filas `RoomAmenities` de la unidad asignada (precio del server).
+    // resuelven contra la UNIÓN de filas `RoomAmenities` de las unidades del tipo (precio del server).
     // (#292: `childAmenities` en el body ya no se lee — el catálogo global se dio de baja.)
     roomAmenities: rawRoomAmenities,
     // MR-03 (#268) — código del régimen elegido para ESTA habitación. Se resuelve contra
@@ -341,7 +319,7 @@ export async function createPublicBookingDirect(
     mealPlan: rawMealPlan,
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09) — Sí/No únicamente; solo tiene efecto
     // si la composición tiene al menos un bebé (Tarea 21) Y el tipo ofrece `custom:cuna` (#292);
-    // ver el gateo más abajo, cuando ya se conocen las unidades libres del tipo.
+    // ver el gateo más abajo, cuando ya se conocen las unidades vendibles del tipo.
     needsCrib: rawNeedsCrib,
     // Tarea 3.1 — hora de llegada estructurada + pedidos especiales en texto libre. Antes
     // de este cambio ninguno de los dos llegaba acá: el schema no los declaraba y
@@ -352,7 +330,7 @@ export async function createPublicBookingDirect(
     idempotencyKey: rawIdempotencyKey,
   } = body
 
-  if (!hotelId || (!roomId && !roomType) || !guestName || !guestEmail || !checkIn || !checkOut) {
+  if (!hotelId || (!roomId && !rawRoomType) || !guestName || !guestEmail || !checkIn || !checkOut) {
     return { status: 400, body: { error: 'Campos requeridos: hotelId, guestName, guestEmail, checkIn, checkOut, y roomId o roomType' } }
   }
   if (checkIn >= checkOut) return { status: 400, body: { error: 'checkIn debe ser anterior a checkOut' } }
@@ -398,15 +376,15 @@ export async function createPublicBookingDirect(
     return engineClosed()
   }
 
-  // ─── FIX (room_blocks + stop-sell) — paridad con AvailabilityUseCase y /calendar ──────
-  // El motor ya no OFRECE una habitación bloqueada ni un tipo con la tarifa cerrada; el POST
-  // tampoco la ACEPTA. Sin esto el gate sería puramente cosmético: un integrador (o un submit
-  // con datos stale) podía crear la reserva igual sobre inventario que el hotel cerró.
-  // Las tres lecturas son sobre modelos COMPARTIDOS (`shared/models.ts`) — mismo criterio de
+  // ─── FIX (stop-sell) — paridad con AvailabilityUseCase y /calendar ───────────────────
+  // El motor ya no OFRECE un tipo con la tarifa cerrada; el POST tampoco lo ACEPTA. Sin esto el
+  // gate sería puramente cosmético: un integrador (o un submit con datos stale) podía crear la
+  // reserva igual sobre inventario que el hotel cerró. Los bloqueos (`room_blocks`) los descuenta
+  // `availableOfType` por tipo (REQ-HAC-02) — acá ya no se leen aparte.
+  // Las lecturas son sobre modelos COMPARTIDOS (`shared/models.ts`) — mismo criterio de
   // acceso que `Rooms`/`Reservations` acá arriba, sin import cross-module.
   const stayNightDates = stayNights(checkIn, checkOut)
-  const [rawBlocks, rawRates, rawAssignments, rawOverrides, rawSeasons] = await Promise.all([
-    orm.findMany('RoomBlocks', { hotelId }) as Promise<any[]>,
+  const [rawRates, rawAssignments, rawOverrides, rawSeasons] = await Promise.all([
     orm.findMany('RoomRates', { hotelId }) as Promise<any[]>,
     orm.findMany('SeasonAssignments', { hotelId }) as Promise<any[]>,
     // Tarifas por fecha: la capa que pisa a la temporada. Sin esto la web propia cobraría el
@@ -479,9 +457,9 @@ export async function createPublicBookingDirect(
   // El composer del frontend ya oculta "¿Necesita cuna?" sin un bebé en la composición o si el
   // tipo no publica `custom:cuna`, pero el servidor NUNCA confía en lo que mande el cliente
   // (mismo criterio que cualquier otro campo de esta reserva): sin al menos un bebé clasificado
-  // (Tarea 21) se fuerza a "no pedida" sin importar el body. La segunda mitad del gate — ¿la
-  // unidad FINALMENTE asignada ofrece `custom:cuna`? — se resuelve más abajo, DESPUÉS de
-  // `resolveRoomAmenityLines` contra esa unidad (`needsCrib` definitivo = quedó la línea).
+  // (Tarea 21) se fuerza a "no pedida" sin importar el body. La segunda mitad del gate — ¿alguna
+  // unidad del TIPO ofrece `custom:cuna`? — se resuelve más abajo, DESPUÉS de
+  // `resolveRoomAmenityLines` contra la unión del tipo (`needsCrib` definitivo = quedó la línea).
   // Simplificación (2026-09-09): "¿Necesita cuna?" es SOLO Sí/No — no existe cantidad de cunas
   // configurable ("no preguntar si desea una, dos o más cunas"). `cribCount` queda como 1/0
   // espejo de `needsCrib`, no como un valor independiente que el cliente pueda variar.
@@ -516,14 +494,13 @@ export async function createPublicBookingDirect(
   // de la habitación física (comportamiento actual intacto).
   const roomTypeCapacityMap = await resolveRoomTypeCapacityMap(extraDeps?.config, hotelId)
 
-  const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
+  // Stop-sell por tipo: guard aparte de `availableOfType` (que sólo cuenta inventario), abajo.
   const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, pricingOccupancy)
 
   // Ocupación FÍSICA total: la matriz de `/rates` deshabilita `over_capacity` contra este mismo
   // número (`occupancy-matrix.ts`). La UI ya no deja elegir una fila que no entra, pero un POST
-  // directo (integrador, replay, o `roomId` explícito que se salta la resolución por tipo) nunca
-  // pasaba por esa matriz — sin este número acá se podía crear una reserva de 6 huéspedes en una
-  // habitación para 2.
+  // directo (integrador, replay) nunca pasaba por esa matriz — sin este número acá se podía
+  // crear una reserva de 6 huéspedes en un tipo cuyas unidades admiten 2.
   const totalGuests = capacityGuests
 
   // REQ-01 (#290) — keys `custom:*` pedidas. Sin keys (ni cuna pedida), NADA de lo que sigue lee
@@ -531,128 +508,84 @@ export async function createPublicBookingDirect(
   // #292 — la cuna NO entra por el body: toda key que `isCribAmenityKey` reconozca (`custom:cuna`,
   // `custom:crib`, `custom:cuna_para_bebe`…) se saca de las keys y se vuelve a poner — como la key
   // canónica — sólo si la pidió el gate de bebé (`cribRequested`). Que quede o no en el snapshot
-  // lo decide `resolveRoomAmenityLines` contra la unidad asignada (acepta cualquier fila cuna de
-  // esa unidad), y `needsCrib` se lee de AHÍ (más abajo): la línea de cuna existe si y sólo si
-  // `needsCrib`, nunca por una key suelta ni por un "sí" que la unidad asignada no puede cumplir.
+  // lo decide `resolveRoomAmenityLines` contra la unión del tipo (acepta cualquier fila cuna de
+  // alguna unidad), y `needsCrib` se lee de AHÍ (más abajo): la línea de cuna existe si y sólo si
+  // `needsCrib`, nunca por una key suelta ni por un "sí" que ninguna unidad del tipo puede cumplir.
   const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities).filter((k) => !isCribAmenityKey(k))
   if (cribRequested) roomAmenityKeys.push(CRIB_AMENITY_KEY)
   const needsRoomAmenityCatalog = roomAmenityKeys.length > 0
-  let amenitiesByRoom = new Map<string, any[]>()
 
-  // ─── Resolución de la habitación (FIX 2026-07-30, ver cabecera del archivo) ────────
-  // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, se usa tal
-  //    cual — comportamiento intacto.
-  // 2) Si no, `roomType`: el backend elige la unidad concreta acá, no en la cotización.
-  let room: any = roomId ? await orm.findById('Rooms', roomId) as any : null
-  if (!room) {
-    if (!roomType) return { status: 404, body: { error: 'Habitación no encontrada' } }
+  // ─── Resolución del TIPO (REQ-HAC-05 #260, ver cabecera del archivo) ─────────────────
+  // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, sólo sirve para
+  //    derivar el tipo — la reserva IGUAL nace sin unidad. Tiene que ser del hotel del formulario
+  //    (iba `assertOwnership(room, { hotelId })` — dos objetos, `===` siempre false: toda reserva
+  //    daba 403).
+  // 2) Si no, `roomType` tal cual lo mandó el widget (el `id` que publica `/rates` por tipo).
+  const room: any = roomId ? await orm.findById('Rooms', roomId) as any : null
+  if (room && auth) auth.assertOwnership(room.hotelId, hotelId)
+  const roomType: string = room ? String(room.type ?? '') : String(rawRoomType ?? '')
+  if (!roomType) return { status: 404, body: { error: 'Habitación no encontrada' } }
 
-    const roomsOfType = (await orm.findMany('Rooms', { hotelId, type: roomType })) as any[]
-    if (roomsOfType.length === 0) {
-      // El tipo no existe en absoluto para este hotel — 404 (no es un problema de fechas).
-      return { status: 404, body: { error: 'Tipo de habitación no encontrado' } }
-    }
-
-    // REQ-HAC-02 (#257) — la venta se decide por TIPO: `rooms − booked` por noche, contando las
-    // reservas del tipo asignadas O sin asignar (una `confirmed` sin `roomId` también consume
-    // una unidad). El solape por habitación ya no decide si se vende — queda sólo en
-    // `reservas/usecases/assign-room.ts`, al asignar.
-    const typeAvail = await availableOfType(typeAvailabilityPortFromOrm(orm), hotelId, roomType, checkIn, checkOut)
-    if (typeAvail.available < 1) {
-      return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
-    }
-    // Criterio de selección entre las libres: menor `basePrice` primero (determinístico y
-    // favorece al huésped — misma tarifa que se le cotizó en `public-rates.ts`, que también
-    // usa el precio más bajo del type). Capacidad ANTES que precio: dentro del mismo tipo puede
-    // haber unidades de capacidad distinta (`public-rates-occupancy-integrity.test.ts` cubre un
-    // tipo "familiar" con unidades de capacidad 2 y 4 a la vez).
-    let freeOfType = typeAvail.sellableRooms
-      // `busyRoomIds`: unidades con una reserva ASIGNADA que solapa (no se puede asignar la misma
-      // dos veces). `room_blocks` descuenta unidades igual que una reserva: la habitación puede
-      // no tener reservas y aun así estar cerrada por mantenimiento para ese rango.
-      .filter((r: any) => !typeAvail.busyRoomIds.has(r.id) && !blockedIds.has(r.id))
-      .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuests), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), childComposition))
-      .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))
-    if (freeOfType.length === 0) {
-      // El tipo existe pero no hay unidades libres (o con capacidad suficiente) para esas
-      // fechas — 409, no 404.
-      return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
-    }
-    // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas
-    // (orden estable: dentro de cada grupo sigue mandando el precio). El catálogo público mostró
-    // la unión del tipo; acá se intenta honrarla con una unidad que realmente la tenga.
-    // #292 — con cuna pedida, la cuna tiene prioridad: si ninguna unidad ofrece la combinación
-    // completa, se prefiere la que al menos tenga `custom:cuna` (una cuna para un bebé pesa más
-    // que un jacuzzi). `resolveRoomAmenityLines` cobra SU precio más abajo.
-    if (needsRoomAmenityCatalog) {
-      amenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
-      freeOfType = preferRoomsOffering(freeOfType, amenitiesByRoom, roomAmenityKeys, cribRequested ? CRIB_AMENITY_KEY : undefined)
-    }
-    room = freeOfType[0]
-  } else if (needsRoomAmenityCatalog) {
-    // Path de `roomId` explícito: no hay elección — esa unidad ofrece la cuna o no.
-    amenitiesByRoom = await loadRoomAmenitiesFor(orm, [room.id])
+  const roomsOfTypeRows = (await orm.findMany('Rooms', { hotelId, type: roomType })) as any[]
+  if ((roomsOfTypeRows ?? []).length === 0) {
+    // El tipo no existe en absoluto para este hotel — 404 (no es un problema de fechas).
+    return { status: 404, body: { error: 'Tipo de habitación no encontrado' } }
   }
-  const resolvedRoomId: string = room.id
 
-  // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra las filas de ESA unidad ──
-  // Cubre los dos paths (`roomType` resuelto arriba y `roomId` explícito): key no ofrecida o
-  // inactiva en la asignada → se ignora con warn; el precio SIEMPRE sale de `RoomAmenities`.
-  // Con `cribRequested`, `custom:cuna` ya está en las keys: su línea sale de acá como cualquier otra.
+  // REQ-HAC-02 (#257) — la venta se decide por TIPO: `rooms − booked` por noche, contando las
+  // reservas del tipo asignadas O sin asignar (una `confirmed` sin `roomId` también consume
+  // una unidad) más los bloqueos de sus unidades. No se elige unidad: eso queda sólo en
+  // `reservas/usecases/assign-room.ts`, al asignar. 409 y no 404: el tipo SÍ existe, lo que no
+  // hay es disponibilidad para esas fechas.
+  const typeAvail = await availableOfType(typeAvailabilityPortFromOrm(orm), hotelId, roomType, checkIn, checkOut)
+  if (typeAvail.available < 1) {
+    return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
+  }
+  // Stop-sell por tipo (tarifa cerrada para alguna noche): el motor no lo OFRECE, el POST tampoco
+  // lo ACEPTA — sin esto el gate sería cosmético (un integrador o un submit stale lo crearía igual).
+  if (isRoomTypeClosed(closedTypes, roomType)) {
+    return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
+  }
+
+  // Perfil del tipo (a partir de sus unidades VENDIBLES): capacidad = la MAYOR entre ellas (la
+  // reserva entra si entra en alguna; recepción elige cuál al asignar), `maxAdults`/`maxChildren`
+  // ídem, y el precio de fallback = el MÍNIMO `basePrice` — mismo agregado que `/rates`
+  // (`availability.ts#groupByType`). La política `room_type_capacity` del hotel, si existe, pisa
+  // los tres campos de capacidad (`effectiveRoomCapacity`).
+  const typeProfile = roomTypeProfile(roomType, typeAvail.sellableRooms, totalGuests)
+  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, typeProfile)
+  if (!fitsRoomCapacity(roomCapacity, childComposition)) {
+    return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }
+  }
+
+  // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra la UNIÓN del tipo ──────
+  // Sin unidad asignada no hay "sus filas": el catálogo es la unión de `RoomAmenities` de las
+  // unidades vendibles del tipo (misma key en dos unidades → la más barata, como publica el
+  // catálogo público). Key que ninguna ofrece o inactiva → se ignora con warn; el precio SIEMPRE
+  // sale de `RoomAmenities`. Con `cribRequested`, `custom:cuna` ya está en las keys: su línea sale
+  // de acá como cualquier otra. Sin keys, NADA de esto lee `RoomAmenities`.
   let roomAmenityLines: RoomAmenityLine[] = []
   let roomAmenitiesTotal = 0
-  if (roomAmenityKeys.length > 0) {
-    const resolved = resolveRoomAmenityLines(amenitiesByRoom.get(resolvedRoomId) ?? [], roomAmenityKeys, 1, logger)
+  if (needsRoomAmenityCatalog) {
+    const amenitiesByRoom = await loadRoomAmenitiesFor(orm, typeAvail.sellableRooms.map((r: any) => r.id))
+    const resolved = resolveRoomAmenityLines(unionRoomAmenities(amenitiesByRoom), roomAmenityKeys, 1, logger)
     roomAmenityLines = resolved.lines
     roomAmenitiesTotal = resolved.total
   }
   const roomAmenitiesSummary = roomAmenityLines.map((l) => `${l.name}=${l.total.toFixed(2)}`)
 
-  // #292 — `needsCrib` definitivo: refleja la unidad FINALMENTE asignada, no el tipo. Es true si
-  // y sólo si la línea `custom:cuna` quedó resuelta en su snapshot (`hasCribLine`); así
-  // `needsCrib === (roomAmenities tiene custom:cuna)` siempre, y `cribCount` es su espejo 1/0.
-  // Si se pidió y la unidad asignada no la ofrece (ninguna libre del tipo la tenía, o un `roomId`
-  // explícito sin cuna), se crea sin cuna con un warn claro.
+  // #292 — `needsCrib` definitivo: true si y sólo si la línea `custom:cuna` quedó resuelta en el
+  // snapshot (`hasCribLine`); así `needsCrib === (roomAmenities tiene custom:cuna)` siempre, y
+  // `cribCount` es su espejo 1/0. Si se pidió y NINGUNA unidad del tipo la ofrece, se crea sin
+  // cuna con un warn claro.
   const needsCrib = cribRequested && hasCribLine(roomAmenityLines)
   const cribCount = needsCrib ? 1 : 0
   // Revisión #292 — si se pidió y NO se pudo cumplir, no alcanza con un warn en el log: queda
   // escrito en `notes` (lo lee el recepcionista), persistido en `cribUnavailable` y expuesto en la
-  // respuesta pública para que el widget se lo diga al huésped. La asignación no cambia.
+  // respuesta pública para que el widget se lo diga al huésped.
   const cribUnavailable = cribRequested && !needsCrib
   if (cribUnavailable) {
-    logger?.warn('createPublicBookingDirect: cuna pedida pero la unidad asignada no la ofrece — se crea sin cuna', { hotelId, roomType, roomId: resolvedRoomId })
-  }
-
-  // Red de seguridad final: cubre el path de `roomId` explícito (arriba nunca filtró por
-  // capacidad porque no pasa por la resolución de `roomType`) y actúa como defensa en
-  // profundidad del filtro de arriba.
-  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, { type: room.type, capacity: Number(room.capacity ?? totalGuests), maxAdults: room.maxAdults, maxChildren: room.maxChildren })
-  if (!fitsRoomCapacity(roomCapacity, childComposition)) {
-    return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }
-  }
-
-  // No hay usuario: el motor es público. La habitación tiene que ser del hotel del formulario.
-  // Iba `assertOwnership(room, { hotelId })` — dos objetos, `===` siempre false: toda reserva daba 403.
-  if (auth) auth.assertOwnership(room.hotelId, hotelId)
-
-  // Red de seguridad final (ver cabecera): aunque el path de `roomType` ya decidió por tipo
-  // arriba, repetimos la cuenta por tipo acá para (a) el path de `roomId` real (que no lo hizo
-  // antes: la unidad pedida puede tener una reserva asignada encima, o el tipo puede estar
-  // agotado por reservas sin asignar) y (b) cubrir la ventana de carrera entre la resolución de
-  // arriba y este punto. REQ-HAC-02: mismo criterio de inventario que el resto del sistema.
-  const guard = await availabilityForResolvedRoom(orm, hotelId, room, checkIn, checkOut)
-  if (guard.busyRoomIds.has(resolvedRoomId) || guard.available < 1) {
-    return { status: 409, body: { error: 'Habitación no disponible en esas fechas' } }
-  }
-
-  // Misma red de seguridad para los dos cierres del hotel. En el path de `roomType` ya están
-  // filtrados arriba; acá cubren el path de `roomId` real (que no pasa por esa resolución).
-  // 409 y no 404: la habitación/tipo EXISTE, lo que no hay es disponibilidad en esas fechas.
-  if (blockedIds.has(resolvedRoomId)) {
-    return { status: 409, body: { error: 'Habitación no disponible en esas fechas' } }
-  }
-  if (isRoomTypeClosed(closedTypes, room.type)) {
-    return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
+    logger?.warn('createPublicBookingDirect: cuna pedida pero ninguna unidad del tipo la ofrece — se crea sin cuna', { hotelId, roomType })
   }
 
   // ─── FIX — el precio que se COBRA es el mismo que se PUBLICÓ ───────────────────────────────
@@ -667,13 +600,14 @@ export async function createPublicBookingDirect(
   // `season_assignments`, `pickRate` devuelve `null` en cada noche y cada una cae al fallback
   // `room.basePrice` → la suma es idénticamente `basePrice × nights`.
   //
-  // `fallbackNightly` sale de la habitación YA RESUELTA (la libre más barata del tipo), que es la
-  // misma que se le cotizó al huésped: `/rates` publica el `min(basePrice)` del tipo.
+  // `fallbackNightly` = el MÍNIMO `basePrice` entre las unidades vendibles del tipo (REQ-HAC-05: ya
+  // no hay unidad resuelta), que es lo que se le cotizó al huésped: `/rates` publica el
+  // `min(basePrice)` del tipo.
   const baseRates = baseRatesOnly(rawRates ?? [])
   const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
   // Misma ocupación que el `closedRoomTypes` de arriba (`pricingOccupancy` — adultos + niños con
   // plaza, sean edades declaradas o sintetizadas por MR-10).
-  const fallbackNightly = Number(room.basePrice) || 0
+  const fallbackNightly = typeProfile.minBasePrice
   // Tarea "Cobro % niños" (2026-09-09) — aplica a todo niño con plaza. MR-10 (#275): también al
   // caller con `children` plano, porque sus niños ya se sintetizaron a `maxChildAge` (con plaza)
   // y el % no depende de la edad exacta sino de consumir plaza.
@@ -688,7 +622,7 @@ export async function createPublicBookingDirect(
     : null
   const roomSubtotal = stayNightDates.length > 0
     ? sumStayPriceForComposition(
-        stayNightDates, baseRates, String(room.type ?? ''), seasonByDate,
+        stayNightDates, baseRates, roomType, seasonByDate,
         childComposition.effectiveAdults, childComposition.payingChildren,
         childrenDiscountEnabled, childPolicy?.childrenRatePercent ?? 0,
         fallbackNightly, rawOverrides ?? [],
@@ -858,35 +792,30 @@ export async function createPublicBookingDirect(
   let guest: any
   try {
     await orm.transaction(async (tx: any) => {
-      // ─── Anti-overbooking ────────────────────────────────────────────────────────────────
-      // El chequeo de solape de arriba pasa FUERA de la transacción, y entre ese chequeo y este
+      // ─── Anti-overbooking (por TIPO desde REQ-HAC-05) ─────────────────────────────────────
+      // El `availableOfType` de arriba pasa FUERA de la transacción, y entre ese chequeo y este
       // insert hay una ventana: dos huéspedes que aprietan "Pagar" a la vez pasan los dos y se
-      // crean DOS reservas sobre la misma habitación y fechas (reproducido con un harness que
+      // crean DOS reservas sobre la última unidad del tipo (reproducido con un harness que
       // congela al primero justo después de su chequeo: ambos devolvían 201).
       //
       // Se cierra con el MISMO patrón que ya usaba el promo unas líneas más abajo: un UPDATE
-      // condicional sobre la fila de la habitación. En Postgres READ COMMITTED ese UPDATE toma
+      // sobre las filas de las unidades del tipo. En Postgres READ COMMITTED ese UPDATE toma
       // el lock de fila, así que la segunda transacción se bloquea hasta que la primera
-      // commitea y entonces su filtro por `updatedAt` ya no matchea → `affected = 0` → aborta.
-      // Es lo que serializa a los dos compradores por habitación; una re-lectura sola no
+      // commitea. Es lo que serializa a los dos compradores por tipo; una re-lectura sola no
       // alcanza (en READ COMMITTED ninguna de las dos ve la fila no commiteada de la otra).
       //
-      // Sin `updateMany` (mocks viejos, ORMs sin soporte) se degrada a la re-lectura: no cubre
+      // El UPDATE es para SERIALIZAR, no para juzgar: quien decide es el RE-CHEQUEO por tipo de
+      // abajo, con el lock tomado (acá sí vemos lo que commiteó quien llegó primero). Sin
+      // `updateMany`/`findMany` en la tx (mocks viejos, ORMs sin soporte) se degrada: no cubre
       // la carrera real pero mantiene el comportamiento previo en lugar de romper al caller.
-      // El UPDATE es para SERIALIZAR, no para juzgar: toma el lock de la fila y hace esperar a
-      // la otra transacción. Quien decide es la re-lectura de abajo. Si acá abortáramos por
-      // `affected === 0` daríamos falsos positivos (basta que alguien haya editado la
-      // habitación por otro motivo para que el sello ya no matchee y rechacemos una venta
-      // legítima).
       if (typeof tx.updateMany === 'function') {
-        await tx.updateMany('Rooms', { id: resolvedRoomId }, { updatedAt: new Date().toISOString() })
+        await tx.updateMany('Rooms', { hotelId, type: roomType }, { updatedAt: new Date().toISOString() })
           .catch(() => 0)
       }
-      // Con el lock tomado, re-leer el solape de la UNIDAD: acá sí vemos lo que commiteó quien
-      // llegó primero. Mismo criterio de estado que la disponibilidad por tipo (`stayOverlaps`).
-      const freshOverlap = (await tx.findMany?.('Reservations', { roomId: resolvedRoomId }).catch(() => [])) ?? []
-      const takenNow = (freshOverlap as any[]).some((r: any) => stayOverlaps(r, checkIn, checkOut))
-      if (takenNow) throw new RoomTakenConcurrentlyError()
+      if (typeof tx.findMany === 'function') {
+        const fresh = await availableOfType(typeAvailabilityPortFromOrm(tx), hotelId, roomType, checkIn, checkOut)
+        if (fresh.available < 1) throw new RoomTypeSoldOutConcurrentlyError()
+      }
 
       // MR-08 (#273) — un huésped = una ficha: se busca por email/teléfono normalizados y solo se
       // crea si no existe. El lock de fila `Hotels` que toma el helper y la búsqueda van DENTRO de
@@ -903,11 +832,10 @@ export async function createPublicBookingDirect(
       // (`/api/panel/reservas` deja el default 'direct'); `channel` sigue 'direct' porque los
       // reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
       reservation = await tx.create('Reservations', {
-        id: crypto.randomUUID(), hotelId, roomId: resolvedRoomId, guestId: guest.id,
-        // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta para que
-        // reasignar/soltar la unidad después (assign-room.ts) valide contra él y la
-        // disponibilidad la siga contando sin unidad. Antes sólo el panel (crud.ts) lo escribía.
-        roomType: room?.type ? String(room.type) : undefined,
+        // REQ-HAC-05 (#260): lo vendido es el TIPO y la fila nace SIN unidad — `roomId: null`.
+        // La habitación la asigna recepción (assign-room.ts), que valida contra `roomType`; la
+        // disponibilidad la cuenta sin unidad (`reservationOccupiesType`).
+        id: crypto.randomUUID(), hotelId, roomId: null, roomType, guestId: guest.id,
         checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
         adults: childComposition.effectiveAdults,
         children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),
@@ -927,14 +855,14 @@ export async function createPublicBookingDirect(
         // gateados arriba contra `childComposition.babies` y la oferta de `custom:cuna` del tipo;
         // acá solo persisten como espejo de la línea de cuna en `roomAmenities`.
         needsCrib, cribCount,
-        // Revisión #292 — cuna pedida que la unidad asignada no ofrece (ver `cribUnavailable` arriba).
+        // Revisión #292 — cuna pedida que ninguna unidad del tipo ofrece (ver `cribUnavailable` arriba).
         cribUnavailable,
         // #292 — el catálogo global de amenidades infantiles se dio de baja: las columnas quedan
         // (reservas históricas + lectores) pero una reserva nueva siempre las escribe vacías.
         childAmenities: [],
         childAmenitiesTotal: 0,
-        // REQ-01 (#290) — snapshot con precio congelado de las amenidades personalizadas de la
-        // habitación ASIGNADA (validadas arriba contra sus filas `RoomAmenities`) + su total.
+        // REQ-01 (#290) — snapshot con precio congelado de las amenidades personalizadas del
+        // tipo (validadas arriba contra la unión de filas `RoomAmenities` de sus unidades) + su total.
         roomAmenities: roomAmenityLines,
         roomAmenitiesTotal: round2(roomAmenitiesTotal),
         // MR-03 (#268) — snapshot congelado del régimen (precio releído del catálogo arriba) +
@@ -1016,9 +944,9 @@ export async function createPublicBookingDirect(
       }
     })
   } catch (e: any) {
-    if (e instanceof RoomTakenConcurrentlyError) {
-      logger?.warn(`Habitación ${resolvedRoomId} tomada concurrentemente — reserva abortada`, { hotelId })
-      return { status: 409, body: { error: 'Habitación no disponible en esas fechas' } }
+    if (e instanceof RoomTypeSoldOutConcurrentlyError) {
+      logger?.warn(`Tipo ${roomType} agotado concurrentemente — reserva abortada`, { hotelId, roomType })
+      return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
     }
     if (e instanceof PromoUsesExhaustedError) {
       logger?.warn(`Promo ${promoCode} agotado concurrentemente para hotel ${hotelId}`, { reservationId: reservation?.id })
@@ -1038,7 +966,8 @@ export async function createPublicBookingDirect(
     throw e
   }
 
-  pushAvailability?.(hotelId, resolvedRoomId)
+  // REQ-HAC-05 — sin unidad no hay push por habitación: se empuja el TIPO vendido a las OTAs.
+  pushAvailabilityByType?.(hotelId, roomType)
 
   // F0 0.16 — Cableo del checkoutUrl. ROBUSTEZ: si Stripe falla (no configurado, gateway
   // caído), la reserva SE CREÓ igual. Devolvemos 201 con checkoutUrl:null + paymentError.
@@ -1124,11 +1053,14 @@ function publicBookingResponse(
       // campos internos (ownerNotes, otaNotes, card*, snapshot financiero, document del
       // guest). El contrato del widget consume reservation.{id, accessToken} y los tests
       // del módulo verifican comportamiento vía los campos operativos del subset de abajo
-      // (roomId resuelto, promoCode persistido, etc.) — nada interno sale.
+      // (roomType vendido, promoCode persistido, etc.) — nada interno sale.
       reservation: {
         id: reservation.id,
         accessToken: reservation.accessToken,
-        roomId: reservation.roomId,
+        // REQ-HAC-05 (#260): `roomId` es null en las reservas nuevas (se asigna al check-in); lo
+        // vendido es `roomType`. `roomId` se conserva para el replay de filas viejas y los lectores.
+        roomId: reservation.roomId ?? null,
+        roomType: reservation.roomType ?? null,
         guestId: reservation.guestId,
         checkIn: reservation.checkIn,
         checkOut: reservation.checkOut,
@@ -1141,7 +1073,7 @@ function publicBookingResponse(
         source: reservation.source ?? null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
-      // Revisión #292 — sólo cuando se pidió cuna y la unidad asignada no la ofrece: el widget lo
+      // Revisión #292 — sólo cuando se pidió cuna y ninguna unidad del tipo la ofrece: el widget lo
       // muestra ("el hotel se pondrá en contacto"). Sale de la fila para que el replay también lo traiga.
       ...(isOn(reservation.cribUnavailable) ? { cribUnavailable: true } : {}),
       // F0 0.16 — Contrato nuevo (spec booking-unification API). `checkoutUrl` SIEMPRE está:
@@ -1163,7 +1095,50 @@ function publicBookingResponse(
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
-/** Revisión #292 — línea de `notes` cuando se pidió cuna y la unidad asignada no la ofrece.
+/** REQ-HAC-05 — "perfil" de un tipo a partir de sus unidades VENDIBLES, para validar capacidad y
+ *  cotizar sin unidad asignada. Tiene la forma que espera `effectiveRoomCapacity` (type/capacity/
+ *  maxAdults/maxChildren) más el precio de fallback. Agregado MÁXIMO para la capacidad (entra si
+ *  entra en alguna unidad; `null` en maxAdults/maxChildren = ninguna lo limita) y MÍNIMO para el
+ *  precio (`> 0`, como `/rates`). Sin `capacity` en una fila (dato viejo) cuenta `fallbackCapacity`
+ *  — mismo criterio que `availability.ts`: un dato incompleto no bloquea. */
+export function roomTypeProfile(
+  type: string,
+  sellableRooms: any[],
+  fallbackCapacity: number,
+): { type: string; capacity: number; maxAdults: number | null; maxChildren: number | null; minBasePrice: number } {
+  let capacity = 0
+  let maxAdults: number | null = null
+  let maxChildren: number | null = null
+  let minBasePrice = 0
+  for (const r of sellableRooms ?? []) {
+    capacity = Math.max(capacity, Number(r?.capacity ?? fallbackCapacity) || 0)
+    const ma = Number(r?.maxAdults)
+    if (r?.maxAdults != null && Number.isFinite(ma)) maxAdults = maxAdults == null ? ma : Math.max(maxAdults, ma)
+    const mc = Number(r?.maxChildren)
+    if (r?.maxChildren != null && Number.isFinite(mc)) maxChildren = maxChildren == null ? mc : Math.max(maxChildren, mc)
+    const price = Number(r?.basePrice ?? r?.price ?? 0)
+    if (price > 0 && (minBasePrice === 0 || price < minBasePrice)) minBasePrice = price
+  }
+  return { type, capacity, maxAdults, maxChildren, minBasePrice }
+}
+
+/** REQ-HAC-05 — unión de las filas `RoomAmenities` (custom vendibles) de las unidades de un tipo,
+ *  una por `amenityKey`: si dos unidades ofrecen la misma, queda la más barata (a igual precio,
+ *  la primera). Es el mismo agregado que publica `GET /room-amenities` por tipo, así lo que el
+ *  huésped vio como "desde" es lo que se le cobra. */
+export function unionRoomAmenities(amenitiesByRoom: Map<string, any[]>): any[] {
+  const byKey = new Map<string, any>()
+  for (const rows of amenitiesByRoom.values()) {
+    for (const a of customRoomAmenities(rows)) {
+      const price = Math.max(0, Number(a.price) || 0)
+      const prev = byKey.get(a.amenityKey)
+      if (!prev || price < Math.max(0, Number(prev.price) || 0)) byKey.set(a.amenityKey, a)
+    }
+  }
+  return Array.from(byKey.values())
+}
+
+/** Revisión #292 — línea de `notes` cuando se pidió cuna y ninguna unidad del tipo la ofrece.
  *  Compartida con `public-booking-group.ts` (misma redacción para el recepcionista). */
 export const CRIB_UNAVAILABLE_NOTE = '⚠ El huésped pidió cuna y la habitación asignada no la ofrece'
 

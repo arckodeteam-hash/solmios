@@ -9,3 +9,15 @@ export function createPushAvailability(resolveModule: <T>(name: string) => T | n
     )
   }
 }
+
+/** REQ-HAC-05 (#260) — misma forma que `createPushAvailability`, pero por TIPO de habitación: lo
+ *  usa el motor público, cuya reserva nace sin unidad (`roomId` null) y sólo conoce `roomType`. */
+export function createPushAvailabilityByType(resolveModule: <T>(name: string) => T | null, logger: Logger): (hotelId: string, roomType: string) => void {
+  return (hotelId: string, roomType: string): void => {
+    const canales = resolveModule<{ pushAvailabilityByRoomType: (h: string, t: string) => Promise<{ pushed: boolean }> }>('canales')
+    if (!canales?.pushAvailabilityByRoomType) return
+    void canales.pushAvailabilityByRoomType(hotelId, roomType).catch((e: unknown) =>
+      logger.warn('pushAvailabilityByType Channex falló', { hotelId, roomType, error: String(e) }),
+    )
+  }
+}

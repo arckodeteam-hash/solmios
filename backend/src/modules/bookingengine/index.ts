@@ -26,7 +26,11 @@ export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './use
 // Catálogo de tipos de habitación (`GET /api/public/hotels/:slug/room-types`).
 export type { PublicRoomTypeCatalogEntry } from './usecases/public-room-types'
 
-export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string, roomId: string) => void }) {
+export function BookingengineModule(opts?: {
+  pushAvailability?: (hotelId: string, roomId: string) => void
+  /** REQ-HAC-05 (#260) — push a las OTAs por TIPO: la reserva del widget nace sin unidad. */
+  pushAvailabilityByType?: (hotelId: string, roomType: string) => void
+}) {
   return createModule({
     name: 'bookingengine',
     version: '1.0.0',
@@ -145,6 +149,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         registry,
         // #272 — `Groups` para la cancelación pública en cascada. Al final.
         new OrmRepository<any>(orm, 'Groups'),
+        // REQ-HAC-05 (#260) — push por TIPO (la reserva del widget nace sin unidad). Al final.
+        opts?.pushAvailabilityByType,
       )
 
       // Admin routes (protegidas con auth)
