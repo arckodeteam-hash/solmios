@@ -755,16 +755,18 @@ function customAmenityRowError(row: RoomAmenityItem): string | null {
   if (row.name.trim().length > 80) return 'El nombre no puede superar los 80 caracteres'
   return null
 }
-// Espeja las reglas del backend (normalizeRoomAmenityItems): dos filas cuyo nombre normaliza a la
-// misma key `custom:<slug>` serían un 400 al guardar — mejor avisarlo antes.
+// Espeja las reglas del backend (normalizeRoomAmenityItems): dos filas nuevas cuyo nombre normaliza
+// a la misma key `custom:<slug>` serían un 400 al guardar — mejor avisarlo antes.
 const customAmenitiesError = computed<string | null>(() => {
   const seen = new Set<string>()
   for (const row of form.value.customAmenities) {
     const err = customAmenityRowError(row)
     if (err) return err
-    const key = customAmenityKey(row)
-    if (seen.has(key)) return `Hay dos amenidades con el mismo nombre ("${row.name.trim()}")`
-    seen.add(key)
+    // Por NOMBRE normalizado, no por key: una fila cargada conserva su key aunque se renombre, y
+    // dos filas con el mismo nombre serían una amenidad repetida para el huésped.
+    const slug = slugifyAmenityName(row.name)
+    if (seen.has(slug)) return `Hay dos amenidades con el mismo nombre ("${row.name.trim()}")`
+    seen.add(slug)
   }
   return null
 })

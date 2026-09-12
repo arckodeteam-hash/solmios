@@ -286,6 +286,20 @@ describe('rooms — amenidades personalizadas y con precio (#290)', () => {
     ])
   })
 
+  it('editar: renombrar una fila cargada con el nombre de otra ("Cama extra" → "cuna") → error inline y NO se guarda', async () => {
+    const w = await render()
+    await openEdit(w, 'r1')
+    setInput(q('custom-amenity-name')[1], ' cuna ')
+    await flushPromises()
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(q<HTMLElement>('custom-amenity-error')[0]?.textContent).toContain('mismo nombre')
+    expect(RoomService.update).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+  })
+
   it('detalle: las custom activas salen como pills con precio; las inactivas no', async () => {
     const w = await render()
     const card = w.findAll('.cursor-pointer').find(c => c.text().includes('101'))
