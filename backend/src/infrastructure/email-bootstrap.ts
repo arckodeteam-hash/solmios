@@ -184,7 +184,7 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
           guestRepo: new OrmRepository<any>(orm, 'Guests'),
           roomsRepo: new OrmRepository<any>(orm, 'Rooms'),
-          notificationsRepo: new OrmRepository<any>(orm, 'Notificaciones'),
+          notificationsRepo: new OrmRepository<any>(orm, 'Notifications'),
           configRepo,
           publicUrl: process.env.PUBLIC_URL || '',
           receiptPdf: async (id: string) => {

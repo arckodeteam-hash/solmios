@@ -116,6 +116,10 @@ const BACKOFF_MS = [60_000, 300_000, 900_000]
 const MAX_ATTEMPTS = 3
 /** Límite defensivo de tamaño del HTML (500 KB). */
 const MAX_HTML_BYTES = 500_000
+// #270: techo total de adjuntos por correo (base64). Resend rechaza >40MB; un recibo PDF pesa
+// ~100KB. Por encima del techo los adjuntos se DESCARTAN con warn y el correo sale igual: el
+// adjunto es un extra, el correo es lo que no puede faltar.
+const MAX_ATTACHMENTS_BYTES = 8_000_000
 /** Filas en 'processing' más viejas que esto se consideran stale (crash del worker). */
 const STALE_MS = 5 * 60_000
 
@@ -179,6 +183,12 @@ export class EmailService implements EmailSender {
     }
 
     const html = input.variables ? renderTemplate(input.html, input.variables) : input.html
+    let attachments = input.attachments?.length ? input.attachments : undefined
+    const attachmentsBytes = (attachments ?? []).reduce((s, a) => s + Buffer.byteLength(String(a.contentBase64 ?? ''), 'utf8'), 0)
+    if (attachments && attachmentsBytes > MAX_ATTACHMENTS_BYTES) {
+      this.logger.warn('EmailService: adjuntos descartados por tamaño', { to: input.to, bytes: attachmentsBytes, max: MAX_ATTACHMENTS_BYTES })
+      attachments = undefined
+    }
     const created = await this.queueRepo.create({
       hotelId: input.hotelId,
       recipient: input.to,
@@ -192,7 +202,7 @@ export class EmailService implements EmailSender {
       provider: null,
       relatedType: input.relatedType ?? null,
       relatedId: input.relatedId ?? null,
-      attachments: input.attachments?.length ? input.attachments : undefined,
+      attachments,
     } as Omit<EmailQueueDTO, 'id'>)
 
     // Envío inmediato sin bloquear: el worker del interval también lo tomará.

@@ -32,8 +32,10 @@ export interface NotificationDefault {
 // shared/usecases/tests/booking-paid-email.test.ts: NO inventar variables acá).
 // Las `*_lines` llegan ya como HTML (<ul><li>…</li></ul>) o '' y se insertan sin escapar.
 // El evento también lo dispara reservas/usecases/reservation-email.ts (reserva creada desde el
-// panel) con un mapa más chico: por eso las secciones nuevas van etiquetadas y separadas del
-// texto principal, para que el correo siga siendo legible si alguna variable queda sin valor.
+// panel), que no tiene desglose ni enlaces públicos: parte de la base neutra de
+// shared/usecases/confirmation-email-variables.ts (test en reservas/tests/reservation-email-
+// variables.test.ts), porque el renderer deja literal cualquier {var} que falte. Una variable
+// nueva acá se agrega en los dos flujos.
 // Tono: "usted" en es, formal en pt, neutro en en. Sin marca hardcodeada: {platform_name}.
 
 const CONFIRMED_ES = `<!DOCTYPE html>

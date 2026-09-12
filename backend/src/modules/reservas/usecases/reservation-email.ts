@@ -5,6 +5,8 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { EmailSender } from '../../../services/email-sender'
 import { resolveGuestLanguage } from '../../../services/guest-language'
+import type { NotificationLanguage } from '../../../services/notification-defaults'
+import { confirmationVariableDefaults } from '../../../shared/usecases/confirmation-email-variables'
 import type { CreateReservasDTO } from '../types'
 import type { GuestSummary, RoomSummary, HotelSummary } from './types'
 
@@ -41,7 +43,10 @@ export async function enqueueReservationEmail(
   const hotel = await hotelRepo.findById(dto.hotelId)
   const hotelName = hotel?.name || 'Hotel'
 
-  // Variables de plantilla del spec 6.1.4 (las no disponibles aquí van vacías).
+  const language = resolveGuestLanguage(guest) as NotificationLanguage
+  // Variables de plantilla del spec 6.1.4. Las que este flujo no conoce (desglose, enlaces
+  // públicos, huéspedes — #270) salen de la base neutra: el renderer dejaría el `{placeholder}`
+  // literal en el correo si faltaran.
   const PAYMENT_LABELS: Record<string, string> = {
     transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago',
   }
@@ -49,6 +54,7 @@ export async function enqueueReservationEmail(
   const deposit = Number(dto.deposit ?? 0)
   const pending = Math.max(0, total - deposit)
   const variables: Record<string, string | number> = {
+    ...confirmationVariableDefaults(language),
     guest_name: guest.name || guest.firstName || 'Huésped',
     hotel_name: hotelName,
     checkin_date: dto.checkIn,
@@ -69,7 +75,6 @@ export async function enqueueReservationEmail(
   }
 
   const event = type === 'email_confirmation' ? 'reservation_confirmed' : 'reservation_presale'
-  const language = resolveGuestLanguage(guest)
 
   await emailSender.enqueueNotification({
     to: guest.email, hotelId: dto.hotelId, event, language, variables,

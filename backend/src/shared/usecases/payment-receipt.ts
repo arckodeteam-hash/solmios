@@ -122,15 +122,16 @@ export function paymentMethodLabel(method: unknown): string {
   return PAYMENT_METHOD_LABELS[key] ?? key
 }
 
-/** "Hab. 101 · Doble" / "Suite Mar (201)" — lo que el huésped reconoce de su habitación. */
+/** "Suite Mar · Suite" / "Doble" — el tipo/nombre que el huésped reservó. SIN número de
+ *  habitación: puede reasignarse hasta la víspera y el recibo no promete una unidad concreta
+ *  (mismo criterio que el correo de confirmación, booking-paid-email.ts). */
 export function roomLabel(room: ReceiptRoomLike | null | undefined): string {
   if (!room) return 'Habitación'
-  const number = String(room.number ?? '').trim()
   const name = String(room.name ?? '').trim()
   const type = String(room.type ?? '').trim()
   const typeLabel = type ? (ROOM_TYPE_LABELS[type.toLowerCase()] ?? type) : ''
-  const base = name ? (number ? `${name} (${number})` : name) : (number ? `Hab. ${number}` : 'Habitación')
-  return typeLabel ? `${base} · ${typeLabel}` : base
+  if (name && typeLabel && name.toLowerCase() !== typeLabel.toLowerCase()) return `${name} · ${typeLabel}`
+  return name || typeLabel || 'Habitación'
 }
 
 function amenityLines(
@@ -236,8 +237,10 @@ function isHttpUrl(v: unknown): boolean {
   return typeof v === 'string' && /^https?:\/\/\S+$/i.test(v.trim())
 }
 
+/** El rate llega como fracción (0.18, hotel-taxes.ts) o como porcentaje (18): ambos → "18%". */
 function ratePct(rate: unknown): string {
-  const r = num(rate)
+  const raw = num(rate)
+  const r = raw > 0 && raw < 1 ? raw * 100 : raw
   return Number.isInteger(r) ? `${r}%` : `${r.toFixed(2).replace(/\.?0+$/, '')}%`
 }
 

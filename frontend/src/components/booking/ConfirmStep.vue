@@ -103,16 +103,8 @@
   </section>
 </template>
 
-<script lang="ts">
-/** URL pública del recibo PDF (#270). Pura y exportada desde el bloque no-setup para poder
- *  testearla sin montar el componente. Devuelve '' si falta id o token. */
-export function receiptPdfUrl(id: string, token: string): string {
-  if (!id || !token) return ''
-  return `/api/public/reservations/${encodeURIComponent(id)}/receipt.pdf?token=${encodeURIComponent(token)}`
-}
-</script>
-
 <script setup lang="ts">
+import { receiptPdfUrl } from '@/utils/booking-confirmation-format'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookingStore, readStoredReservation, clearStoredReservation } from '@/composables/useBooking'

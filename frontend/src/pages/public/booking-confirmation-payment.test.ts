@@ -39,3 +39,17 @@ describe('textos del pago en los 3 idiomas', () => {
     expect(occurrences).toBe(3)
   })
 })
+
+// #270 — el recibo PDF se descarga desde la confirmación con el mismo id+token del polling.
+describe('confirmación pública: botón Descargar recibo (#270)', () => {
+  it('el botón existe, apunta a receipt.pdf y abre en otra pestaña con noopener', () => {
+    expect(src).toContain('data-testid="confirm-receipt"')
+    expect(src).toContain(':href="receiptUrl"')
+    expect(src).toContain("receiptPdfUrl(resolvedIds.value.id, resolvedIds.value.token)")
+    expect(src).toMatch(/data-testid="confirm-receipt"[\s\S]*?<\/a>/)
+    expect(src).toContain('rel="noopener"')
+  })
+  it('confirm.downloadReceipt existe en los 3 idiomas', () => {
+    expect(i18nSrc.split("'confirm.downloadReceipt':").length - 1).toBe(3)
+  })
+})

@@ -235,6 +235,18 @@ describe('EmailService', () => {
       expect(calls[1][0].attachments?.[0].content.equals(Buffer.from(PDF_BASE64, 'base64'))).toBe(true)
     })
 
+    it('adjuntos por encima de 8MB se descartan con warn y el correo se encola igual', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      const huge = { ...attachment, contentBase64: 'A'.repeat(8_000_001) }
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1', attachments: [huge] })
+      expect(queue._store.get('q-1')!.attachments).toBeUndefined()
+      await settle(queue, 'q-1')
+      expect(queue._store.get('q-1')!.status).toBe('sent')
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments?: unknown[] }
+      expect(mail.attachments).toBeUndefined()
+    })
+
     it('Resend recibe attachments [{filename, content: base64}]', async () => {
       const queue = makeQueueRepo({ forceDue: true })
       const svc = new EmailService(makeConfigRepo({ resend_api_key: 'rk_test_123' }), queue, log)
