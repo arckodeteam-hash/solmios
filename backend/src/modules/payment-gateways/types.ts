@@ -71,4 +71,6 @@ export interface TestConnectionResult {
   ok: boolean
   message: string
   accountName?: string
+  /** #308: avisos no bloqueantes (ej. al webhook de Stripe le faltan eventos). Solo si hay alguno. */
+  warnings?: string[]
 }

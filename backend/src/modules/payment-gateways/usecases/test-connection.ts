@@ -17,6 +17,7 @@ import type { PaymentGatewayRow, TestConnectionResult } from '../types'
 import { IMPLEMENTED_PROVIDERS } from '../../../services/payment-gateway/types'
 import { decryptCredentials } from '../../../services/payment-gateway/crypto'
 import { StripeGateway } from '../../../services/payment-gateway/stripe-gateway'
+import { stripeWebhookWarnings } from './webhook-subscription'
 import { AzulGateway, toAzulCredentials } from '../../../services/payment-gateway/azul-gateway'
 import { CardnetGateway, toCardnetCredentials } from '../../../services/payment-gateway/cardnet-gateway'
 import type { CardnetSessionStore } from '../../../services/payment-gateway/cardnet-gateway'
@@ -36,10 +37,19 @@ export async function testGatewayConnection(row: PaymentGatewayRow): Promise<Tes
     if (row.provider === 'stripe') {
       const gw = new StripeGateway(creds, row.mode)
       const account = await gw.retrieveAccount()
+      // #308: best-effort. Una restricted key sin permiso sobre webhooks (o un corte de red) no
+      // convierte en "falló" una conexión que sí funciona: simplemente no hay avisos.
+      let warnings: string[] = []
+      try {
+        warnings = stripeWebhookWarnings(row.hotelId, await gw.listWebhookEndpoints())
+      } catch {
+        warnings = []
+      }
       return {
         ok: true,
         message: `Conectado a ${account.name || 'la cuenta'} (${row.mode})`,
         accountName: account.name,
+        ...(warnings.length ? { warnings } : {}),
       }
     }
 
