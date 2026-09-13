@@ -85,6 +85,8 @@ const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
 export interface RoomAmenityUpsertPlan {
   deactivate: string[]
+  /** Ids de custom que el hotel quitó del form (ausentes de `items`): se BORRA la fila (#366). */
+  delete: string[]
   reactivate: string[]
   create: Array<{ amenityKey: string; name: string; price: number; isActive: boolean }>
   update: Array<{ id: string; patch: { name: string; price: number; isActive: boolean } }>
@@ -97,11 +99,12 @@ export interface RoomAmenityUpsertPlan {
  * - fijas existentes que no vienen en `fixedKeys` → deactivate (como antes); las que vienen → reactivate/create.
  * - custom que viene en `items` → update si existe la key (name/price/isActive tal cual: una custom
  *   inactiva se CONSERVA para poder reactivarla) o create.
- * - custom existente que NO viene en `items` → deactivate (el hotel la quitó del form).
+ * - custom existente que NO viene en `items` → delete (el hotel la quitó del form con la "x"; si sólo
+ *   se desactivara, GET la devolvería y reaparecería en el form — bug #366).
  * - `items` undefined (cliente viejo que manda sólo `amenities`) → las custom quedan como están.
  */
 export function planRoomAmenityUpsert(existing: any[], fixedKeys: string[], items?: NormalizedItem[]): RoomAmenityUpsertPlan {
-  const plan: RoomAmenityUpsertPlan = { deactivate: [], reactivate: [], create: [], update: [], activeKeys: [] }
+  const plan: RoomAmenityUpsertPlan = { deactivate: [], delete: [], reactivate: [], create: [], update: [], activeKeys: [] }
   const fixed = Array.from(new Set(fixedKeys.filter((k) => typeof k === 'string' && k && !isCustomAmenityKey(k))))
   const byKey = new Map<string, any>()
   for (const ex of existing) if (ex?.amenityKey && !byKey.has(ex.amenityKey)) byKey.set(ex.amenityKey, ex)
@@ -110,7 +113,7 @@ export function planRoomAmenityUpsert(existing: any[], fixedKeys: string[], item
   for (const ex of existing) {
     if (isCustomAmenityKey(ex.amenityKey)) {
       if (!items) { if (isOn(ex.isActive)) plan.activeKeys.push(ex.amenityKey); continue }
-      if (!itemKeys.has(ex.amenityKey)) plan.deactivate.push(ex.id)
+      if (!itemKeys.has(ex.amenityKey)) plan.delete.push(ex.id)
     } else if (!fixed.includes(ex.amenityKey)) {
       plan.deactivate.push(ex.id)
     }

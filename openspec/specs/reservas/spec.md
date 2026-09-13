@@ -374,7 +374,12 @@ se conservan SOLO para leer reservas históricas; toda reserva nueva las persist
 REQ-01 (#290) agrega, con el mismo patrón, las **amenidades personalizadas de la
 habitación**: filas `RoomAmenities` con `amenityKey` `custom:<slug>`, `name`, `price` >= 0
 e `isActive`, configuradas desde el formulario de CADA habitación (las keys fijas del
-catálogo siguen siendo features gratuitas). Como el huésped elige un TIPO y no una unidad,
+catálogo siguen siendo features gratuitas). El form manda SIEMPRE la lista completa
+(`items`) y `planRoomAmenityUpsert` la aplica por key: una custom destildada ("Disponible"
+off) llega con `isActive:false` y se conserva inactiva para poder reactivarla; una custom
+quitada con la "x" NO llega y su fila **se borra** (#366) — el GET del panel la dejaría
+reaparecer si sólo se desactivara — sin que eso toque las reservas ya hechas, que llevan su
+propio snapshot `roomAmenities`. Como el huésped elige un TIPO y no una unidad,
 `GET /api/public/hotels/:slug/room-amenities` expone por `roomType` la unión (por key) de
 las custom activas de sus habitaciones vendibles con el precio MÁXIMO entre las unidades del
 tipo (`public-room-amenities.ts`, #365): ningún precio configurado queda oculto porque otra
