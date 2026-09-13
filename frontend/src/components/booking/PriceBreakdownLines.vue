@@ -40,7 +40,7 @@
       <template v-if="mealPlanLines && mealPlanLines.length > 0">
         <div v-for="line in mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
           <span class="text-text-muted">
-            {{ t('pay.mealPlan') }}: {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: mealPlanLabel(line.code), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span>
+            {{ t('pay.mealPlan') }}: {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: mealPlanLabel(line), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span>
             <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span>
           </span>
           <span v-if="line.priceMode === 'included'" class="font-bold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
@@ -69,10 +69,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MealPlanCode, TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
+import type { TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
 import type { MealPlanLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
+import { publicMealPlanLabel } from '@/utils/meal-plans'
 
 const props = defineProps<{
   breakdown: TotalBreakdown | null | undefined
@@ -86,9 +86,10 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts). */
-function mealPlanLabel(code: MealPlanCode): string {
-  return t(MEAL_PLAN_LABEL_KEY[code])
+/** #361 — etiqueta del régimen: el `name` del snapshot de la línea; sin nombre, el i18n legacy del
+ *  código histórico (`publicMealPlanLabel`, utils/meal-plans.ts). */
+function mealPlanLabel(line: { code: string; name?: string | null }): string {
+  return publicMealPlanLabel(line, t)
 }
 
 /** Alojamiento = subtotal sin extras, amenidades de la habitación ni régimen (el backend guarda

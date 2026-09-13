@@ -148,8 +148,11 @@ export interface Reservation {
   promoCode?: string
   regime?: string
   /** MR-03 (#268) — snapshot del régimen reservado desde la web. null/ausente en reservas
-   *  viejas y en las cargadas a mano (que solo tienen `regime`). */
+   *  viejas y en las cargadas a mano (que solo tienen `regime`). #361: `mealPlanName` es el
+   *  nombre del catálogo en el momento de reservar (el panel lo muestra vía
+   *  `reservationMealPlanLabel`). */
   mealPlan?: string | null
+  mealPlanName?: string | null
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
@@ -252,8 +255,9 @@ export interface ReservationApiRecord {
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   regime?: string
-  /** MR-03 (#268) — snapshot del régimen reservado desde la web. */
+  /** MR-03 (#268) — snapshot del régimen reservado desde la web; #361: + nombre persistido. */
   mealPlan?: string | null
+  mealPlanName?: string | null
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
@@ -768,8 +772,10 @@ export interface ReservationDetail {
    *  En una reserva suelta `mealPlanTotal` está DENTRO de `totalAmount`; en una de grupo
    *  (`groupId`) NO: cada fila persiste el unitario pero su `totalAmount` es solo la habitación y
    *  el régimen se cobró con el total del grupo. null/ausente en reservas viejas o del panel.
-   *  El régimen que se MUESTRA es `regime ?? mealPlan` (`utils/meal-plans.ts`). */
+   *  El régimen que se MUESTRA es `regime ?? mealPlan` (`utils/meal-plans.ts`); #361: con el
+   *  NOMBRE persistido (`mealPlanName`, `reservationMealPlanLabel`). */
   mealPlan?: string | null
+  mealPlanName?: string | null
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number

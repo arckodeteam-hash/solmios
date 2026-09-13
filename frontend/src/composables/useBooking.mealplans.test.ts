@@ -68,11 +68,29 @@ describe('useBooking — regímenes cargados junto con la búsqueda', () => {
     expect(store.status).not.toBe('selecting')
     expect(store.mealPlans).toEqual([])
 
-    resolveMealPlans([{ code: 'breakfast', priceMode: 'included', price: 0 }])
+    // #361 — el catálogo público trae el `name` (etiqueta del radio) y sólo las filas visibles.
+    resolveMealPlans([{ code: 'breakfast', name: 'Desayuno incluido', priceMode: 'included', price: 0 }])
     await searchPromise
 
     expect(store.status).toBe('selecting')
-    expect(store.mealPlans).toEqual([{ code: 'breakfast', priceMode: 'included', price: 0 }])
+    expect(store.mealPlans).toEqual([{ code: 'breakfast', name: 'Desayuno incluido', priceMode: 'included', price: 0 }])
+  })
+
+  it('#361: catálogo vacío (switch showMealPlans apagado / sin activos) → mealPlans queda [] y la búsqueda sigue', async () => {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.checkIn = tomorrow()
+    store.checkOut = inDays(3)
+
+    vi.mocked(BookingService.getRates).mockResolvedValue(rates())
+    vi.mocked(BookingService.getMealPlans).mockResolvedValue([])
+
+    await store.search()
+
+    expect(store.status).toBe('selecting')
+    expect(store.mealPlans).toEqual([])
+    expect(store.mealPlansTotal).toBe(0)
+    expect(store.mealPlanLines).toEqual([])
   })
 
   it('si getMealPlans falla, degrada a array vacío sin romper la búsqueda de tarifas', async () => {

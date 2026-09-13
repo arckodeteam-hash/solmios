@@ -31,7 +31,7 @@
     <!-- #343 / MR-03 (#268) — régimen, una fila por habitación con régimen ≠ solo alojamiento; los
          incluidos se listan sin importe para que el huésped vea que están en la tarifa. -->
     <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
-      <span class="text-text-muted">{{ mealPlanLabel }} · {{ line.roomName }} · {{ mealPlanName(line.code) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ beforeTaxesLabel }}</span></span>
+      <span class="text-text-muted">{{ mealPlanLabel }} · {{ line.roomName }} · {{ mealPlanName(line) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ beforeTaxesLabel }}</span></span>
       <span v-if="line.priceMode === 'included'" class="font-bold text-green-700">{{ mealPlanIncludedLabel }}</span>
       <span v-else class="font-bold tabular-nums text-navy">{{ format(line.total) }}</span>
     </div>
@@ -55,8 +55,7 @@
 import { computed } from 'vue'
 import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
-import type { MealPlanCode } from '@/types/booking'
+import { publicMealPlanLabel } from '@/utils/meal-plans'
 
 /** Strings que reemplazan a las de i18n. El BookingModal de la landing no usa el store i18n del
  *  widget y pasa español fijo; el widget embebible no las pasa y cae en `t(...)`. */
@@ -70,7 +69,7 @@ export interface EstimatedTotalsLabels {
   mealPlan: string
   mealPlanIncluded: string
   /** #343 — nombre del régimen por código; lo que falte cae en el i18n del widget. */
-  mealPlanNames: Partial<Record<MealPlanCode, string>>
+  mealPlanNames: Partial<Record<string, string>>
 }
 
 const props = defineProps<{
@@ -89,8 +88,12 @@ const noTaxesLabel = computed(() => props.labels?.noTaxes ?? t('pay.noTaxes'))
 const discountLabel = computed(() => props.labels?.discount ?? t('pay.discount'))
 const mealPlanLabel = computed(() => props.labels?.mealPlan ?? t('pay.mealPlan'))
 const mealPlanIncludedLabel = computed(() => props.labels?.mealPlanIncluded ?? t('pay.mealPlanIncluded'))
-// MR-03 (#268) — etiqueta del régimen por código: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts).
-function mealPlanName(code: MealPlanCode): string {
-  return props.labels?.mealPlanNames?.[code] ?? t(MEAL_PLAN_LABEL_KEY[code])
+// MR-03 (#268) / #361 — etiqueta del régimen: el `name` del snapshot de la línea (catálogo al
+// agregar); sin nombre, `labels.mealPlanNames[code]` (landing, mapa legacy) o el i18n legacy del
+// código histórico (`publicMealPlanLabel`, utils/meal-plans.ts).
+function mealPlanName(line: { code: string; name?: string | null }): string {
+  const snapshot = typeof line.name === 'string' ? line.name.trim() : ''
+  if (snapshot) return snapshot
+  return props.labels?.mealPlanNames?.[line.code] ?? publicMealPlanLabel(line, t)
 }
 </script>

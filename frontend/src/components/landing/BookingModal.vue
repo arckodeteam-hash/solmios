@@ -211,16 +211,17 @@
                 </div>
 
                 <!--
-                  RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`;
-                  MR-03 #268 lo hace RESERVABLE). Mismo radio POR TARJETA que RoomsStep.vue
-                  (/book/:slug): "Sólo alojamiento" es la base implícita; los otros 3 códigos
-                  vienen de `store.mealPlans` (solo los `active` llegan del backend); sin fila =
-                  el hotel no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta).
-                  `included` → "Incluido"; con costo → el importe para la composición ACTUAL
-                  (`price × personas × noches`, el backend recalcula), en chargeCurrency (D10:
-                  nunca se convierte — ver `moneyCharge`).
+                  RÉGIMEN — catálogo ABIERTO configurable por hotel (Configuración Base →
+                  Regímenes; MR-03 #268 lo hace RESERVABLE, #361 lo abre y lo gatea con el switch
+                  `showMealPlans`). Mismo radio POR TARJETA que RoomsStep.vue (/book/:slug): UNA
+                  opción por fila que devuelve `GET /meal-plans` (solo las visibles, ordenadas, con
+                  su `name`): nada fijo, nada deshabilitado, sin "Sólo alojamiento" implícito
+                  (`room_only` es una fila más si el hotel lo ofrece). Con catálogo vacío NO se
+                  renderiza NADA de esta sección. `included` → "Incluido"; con costo → el importe
+                  para la composición ACTUAL (`price × personas × noches`, el backend recalcula),
+                  en chargeCurrency (D10: nunca se convierte — ver `moneyCharge`).
                 -->
-                <div class="mt-3">
+                <div v-if="mealPlanOptions(rt).length > 0" class="mt-3" data-testid="meal-plan-section">
                   <p :id="`meal-plan-label-${rt.id}`" class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Régimen</p>
                   <div class="mt-1 flex flex-wrap gap-1.5" role="radiogroup" :aria-labelledby="`meal-plan-label-${rt.id}`" data-testid="meal-plan-options">
                     <label
@@ -228,14 +229,12 @@
                       :key="opt.code"
                       :for="`meal-plan-${rt.id}-${opt.code}`"
                       :class="[
-                        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold',
+                        'inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold',
                         mealPlanCode(rt) === opt.code
                           ? 'bg-navy text-white'
-                          : opt.available
-                            ? 'cursor-pointer border border-border bg-white text-navy hover:bg-surface'
-                            : 'cursor-not-allowed border border-border bg-surface text-text-muted',
+                          : 'border border-border bg-white text-navy hover:bg-surface',
                       ]"
-                      :title="opt.available ? undefined : 'Este hotel no ofrece este régimen'"
+                      :title="mealPlanDescription(opt) || undefined"
                       data-testid="meal-plan-option"
                     >
                       <input
@@ -245,14 +244,17 @@
                         class="h-3.5 w-3.5 border-border text-cyan"
                         :value="opt.code"
                         :checked="mealPlanCode(rt) === opt.code"
-                        :disabled="!opt.available"
                         @change="setMealPlan(rt, opt.code)"
                       />
-                      <span>{{ BOARD_PLAN_LABELS[opt.code] }}</span>
+                      <span>{{ boardPlanLabel(opt) }}</span>
                       <span v-if="opt.priceMode === 'included'" class="text-[10px] font-black uppercase opacity-80">· Incluido</span>
                       <span v-else-if="opt.priceMode === 'per_person_per_night'" class="tabular-nums opacity-90" data-testid="meal-plan-price">· {{ moneyCharge(opt.total) }}</span>
                     </label>
                   </div>
+                  <!-- #361 — descripción de la opción elegida (texto libre del catálogo), si la tiene. -->
+                  <p v-if="selectedMealPlanOption(rt) && mealPlanDescription(selectedMealPlanOption(rt)!)" class="mt-1 text-[11px] text-text-muted" data-testid="meal-plan-description">
+                    {{ mealPlanDescription(selectedMealPlanOption(rt)!) }}
+                  </p>
                   <p v-if="selectedMealPlanOption(rt)?.priceMode === 'per_person_per_night'" class="mt-1 text-[11px] text-text-muted" data-testid="meal-plan-hint">
                     {{ moneyCharge(selectedMealPlanOption(rt)!.unitPrice) }} por persona y noche
                   </p>
@@ -365,7 +367,7 @@
                         <span class="block text-[11px] tabular-nums text-text-muted">total · {{ money(composedPricePerNight(rt)) }}/noche</span>
                         <!-- MR-03 (#268) — el régimen elegido suma aparte, como las amenidades. -->
                         <span v-if="composedMealPlanTotal(rt) > 0" class="block text-[11px] font-bold tabular-nums text-navy" data-testid="meal-plan-total">
-                          + {{ moneyCharge(composedMealPlanTotal(rt)) }} · {{ BOARD_PLAN_LABELS[mealPlanCode(rt)] }}
+                          + {{ moneyCharge(composedMealPlanTotal(rt)) }} · {{ selectedMealPlanOption(rt) ? boardPlanLabel(selectedMealPlanOption(rt)!) : '' }}
                         </span>
                       </template>
                       <span v-else class="block text-[11px] font-bold text-text-secondary">{{ unavailableLabel(matchedRow(rt)!.unavailableReason) }}</span>
@@ -764,7 +766,7 @@
             </div>
             <!-- MR-03 (#268) — régimen, una fila por habitación con régimen (incluido → sin importe). -->
             <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
-              <span class="text-text-muted">Régimen: {{ BOARD_PLAN_LABELS[line.code] }} · {{ line.persons }} pers × {{ line.nights }} {{ line.nights === 1 ? 'noche' : 'noches' }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
+              <span class="text-text-muted">Régimen: {{ boardPlanLabel(line) }} · {{ line.persons }} pers × {{ line.nights }} {{ line.nights === 1 ? 'noche' : 'noches' }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
               <span v-if="line.priceMode === 'included'" class="font-bold text-teal">incluido</span>
               <span v-else class="font-bold tabular-nums text-navy">{{ moneyCharge(line.total) }}</span>
             </div>
@@ -868,7 +870,6 @@ import { formatMoney, formatShortDate, nightsBetween } from '@/utils/rate-calend
 import { classifyAge } from '@/utils/child-composition'
 import { isCribAmenityKey } from '@/utils/crib-amenity'
 import type {
-  MealPlanCode,
   OccupancyUnavailableReason,
   OpenBookingOptions,
   PromoValidationReason,
@@ -1112,15 +1113,28 @@ function urgency(count: number): string {
   return ''
 }
 
-// ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable) ─────────────────────
-/** Etiqueta por código. No usa el store de i18n (la landing no soporta locale) — mismas strings
- *  hardcodeadas que el resto del modal. Las opciones (disponibilidad, importe para la
- *  composición actual) las arma `useGuestComposer.mealPlanOptions`, compartido con RoomsStep.vue. */
-const BOARD_PLAN_LABELS: Record<MealPlanCode | 'room_only', string> = {
+// ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable; #361 catálogo abierto) ──
+/** Fallback LEGACY por código histórico, SOLO para una fila/línea sin `name` (no debería pasar:
+ *  el catálogo público siempre trae nombre desde #361). No usa el store de i18n (la landing no
+ *  soporta locale) — mismas strings hardcodeadas que el resto del modal. */
+const BOARD_PLAN_LABELS: Record<string, string> = {
   room_only: 'Sólo alojamiento',
   breakfast: 'Desayuno incluido',
   half_board: 'Desayuno y cena',
   all_inclusive: 'Todo incluido',
+}
+
+/** #361 — etiqueta de una opción/línea de régimen: el `name` del catálogo (opción) o del snapshot
+ *  (línea del carrito) tal cual lo escribió el hotel; sin nombre, el mapa legacy o el código. */
+function boardPlanLabel(item: { code: string; name?: string | null }): string {
+  const name = typeof item.name === 'string' ? item.name.trim() : ''
+  return name || BOARD_PLAN_LABELS[item.code] || item.code
+}
+
+/** #361 — descripción libre de la fila del catálogo (`store.mealPlans`), o '' si no tiene. */
+function mealPlanDescription(opt: MealPlanOption): string {
+  const found = store.mealPlans.find((m) => m.code === opt.code)
+  return typeof found?.description === 'string' ? found.description.trim() : ''
 }
 
 /** #220: strings en español para <EstimatedTotals> (el modal de la landing no usa i18n).
@@ -1139,9 +1153,10 @@ const ESTIMATED_LABELS = {
   mealPlanNames: BOARD_PLAN_LABELS,
 }
 
-/** La opción elegida en esta tarjeta (para la ayuda "{price} por persona y noche"). */
+/** La opción elegida en esta tarjeta (para el "+ importe · nombre" y la ayuda por persona y noche). */
 function selectedMealPlanOption(rt: RoomTypeRate): MealPlanOption | undefined {
   const code = mealPlanCode(rt)
+  if (code === null) return undefined
   return mealPlanOptions(rt).find((o) => o.code === code)
 }
 
@@ -1184,9 +1199,10 @@ function cartLineGuestsLabel(line: CartLine): string {
   const cribListed = (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name))
   const withCrib = line.needsCrib && !cribListed ? `${base} · Cuna` : base
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
-  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
-  return line.mealPlan && line.mealPlan.code !== 'room_only'
-    ? `${withRoomAmenities} · ${BOARD_PLAN_LABELS[line.mealPlan.code]}`
+  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea; #361: por su
+  // `name` del catálogo al agregar).
+  return line.mealPlan
+    ? `${withRoomAmenities} · ${boardPlanLabel(line.mealPlan)}`
     : withRoomAmenities
 }
 

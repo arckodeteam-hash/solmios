@@ -90,10 +90,11 @@ export interface CreateBookingDTO {
    *  backend prefiere una habitación del tipo que las ofrezca y cobra el precio real de la
    *  asignada — una key que esa habitación no ofrece se ignora. */
   roomAmenities?: CreateBookingRoomAmenity[]
-  /** MR-03 (#268) — régimen elegido para ESTA habitación (`'breakfast' | 'half_board' |
-   *  'all_inclusive'`; omitido = solo alojamiento). El backend re-resuelve el precio contra su
-   *  catálogo activo (`meal_plans`) y cobra `price × (adultos + niños con plaza) × noches`; un
-   *  código que el hotel no tiene activo responde 400 `meal_plan_unavailable`. */
+  /** MR-03 (#268) — régimen elegido para ESTA habitación: un `code` del catálogo público
+   *  (`GET /meal-plans`), INCLUIDO `room_only` cuando el hotel lo ofrece como fila (#361: el
+   *  catálogo es abierto, sin códigos fijos). Omitido = sin régimen. El backend re-resuelve el
+   *  precio contra su catálogo visible y cobra `price × (adultos + niños con plaza) × noches`; un
+   *  código que no está visible responde 400 `meal_plan_unavailable`. */
   mealPlan?: string
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
@@ -452,19 +453,29 @@ export interface SelectedUpsell {
   quantity: number
 }
 
-export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+/** #361 — el catálogo de regímenes es ABIERTO (CRUD en Configuración Base): el código es un
+ *  string libre que sólo identifica la fila. Los códigos históricos (`breakfast`, `half_board`,
+ *  `all_inclusive`, `room_only`) siguen existiendo como seeds, pero el widget NO los conoce: todo
+ *  lo que muestra sale de `PublicMealPlan.name`. */
+export type MealPlanCode = string
 export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 
 /**
- * Régimen de alimentación activo del hotel (`GET /api/public/hotels/:slug/meal-plans`).
- * Público, sin auth. "Solo alojamiento" NO viene acá — es la base implícita que arma el
- * widget (ver RoomsStep.vue / useGuestComposer.ts). MR-03 (#268): los regímenes son
- * SELECCIONABLES por habitación y `priceMode:'per_person_per_night'` se cobra
- * `price × (adultos + niños con plaza) × noches` (el backend recalcula; `included` → 0).
- * `price` está SIEMPRE en `hotels.currency` (chargeCurrency), nunca convertido.
+ * Régimen VISIBLE del hotel (`GET /api/public/hotels/:slug/meal-plans`). Público, sin auth.
+ * #361: el backend devuelve SOLO los activos, ya ordenados, y `[]` cuando el switch
+ * `showMealPlans` (Página pública → Motor de reservas) está apagado o no hay activos — con `[]`
+ * el widget no renderiza NADA de régimen. "Solo alojamiento" (`room_only`) es una fila más del
+ * catálogo (puede tener precio): ya no es una base implícita que el widget anteponga.
+ * MR-03 (#268): los regímenes son SELECCIONABLES por habitación y
+ * `priceMode:'per_person_per_night'` se cobra `price × (adultos + niños con plaza) × noches`
+ * (el backend recalcula; `included` → 0). `price` está SIEMPRE en `hotels.currency`
+ * (chargeCurrency), nunca convertido.
  */
 export interface PublicMealPlan {
   code: MealPlanCode
+  /** Nombre visible tal cual lo configuró el hotel — es la etiqueta del radio (#361). */
+  name: string
+  description?: string | null
   priceMode: MealPlanPriceMode
   price: number
 }
@@ -479,12 +490,14 @@ export interface PublicRateMealPlan extends PublicMealPlan {
 }
 
 /** MR-03 (#268) — SNAPSHOT del régimen elegido en una línea del carrito (`CartLine.mealPlan`),
- *  tomado del catálogo `store.mealPlans` al agregar: si el hotel cambia el precio después, la
- *  línea sigue mostrando lo que el huésped vio. `persons` = adultos + niños con plaza de ESA
- *  línea; `total` = `unitPrice × persons × nights` por unidad (0 si `included`). Solo se guarda
- *  para códigos ≠ `room_only` (el flujo base no lleva snapshot). */
+ *  tomado del catálogo `store.mealPlans` al agregar: si el hotel cambia el precio o el nombre
+ *  después, la línea sigue mostrando lo que el huésped vio. `persons` = adultos + niños con plaza
+ *  de ESA línea; `total` = `unitPrice × persons × nights` por unidad (0 si `included`). #361: se
+ *  guarda para CUALQUIER código del catálogo visible (incluido `room_only` si el hotel lo ofrece
+ *  como fila); `name` es la etiqueta que se muestra en carrito/resumen/pago. */
 export interface CartLineMealPlan {
-  code: MealPlanCode | 'room_only'
+  code: MealPlanCode
+  name: string
   priceMode: MealPlanPriceMode | null
   unitPrice: number
   persons: number
@@ -631,8 +644,11 @@ export interface PublicReservation {
    *  que el hotel se pondrá en contacto. Ausente/false en el resto. */
   cribUnavailable?: boolean
   /** MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado en la reserva).
-   *  `null`/`undefined`/`'room_only'` = solo alojamiento; `mealPlanTotal` 0 con `included`. */
-  mealPlan?: MealPlanCode | 'room_only' | null
+   *  `null`/`undefined` = sin régimen; `mealPlanTotal` 0 con `included`. #361: `mealPlanName`
+   *  es el nombre del catálogo en el momento de reservar (persistido junto al código) — la
+   *  confirmación muestra ESO; el código sólo sirve de fallback para reservas anteriores. */
+  mealPlan?: MealPlanCode | null
+  mealPlanName?: string | null
   mealPlanPriceMode?: MealPlanPriceMode | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number

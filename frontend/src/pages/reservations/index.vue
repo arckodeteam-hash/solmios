@@ -314,7 +314,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
 import { paymentStateBadge } from '@/utils/payment-state'
-import { effectiveMealPlan, hasMealPlan, mealPlanLabel, MEAL_PLAN_LABELS } from '@/utils/meal-plans'
+import { effectiveMealPlan, hasMealPlan, reservationMealPlanLabel, MEAL_PLAN_LABELS } from '@/utils/meal-plans'
 import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
 import Icon from '@/components/ui/Icon.vue'
 import ReservationModal from '@/components/features/ReservationModal.vue'
@@ -458,7 +458,7 @@ const statsCards = computed(() => [
 
 const filtered = computed(() => {
   let l = list.value
-  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || mealPlanLabel(effectiveMealPlan(r), '').toLowerCase().includes(q)) }
+  if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q) || reservationMealPlanLabel(r, '').toLowerCase().includes(q)) }
   if (filterMealPlan.value) l = l.filter((r: any) => (effectiveMealPlan(r) ?? '') === filterMealPlan.value)
   // REQ-HAC-06 (#261) — 'unassigned' no es un status del backend: vigentes sin unidad asignada.
   if (filterStatus.value === 'unassigned') l = l.filter((r: any) => !r.roomId && (r.status === 'pending' || r.status === 'confirmed'))
@@ -565,10 +565,12 @@ async function load() {
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
         // MR-03 (#268) — régimen: `regime` (editable) manda, `mealPlan` (snapshot web) cubre.
-        // El badge solo se muestra cuando hay algo más que alojamiento.
-        mealPlan: r.mealPlan ?? null, regime: r.regime ?? null,
+        // #361: la etiqueta es el NOMBRE persistido (`mealPlanName`, catálogo abierto) vía
+        // `reservationMealPlanLabel`. El badge se muestra cuando hay algo más que alojamiento o
+        // cuando el régimen se cobró (un `room_only` con precio también se anuncia).
+        mealPlan: r.mealPlan ?? null, mealPlanName: r.mealPlanName ?? null, regime: r.regime ?? null,
         mealPlanTotal: r.mealPlanTotal ?? 0,
-        mealPlanLabel: hasMealPlan(effectiveMealPlan(r)) ? mealPlanLabel(effectiveMealPlan(r), '') : '',
+        mealPlanLabel: hasMealPlan(effectiveMealPlan(r)) || (Number(r.mealPlanTotal) || 0) > 0 ? reservationMealPlanLabel(r, '') : '',
         // #274 — badge de cuna con tooltip (`childSetupSummary`).
         needsCrib: r.needsCrib ?? false, cribCount: r.cribCount ?? 0, childAmenities: r.childAmenities ?? null,
       }

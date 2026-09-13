@@ -203,9 +203,9 @@
               <dt class="text-text-secondary">{{ t('confirm.guest') }}</dt>
               <dd class="font-bold text-navy text-right break-words" data-testid="confirm-guest">{{ guestDisplayName }}</dd>
             </div>
-            <!-- MR-03 (#268) — el régimen que EL HUÉSPED eligió y pagó (snapshot de la reserva).
-                 Solo si ≠ solo alojamiento: con importe si se cobró, chip "incluido" si venía en
-                 la tarifa. Reservas anteriores a la feature no traen el campo → nada. -->
+            <!-- MR-03 (#268) — el régimen que EL HUÉSPED eligió y pagó (snapshot de la reserva),
+                 por su NOMBRE persistido (#361): con importe si se cobró, chip "incluido" si venía
+                 en la tarifa. Reservas anteriores a la feature no traen el campo → nada. -->
             <div v-if="mealPlanLabel" class="flex justify-between gap-3" data-testid="confirm-meal-plan">
               <dt class="text-text-secondary">{{ t('pay.mealPlan') }}</dt>
               <dd class="flex items-center gap-2 font-bold text-navy text-right">
@@ -532,11 +532,17 @@ const nights = computed(() => nightsBetween(reservation.value?.reservation?.chec
 const guestDisplayName = computed(() => displayName(reservation.value?.guest?.name))
 
 // ── MR-03 (#268) — régimen elegido (snapshot en la reserva) ─────────────────
-/** Etiqueta del régimen (`mealPlanLabelKey`, mapa único en utils/meal-plans.ts), o '' con solo
- *  alojamiento / reserva anterior a la feature. */
+/** Etiqueta del régimen: #361 el NOMBRE persistido en la reserva (`mealPlanName`, el del catálogo
+ *  al reservar — cualquier código, `room_only` incluido si el hotel lo ofrece como fila); sin
+ *  nombre (reserva anterior a #361) cae al i18n legacy del código (`mealPlanLabelKey`, mapa único
+ *  en utils/meal-plans.ts), y '' con `room_only` legacy / sin régimen. */
 const mealPlanLabel = computed(() => {
-  const code = reservation.value?.reservation?.mealPlan
-  if (!code || code === 'room_only') return ''
+  const r = reservation.value?.reservation
+  const code = r?.mealPlan
+  if (!code) return ''
+  const name = typeof r?.mealPlanName === 'string' ? r.mealPlanName.trim() : ''
+  if (name) return name
+  if (code === 'room_only') return ''
   const key = mealPlanLabelKey(code)
   return key ? t(key) : ''
 })

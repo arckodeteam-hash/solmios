@@ -14,19 +14,22 @@
 // 1 adulto / 0 niños / sin Cama mientras el carrito seguía sumando. Lo que el huésped ve en la
 // tarjeta permanece hasta que lo cambie explícitamente (o Edite una línea, o `store.reset()`).
 import { computed } from 'vue'
-import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal, type CartLine, type ComposerState } from './useBooking'
+import { useBookingStore, computeMealPlanTotal, type CartLine, type ComposerState } from './useBooking'
 // `round2` compartido del frontend (espejo de `shared/utils/money.ts` del backend) — nada de
 // copias locales por archivo.
 import { round2 } from '@/utils/cash-arqueo'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import type { MealPlanCode, MealPlanPriceMode, RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
 import { isCribAmenityKey } from '@/utils/crib-amenity'
-/** MR-03 (#268) — una opción del radio de régimen de una tarjeta. "Solo alojamiento" siempre va
- *  primero y siempre está disponible; los 3 códigos fijos van SIEMPRE (regla del dueño: nunca
- *  ocultar), con `available:false` cuando el hotel no los tiene activos. `total` = importe para
- *  la composición actual de la tarjeta (0 si `included` o no disponible). */
+/** MR-03 (#268) / #361 — una opción del radio de régimen de una tarjeta: UNA por fila del
+ *  catálogo público (`store.mealPlans`), en el orden recibido y con el `name` tal cual lo
+ *  configuró el hotel. Nada fijo: ni "Solo alojamiento" implícito, ni códigos deshabilitados —
+ *  lo que el backend no manda (switch apagado / inactivo) NO existe para el widget. `total` =
+ *  importe para la composición actual de la tarjeta (0 si `included`). `available` queda `true`
+ *  siempre (toda fila recibida es reservable) — se conserva por compat con la UI. */
 export interface MealPlanOption {
-  code: MealPlanCode | 'room_only'
+  code: MealPlanCode
+  name: string
   priceMode: MealPlanPriceMode | null
   unitPrice: number
   total: number
@@ -164,16 +167,22 @@ export function useGuestComposer() {
 
   // ─── MR-03 (#268) — régimen de alimentación, POR TARJETA ────────────────────────────────────
 
-  /** Código elegido en esta tarjeta ('room_only' si todavía no eligió nada). */
-  function mealPlanCode(rt: RoomTypeRate): MealPlanCode | 'room_only' {
-    return composer(rt).mealPlan ?? 'room_only'
+  /** Código elegido en esta tarjeta. #361: si el composer tiene un código que está en el
+   *  catálogo → ese; si no (nada elegido todavía, o el catálogo cambió) → la PRIMERA opción del
+   *  catálogo; sin catálogo → `null` (la sección no se renderiza y no viaja nada). */
+  function mealPlanCode(rt: RoomTypeRate): MealPlanCode | null {
+    const options = mealPlanOptions(rt)
+    if (options.length === 0) return null
+    const chosen = composer(rt).mealPlan
+    if (chosen && options.some((o) => o.code === chosen)) return chosen
+    return options[0]!.code
   }
 
-  /** Elige un régimen para esta tarjeta. Un código que el hotel no tiene activo se ignora (la UI
-   *  ya lo deshabilita; esto cubre un click programático o un estado viejo). */
+  /** Elige un régimen para esta tarjeta. Un código que no está en el catálogo visible se ignora
+   *  (cubre un click programático o un estado viejo). */
   function setMealPlan(rt: RoomTypeRate, code: string): void {
     const option = mealPlanOptions(rt).find((o) => o.code === code)
-    if (!option || !option.available) return
+    if (!option) return
     composer(rt).mealPlan = option.code
   }
 
@@ -185,33 +194,33 @@ export function useGuestComposer() {
   }
 
   /** Las opciones del radio de régimen para esta tarjeta, con el importe YA resuelto para la
-   *  composición actual (`price × personas × noches`, misma fórmula que el backend). El catálogo
-   *  (`store.mealPlans`) trae SOLO los activos del hotel: un código que no está se devuelve igual
-   *  con `available:false` para pintarlo deshabilitado — nunca se oculta. */
+   *  composición actual (`price × personas × noches`, misma fórmula que el backend). #361: UNA
+   *  por fila de `store.mealPlans`, en el orden recibido, con el nombre del catálogo; el backend
+   *  ya filtró (switch + activos), así que acá no se agrega ni se deshabilita nada. `[]` = el
+   *  hotel no ofrece regímenes (la UI no renderiza la sección). */
   function mealPlanOptions(rt: RoomTypeRate): MealPlanOption[] {
     const persons = mealPlanPersons(rt)
     // Mismas noches que usa `store.addToCart` al tomar el snapshot (`store.nights`, de /rates):
     // la tarjeta y el carrito tienen que decir el mismo número.
     const nights = store.nights
-    const roomOnly: MealPlanOption = { code: 'room_only', priceMode: null, unitPrice: 0, total: 0, available: true }
-    return [roomOnly, ...MEAL_PLAN_CODES.map((code): MealPlanOption => {
-      const found = store.mealPlans.find((m) => m.code === code)
-      if (!found) return { code, priceMode: null, unitPrice: 0, total: 0, available: false }
-      const unitPrice = Number(found.price) || 0
+    return store.mealPlans.map((m): MealPlanOption => {
+      const unitPrice = Number(m.price) || 0
       return {
-        code, priceMode: found.priceMode, unitPrice, available: true,
-        total: computeMealPlanTotal(found.priceMode, unitPrice, persons, nights),
+        code: m.code, name: String(m.name ?? '').trim() || m.code,
+        priceMode: m.priceMode, unitPrice, available: true,
+        total: computeMealPlanTotal(m.priceMode, unitPrice, persons, nights),
       }
-    })]
+    })
   }
 
-  /** Importe del régimen elegido para la composición actual (para el "+ $X" de la tarjeta). 0 con
-   *  solo alojamiento, `included` o un código que dejó de estar disponible. */
+  /** Importe del régimen elegido para la composición actual (para el "+ $X" de la tarjeta). 0 sin
+   *  catálogo, con `included` o si el código dejó de estar en el catálogo. Cambiar la selección
+   *  REEMPLAZA el importe (nunca se acumulan dos regímenes en una tarjeta). */
   function composedMealPlanTotal(rt: RoomTypeRate): number {
     const code = mealPlanCode(rt)
-    if (code === 'room_only') return 0
+    if (code === null) return 0
     const option = mealPlanOptions(rt).find((o) => o.code === code)
-    return option && option.available ? option.total : 0
+    return option ? option.total : 0
   }
 
   /** Fila de la matriz para la ocupación chargeable actual. `null` = sin matriz (fallback al
@@ -309,15 +318,16 @@ export function useGuestComposer() {
     // la cuna dejó de ofrecerse entre medio, tampoco viaja `needsCrib`). Sí/No únicamente:
     // `cribCount` es siempre 1 o 0, nunca una cantidad elegida por el huésped.
     const needsCrib = hasCribKeySelected(rt, roomAmenityKeysToSend)
-    // MR-03 (#268) — si el código elegido ya no está activo (catálogo cambiado entre medio), viaja
-    // 'room_only': nunca se agrega una línea con un régimen que el backend rechazaría.
-    const chosenMealPlan = mealPlanCode(rt)
-    const mealPlanToSend = mealPlanOptions(rt).find((o) => o.code === chosenMealPlan)?.available ? chosenMealPlan : 'room_only'
+    // MR-03 (#268) / #361 — viaja el código resuelto contra el catálogo visible (`mealPlanCode`
+    // ya cae a la primera opción si el elegido dejó de existir), INCLUIDO `room_only` cuando es
+    // una fila del catálogo; `null` (sin catálogo) = la línea no lleva régimen. Nunca se agrega
+    // una línea con un código que el backend rechazaría.
+    const mealPlanToSend = mealPlanCode(rt)
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
       needsCrib, cribCount: needsCrib ? 1 : 0,
       ...(roomAmenityKeysToSend.length > 0 ? { roomAmenityKeys: roomAmenityKeysToSend } : {}),
-      ...(mealPlanToSend !== 'room_only' ? { mealPlan: mealPlanToSend } : {}),
+      ...(mealPlanToSend !== null ? { mealPlan: mealPlanToSend } : {}),
     })
     // #343 — NO se reinicia la tarjeta después de agregar: lo que el huésped ve (adultos, edades,
     // cuna, amenidades, régimen) es exactamente lo que acaba de entrar al carrito, y un segundo
@@ -353,8 +363,8 @@ export function useGuestComposer() {
       needsCrib: !!line.needsCrib || (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name)),
       ...(keys.length > 0 ? { roomAmenityKeys: keys } : {}),
       // MR-03 (#268) — el régimen elegido vuelve al composer: si no, al re-agregar la línea se
-      // perdía en silencio (y con él su cobro). `room_only` se omite, igual que los otros opcionales.
-      ...(line.mealPlan && line.mealPlan.code !== 'room_only' ? { mealPlan: line.mealPlan.code } : {}),
+      // perdía en silencio (y con él su cobro). Sin snapshot se omite, igual que los otros opcionales.
+      ...(line.mealPlan ? { mealPlan: line.mealPlan.code } : {}),
     }
     store.removeCartLineUnit(line.key)
     return true

@@ -584,7 +584,7 @@ import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import RoomAssignModal from '@/components/features/RoomAssignModal.vue'
 import { useRouter } from 'vue-router'
 import { useCountUp } from '@/composables/useCountUp'
-import { effectiveMealPlan, hasMealPlan, mealPlanLabel as mealPlanLabelOf } from '@/utils/meal-plans'
+import { effectiveMealPlan, hasMealPlan, reservationMealPlanLabel } from '@/utils/meal-plans'
 import { OperationsService } from '@/services/Operations.service'
 import { RoomService } from '@/services/Room.service'
 import { ReservationService } from '@/services/Reservation.service'
@@ -848,10 +848,12 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
   const ch = ((r.channel as string) || 'direct').toLowerCase()
   const nights = Math.ceil((new Date(r.checkOut as string).getTime() - new Date(r.checkIn as string).getTime()) / 86400000)
   // MR-03 (#268) — régimen: `regime` (editable en el panel) manda; `mealPlan` (snapshot web)
-  // cubre si no vino. Solo alojamiento no se anuncia: recepción necesita saber cuándo hay
-  // desayuno/pensión. Etiquetas y regla en `utils/meal-plans.ts`.
-  const mealPlanCode = effectiveMealPlan({ regime: r.regime as string | null, mealPlan: r.mealPlan as string | null })
-  const mealPlanLabel = hasMealPlan(mealPlanCode) ? mealPlanLabelOf(mealPlanCode) : null
+  // cubre si no vino. Solo alojamiento sin cargo no se anuncia: recepción necesita saber cuándo
+  // hay desayuno/pensión (o un régimen cobrado, `mealPlanTotal > 0`). #361: la etiqueta es el
+  // NOMBRE persistido (`mealPlanName`). Etiquetas y regla en `utils/meal-plans.ts`.
+  const mealPlanRef = { regime: r.regime as string | null, mealPlan: r.mealPlan as string | null, mealPlanName: r.mealPlanName as string | null }
+  const mealPlanTotal = Number(r.mealPlanTotal) || 0
+  const mealPlanLabel = hasMealPlan(effectiveMealPlan(mealPlanRef)) || mealPlanTotal > 0 ? reservationMealPlanLabel(mealPlanRef, '') || null : null
   return {
     id: r.id as string,
     guestName: (r.guestName as string) || 'Guest',
@@ -874,7 +876,7 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
     checkedOut: r.status === 'checked_out',
     notes: (r.notes as string) || null,
     mealPlanLabel,
-    mealPlanTotal: Number(r.mealPlanTotal) || 0,
+    mealPlanTotal,
     groupId: (r.groupId as string | null) || null,
   }
 }

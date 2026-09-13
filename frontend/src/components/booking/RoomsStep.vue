@@ -104,19 +104,23 @@
           </div>
 
           <!--
-            RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`; MR-03
-            #268 lo hace RESERVABLE). Un radio POR TARJETA: "Sólo alojamiento" es la base implícita
-            (siempre disponible, sin costo, no tiene fila en la DB) y los otros 3 códigos fijos
-            vienen de `store.mealPlans` (solo los `active` llegan del backend — el resto se pinta
-            deshabilitado con el motivo, mismo criterio que la matriz de ocupación: nunca ocultar).
+            RÉGIMEN — catálogo ABIERTO configurable por hotel (Configuración Base → Regímenes;
+            MR-03 #268 lo hace RESERVABLE, #361 lo abre y lo gatea con el switch
+            `showMealPlans` de Página pública → Motor de reservas). Un radio POR TARJETA con UNA
+            opción por fila que devuelve `GET /meal-plans` (solo las visibles, ya ordenadas, con su
+            `name` tal cual lo escribió el hotel): nada fijo, nada hardcodeado, nada deshabilitado.
+            "Solo alojamiento" es una fila más del catálogo (`room_only`, puede tener precio) — ya
+            NO es una base implícita. Con catálogo vacío (switch apagado o sin activos) NO se
+            renderiza NADA de esta sección: ni el título, ni los radios, ni espacio.
             `included` → etiqueta "Incluido"; `per_person_per_night` → el importe para la
             composición ACTUAL de la tarjeta (`price × personas × noches`, misma fórmula que el
-            backend, que recalcula y revalida al crear la reserva). El precio del régimen NUNCA se
+            backend, que recalcula y revalida al crear la reserva). Cambiar de régimen REEMPLAZA
+            el importe del anterior (una tarjeta = un régimen). El precio del régimen NUNCA se
             convierte server-side — viaja en `hotels.currency` (chargeCurrency): etiquetarlo con
             displayCurrency mostraría "€25.00" cuando el cobro real es $25.00 (D10, mismo bug ya
             resuelto en UpsellsStep.vue).
           -->
-          <div class="mt-3">
+          <div v-if="mealPlanOptions(rt).length > 0" class="mt-3" data-testid="meal-plan-section">
             <p :id="`meal-plan-label-${rt.id}`" class="text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ t('rooms.board.label') }}</p>
             <div class="mt-1 flex flex-wrap gap-1.5" role="radiogroup" :aria-labelledby="`meal-plan-label-${rt.id}`" data-testid="meal-plan-options">
               <label
@@ -124,14 +128,12 @@
                 :key="opt.code"
                 :for="`meal-plan-${rt.id}-${opt.code}`"
                 :class="[
-                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold',
+                  'inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold',
                   mealPlanCode(rt) === opt.code
                     ? 'bg-navy text-white'
-                    : opt.available
-                      ? 'cursor-pointer border border-slate-200 bg-white text-navy hover:bg-slate-50'
-                      : 'cursor-not-allowed border border-slate-200 bg-slate-50 text-slate-400',
+                    : 'border border-slate-200 bg-white text-navy hover:bg-slate-50',
                 ]"
-                :title="opt.available ? undefined : t('rooms.board.unavailable')"
+                :title="mealPlanDescription(opt) || undefined"
                 data-testid="meal-plan-option"
               >
                 <input
@@ -141,14 +143,17 @@
                   class="h-3.5 w-3.5 border-slate-300 text-cyan"
                   :value="opt.code"
                   :checked="mealPlanCode(rt) === opt.code"
-                  :disabled="!opt.available"
                   @change="setMealPlan(rt, opt.code)"
                 />
-                <span>{{ mealPlanLabel(opt.code) }}</span>
+                <span>{{ publicMealPlanLabel(opt, t) }}</span>
                 <span v-if="opt.priceMode === 'included'" class="text-[10px] font-black uppercase opacity-80">· {{ t('rooms.board.included') }}</span>
                 <span v-else-if="opt.priceMode === 'per_person_per_night'" class="tabular-nums opacity-90" data-testid="meal-plan-price">· {{ formatPrice(opt.total, store.chargeCurrency) }}</span>
               </label>
             </div>
+            <!-- #361 — descripción de la opción elegida (texto libre del catálogo), si la tiene. -->
+            <p v-if="selectedMealPlanOption(rt) && mealPlanDescription(selectedMealPlanOption(rt)!)" class="mt-1 text-[11px] text-text-muted" data-testid="meal-plan-description">
+              {{ mealPlanDescription(selectedMealPlanOption(rt)!) }}
+            </p>
             <p v-if="selectedMealPlanOption(rt)?.priceMode === 'per_person_per_night'" class="mt-1 text-[11px] text-text-muted" data-testid="meal-plan-hint">
               {{ t('rooms.board.perPersonNight', { price: formatPrice(selectedMealPlanOption(rt)!.unitPrice, store.chargeCurrency) }) }}
             </p>
@@ -263,7 +268,7 @@
                   <!-- MR-03 (#268) — el régimen elegido suma aparte del alojamiento, igual que las
                        amenidades ("+ $X"), en chargeCurrency (nunca se convierte). -->
                   <span v-if="composedMealPlanTotal(rt) > 0" class="block text-[11px] font-bold tabular-nums text-navy" data-testid="meal-plan-total">
-                    + {{ formatPrice(composedMealPlanTotal(rt), store.chargeCurrency) }} · {{ mealPlanLabel(mealPlanCode(rt)) }}
+                    + {{ formatPrice(composedMealPlanTotal(rt), store.chargeCurrency) }} · {{ selectedMealPlanOption(rt) ? publicMealPlanLabel(selectedMealPlanOption(rt)!, t) : '' }}
                   </span>
                 </template>
                 <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(matchedRow(rt)!.unavailableReason) }}</span>
@@ -361,9 +366,9 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
+import type { OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
 import { isCribAmenityKey } from '@/utils/crib-amenity'
-import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
+import { publicMealPlanLabel } from '@/utils/meal-plans'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import { classifyAge } from '@/utils/child-composition'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
@@ -447,18 +452,22 @@ function cartHasType(roomTypeId: string): boolean {
   return store.cart.some((l) => l.roomType === roomTypeId)
 }
 
-// ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable) ─────────────────────
-/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` de `utils/meal-plans.ts` (mapa único del widget). Las
- *  opciones (disponibilidad, precio para la composición actual) las arma
- *  `useGuestComposer.mealPlanOptions`. */
-function mealPlanLabel(code: MealPlanCode | 'room_only'): string {
-  return t(MEAL_PLAN_LABEL_KEY[code])
-}
+// ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable; #361 catálogo abierto) ──
+// La etiqueta es el `name` del catálogo (`publicMealPlanLabel`, utils/meal-plans.ts: name → i18n
+// legacy del código histórico → código crudo). Las opciones (precio para la composición actual)
+// las arma `useGuestComposer.mealPlanOptions`.
 
-/** La opción elegida en esta tarjeta (para la ayuda "{price} por persona y noche"). */
+/** La opción elegida en esta tarjeta (para el "+ importe · nombre" y la ayuda por persona y noche). */
 function selectedMealPlanOption(rt: RoomTypeRate): MealPlanOption | undefined {
   const code = mealPlanCode(rt)
+  if (code === null) return undefined
   return mealPlanOptions(rt).find((o) => o.code === code)
+}
+
+/** #361 — descripción libre de la fila del catálogo (`store.mealPlans`), o '' si no tiene. */
+function mealPlanDescription(opt: MealPlanOption): string {
+  const found = store.mealPlans.find((m) => m.code === opt.code)
+  return typeof found?.description === 'string' ? found.description.trim() : ''
 }
 
 /** Motivo → key i18n. Mapa explícito (no template literal) para que agregar un motivo nuevo en
@@ -534,9 +543,10 @@ function cartLineGuestsLabel(line: CartLine): string {
   const cribListed = (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name))
   const withCrib = line.needsCrib && !cribListed ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
-  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
-  return line.mealPlan && line.mealPlan.code !== 'room_only'
-    ? `${withRoomAmenities} · ${mealPlanLabel(line.mealPlan.code)}`
+  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea; #361: por su
+  // `name` del catálogo al agregar, cualquier código incluido `room_only` si es una fila).
+  return line.mealPlan
+    ? `${withRoomAmenities} · ${publicMealPlanLabel(line.mealPlan, t)}`
     : withRoomAmenities
 }
 
