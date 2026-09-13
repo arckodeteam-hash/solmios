@@ -95,7 +95,9 @@ function makeOrm(opts: { calls?: string[]; configs?: any[]; createThrows?: boole
       if (model === 'Rooms') return [{ id: 'room-1', type: 'double' }]
       return []
     },
-    create: async (_model: string, payload: any) => {
+    create: async (model: string, payload: any) => {
+      // #306: la ingesta ahora también crea la ficha Guests; sólo registramos/acumulamos Reservations.
+      if (model !== 'Reservations') return payload
       opts.calls?.push('create')
       if (opts.createThrows) throw new Error('DB write failed')
       created.push(payload)
@@ -221,10 +223,13 @@ describe('BookingSyncUseCase.runOne — webhook de reservas (CH-07)', () => {
 
     expect(createdCron).toHaveLength(1)
     expect(createdHook).toHaveLength(1)
-    // Se descarta sólo `id`: lo genera crypto.randomUUID() en applyBookingRevision, así que es
-    // distinto por definición en cada corrida. No hay timestamps en el payload de la reserva OTA.
-    const { id: _idCron, ...cron } = createdCron[0]
-    const { id: _idHook, ...hook } = createdHook[0]
+    // Se descartan sólo `id` y `guestId`: los genera crypto.randomUUID() (la reserva en
+    // applyBookingRevision; la ficha Guests en find-or-create-guest, #306), así que son distintos
+    // por definición en cada corrida. No hay timestamps en el payload de la reserva OTA.
+    const { id: _idCron, guestId: guestCron, ...cron } = createdCron[0]
+    const { id: _idHook, guestId: guestHook, ...hook } = createdHook[0]
+    expect(typeof guestCron).toBe('string')
+    expect(typeof guestHook).toBe('string')
     expect(hook).toEqual(cron)
   })
 
