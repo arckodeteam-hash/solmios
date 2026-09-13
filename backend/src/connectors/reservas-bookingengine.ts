@@ -3,7 +3,7 @@
 // directo a `Reservations` (bookingengine/usecases/public-booking.ts), sin pasar por el CRUD de
 // `reservas` — así que nunca bumpeaba la versión de su caché de listado. Administración podía
 // tardar hasta CACHE_TTL (300s) en mostrar un alta pública recién hecha. Mismo patrón que
-// reservas-canales.ts: SOLO delega, sin lógica propia.
+// reservas-canales.ts: SOLO delega, sin lógica propia. Cubre created / paid / cancelled.
 
 import type { ConnectorContext } from 'arckode-framework'
 
@@ -27,5 +27,10 @@ export function reservasBookingengineConnector(ctx: ConnectorContext): void {
     // `Reservations` directo (status/cancelledAt/refundAmount de todo el grupo): mismo agujero,
     // el listado mostraba la reserva viva hasta CACHE_TTL.
     onBookingCancelled: async (event: any) => { await invalidate(event.hotelId) },
+    // #309 — la confirmación por pago web (webhook Stripe / retorno Azul-CardNet,
+    // bookingengine/service.ts) escribe status/paid en Reservations directo: el listado seguía
+    // 'pendiente' hasta CACHE_TTL. El payload de onBookingPaid trae hotelId
+    // (usecases/booking-paid-event.ts).
+    onBookingPaid: async (booking: any) => { await invalidate(booking.hotelId) },
   })
 }

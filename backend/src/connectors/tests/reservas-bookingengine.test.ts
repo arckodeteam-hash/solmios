@@ -5,6 +5,8 @@
 // `Reservations` directo (bookingengine/usecases/public-cancel.ts) y el listado seguía mostrando
 // la reserva viva hasta CACHE_TTL (300 s). El connector tiene que bumpear también en
 // `onBookingCancelled`, y un fallo de la invalidación no puede tumbar el evento.
+// #309: la confirmación por pago web (webhook Stripe / retorno Azul-CardNet) escribe status/paid
+// directo y el listado seguía 'pendiente': el connector también bumpea en `onBookingPaid`.
 import { describe, it, expect } from 'bun:test'
 import type { ConnectorContext } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
@@ -37,6 +39,8 @@ const CANCELLED = {
   promoCode: null, reservationIds: ['res-1', 'res-2'], roomIds: ['rm1', 'rm2'], groupId: 'g1',
 }
 
+const PAID = { id: 'res-1', hotelId: 'h1', totalAmount: 100, paymentRef: 'cs_1' }
+
 describe('reservasBookingengineConnector', () => {
   it('onBookingCreated → invalida el listado del hotel', async () => {
     const { sockets, invalidated } = makeCtx()
@@ -51,9 +55,17 @@ describe('reservasBookingengineConnector', () => {
     expect(invalidated).toEqual(['h1'])
   })
 
+  it('onBookingPaid → invalida el listado del hotel (#309)', async () => {
+    const { sockets, invalidated } = makeCtx()
+    expect(typeof sockets.onBookingPaid).toBe('function')
+    await sockets.onBookingPaid(PAID)
+    expect(invalidated).toEqual(['h1'])
+  })
+
   it('la invalidación falla → el evento resuelve igual', async () => {
     const { sockets } = makeCtx({ invalidateThrows: true })
     await expect(sockets.onBookingCancelled(CANCELLED)).resolves.toBeUndefined()
     await expect(sockets.onBookingCreated({ id: 'res-1', hotelId: 'h1' })).resolves.toBeUndefined()
+    await expect(sockets.onBookingPaid(PAID)).resolves.toBeUndefined()
   })
 })
