@@ -1,5 +1,6 @@
 // #290 — amenidades personalizadas por habitación: key custom:<slug> derivada del nombre,
 // name/price/isActive por fila, inactivas conservadas (y devueltas en GET), price negativo rechazado.
+// #366 — una custom que el hotel quita del form (ausente de `items`) se BORRA, no se desactiva.
 import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { AmenitiesService } from '../service'
@@ -14,6 +15,7 @@ function fakeRepo(rows: any[]): RepositoryAdapter<any> {
     findMany: async (filter: any = {}) => rows.filter((r) => Object.entries(filter).every(([k, v]) => r[k] === v)),
     create: async (row: any) => { rows.push(row); return row },
     update: async (id: string, patch: any) => { const row = rows.find((r) => r.id === id); if (row) Object.assign(row, patch); return row },
+    delete: async (id: string) => { const i = rows.findIndex((r) => r.id === id); if (i >= 0) rows.splice(i, 1); return i >= 0 },
   } as unknown as RepositoryAdapter<any>
 }
 
@@ -55,27 +57,50 @@ describe('normalizeRoomAmenityItems', () => {
 })
 
 describe('planRoomAmenityUpsert', () => {
-  it('ignora keys custom en fixedKeys y conserva custom inactivas que vienen en items', () => {
+  it('ignora keys custom en fixedKeys, conserva custom inactivas que vienen en items y borra las ausentes', () => {
     const existing = [{ id: 'a', amenityKey: 'wifi', isActive: 1 }, { id: 'b', amenityKey: 'custom:cuna', isActive: 1 }, { id: 'c', amenityKey: 'custom:vieja', isActive: 1 }]
     const plan = planRoomAmenityUpsert(existing, ['wifi', 'custom:cuna', 'tv'], [{ key: 'custom:cuna', name: 'Cuna', price: 20, isActive: false }])
     expect(plan.reactivate).toEqual(['a'])
     expect(plan.create).toEqual([{ amenityKey: 'tv', name: '', price: 0, isActive: true }])
     expect(plan.update).toEqual([{ id: 'b', patch: { name: 'Cuna', price: 20, isActive: false } }])
-    expect(plan.deactivate).toEqual(['c'])
+    expect(plan.deactivate).toEqual([])
+    expect(plan.delete).toEqual(['c']) // ausente de items → se borra (#366), no se desactiva
     expect(plan.activeKeys).toEqual(['wifi', 'tv'])
+  })
+
+  it('#366: con 3 custom cargadas e items con la primera y la última, borra sólo la del medio (por id)', () => {
+    const existing = [
+      { id: 'a', amenityKey: 'wifi', isActive: 1 },
+      { id: 'c1', amenityKey: 'custom:cuna', name: 'Cuna', price: 10, isActive: 1 },
+      { id: 'c2', amenityKey: 'custom:cama_extra', name: 'Cama extra', price: 20, isActive: 1 },
+      { id: 'c3', amenityKey: 'custom:desayuno', name: 'Desayuno', price: 30, isActive: 0 },
+    ]
+    const plan = planRoomAmenityUpsert(existing, ['wifi'], [
+      { key: 'custom:cuna', name: 'Cuna', price: 10, isActive: true },
+      { key: 'custom:desayuno', name: 'Desayuno', price: 30, isActive: false },
+    ])
+    expect(plan.delete).toEqual(['c2'])
+    expect(plan.deactivate).toEqual([])
+    expect(plan.update).toEqual([
+      { id: 'c1', patch: { name: 'Cuna', price: 10, isActive: true } },
+      { id: 'c3', patch: { name: 'Desayuno', price: 30, isActive: false } },
+    ])
+    expect(plan.create).toEqual([])
+    expect(plan.activeKeys).toEqual(['wifi', 'custom:cuna'])
   })
 
   it('con items undefined (cliente viejo) no toca las custom y las activas cuentan en activeKeys', () => {
     const existing = [{ id: 'b', amenityKey: 'custom:cuna', isActive: 1 }, { id: 'c', amenityKey: 'custom:off', isActive: 0 }]
     const plan = planRoomAmenityUpsert(existing, ['wifi'])
     expect(plan.deactivate).toEqual([])
+    expect(plan.delete).toEqual([])
     expect(plan.update).toEqual([])
     expect(plan.activeKeys).toEqual(['custom:cuna', 'wifi'])
   })
 })
 
 describe('AmenitiesService.updateRoomAmenities con items custom', () => {
-  it('crea, conserva inactivas, las devuelve en GET y desactiva al quitarlas', async () => {
+  it('crea, conserva inactivas, las devuelve en GET y borra al quitarlas del form (#366)', async () => {
     const { service, rows } = setup()
     let keys: string[] = []
     service.setSockets({ onRoomAmenitiesUpdated: async (_roomId, k) => { keys = k } })
@@ -99,13 +124,31 @@ describe('AmenitiesService.updateRoomAmenities con items custom', () => {
     await service.updateRoomAmenities('rm1', ['wifi'], [{ ...cuna, price: 20 }])
     expect(rows.find((r) => r.amenityKey === 'custom:cuna')!.isActive).toBe(1)
 
-    // items [] → el hotel la quitó: se desactiva. amenities [] → wifi también.
-    await service.updateRoomAmenities('rm1', ['wifi'], [])
-    expect(rows.find((r) => r.amenityKey === 'custom:cuna')!.isActive).toBe(0)
+    // items [] → el hotel la quitó con la "x": la fila se BORRA (#366) y el GET ya no la devuelve.
+    expect(await service.updateRoomAmenities('rm1', ['wifi'], [])).toBe(1)
+    expect(rows.find((r) => r.amenityKey === 'custom:cuna')).toBeUndefined()
+    expect(rows).toHaveLength(1)
+    expect((await service.listRoomAmenities('rm1')).map((r) => r.amenityKey)).toEqual(['wifi'])
+    // amenities [] → la fija wifi se desactiva (no se borra) y el GET no la devuelve.
     expect(await service.updateRoomAmenities('rm1', [], [])).toBe(0)
     expect(rows.find((r) => r.amenityKey === 'wifi')!.isActive).toBe(0)
-    expect(await service.listRoomAmenities('rm1')).toHaveLength(1) // sólo la custom (inactiva); la fija inactiva no
+    expect(await service.listRoomAmenities('rm1')).toHaveLength(0)
     expect(keys).toEqual([])
+  })
+
+  it('#366: quitar una custom del medio borra sólo esa fila y conserva las otras (una inactiva)', async () => {
+    const { service, rows } = setup([
+      { id: 'c1', roomId: 'rm1', amenityKey: 'custom:cuna', name: 'Cuna', price: 10, isActive: 1 },
+      { id: 'c2', roomId: 'rm1', amenityKey: 'custom:cama_extra', name: 'Cama extra', price: 20, isActive: 1 },
+      { id: 'c3', roomId: 'rm1', amenityKey: 'custom:desayuno', name: 'Desayuno', price: 30, isActive: 1 },
+    ])
+    await service.updateRoomAmenities('rm1', [], [
+      { key: 'custom:cuna', name: 'Cuna', price: 10, isActive: true },
+      { key: 'custom:desayuno', name: 'Desayuno', price: 30, isActive: false },
+    ])
+    expect(rows.map((r) => r.id)).toEqual(['c1', 'c3'])
+    expect(rows.find((r) => r.id === 'c3')).toMatchObject({ isActive: 0, price: 30 })
+    expect((await service.listRoomAmenities('rm1')).map((r) => r.amenityKey)).toEqual(['custom:cuna', 'custom:desayuno'])
   })
 
   it('llamada vieja sólo con amenities no borra las custom', async () => {

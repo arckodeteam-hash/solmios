@@ -79,6 +79,7 @@ export class AmenitiesService {
     const existing = await this.roomAmenitiesRepo.findMany({ roomId }) as any[]
     const plan = planRoomAmenityUpsert(existing, amenities, items)
     for (const id of plan.deactivate) await this.roomAmenitiesRepo.update(id, { isActive: 0 })
+    for (const id of plan.delete) await this.roomAmenitiesRepo.delete(id)
     for (const id of plan.reactivate) await this.roomAmenitiesRepo.update(id, { isActive: 1 })
     for (const u of plan.update) await this.roomAmenitiesRepo.update(u.id, { ...u.patch, isActive: u.patch.isActive ? 1 : 0 })
     for (const c of plan.create) {
