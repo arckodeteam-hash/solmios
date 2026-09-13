@@ -11,6 +11,9 @@
 //   6. Amenidades personalizadas y con precio (#290): al editar se cargan las `custom:*` con
 //      nombre/precio/estado, "+ Cuna" arma la fila y Guardar manda items a saveRoom; nombre vacío
 //      muestra error y no guarda.
+//   7. Quitar una custom cargada (#366): la "x" saca la fila (primera/intermedia/última/todas) y
+//      Guardar manda a saveRoom SÓLO las restantes con su key; Cancelar no toca nada y al reabrir
+//      vuelven las 3 (el form se clona del room en openEdit).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -466,5 +469,121 @@ describe('rooms — export CSV del listado (A1, hallazgo 2)', () => {
     const csv = await blobs[0].text()
     expect(csv).toContain('102')
     expect(csv).not.toContain('101,')
+  })
+})
+
+describe('rooms — quitar una custom cargada (#366)', () => {
+  const q = <T extends Element = HTMLInputElement>(testid: string) => Array.from(document.querySelectorAll<T>(`[data-testid="${testid}"]`))
+  const guardarBtn = () => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Guardar')) as HTMLButtonElement
+  const cancelarBtn = () => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Cancelar') as HTMLButtonElement
+  const rows = () => q<HTMLElement>('custom-amenity-row')
+  const removeBtn = (i: number) => q<HTMLButtonElement>('custom-amenity-remove')[i]
+  const savedItems = () => vi.mocked(AmenitiesService.saveRoom).mock.calls[0][2] ?? []
+
+  const CUNA = { key: 'custom:cuna', name: 'Cuna', price: 15, isActive: true }
+  const MINIBAR = { key: 'custom:minibar', name: 'Minibar', price: 20, isActive: true }
+  const VISTA = { key: 'custom:vista', name: 'Vista al mar', price: 30, isActive: true }
+
+  beforeEach(() => {
+    roomsData = [room()]
+    amenitiesByRoom.r1 = [
+      { amenityKey: 'wifi', isActive: 1 },
+      { amenityKey: 'custom:cuna', name: 'Cuna', price: 15, isActive: 1 },
+      { amenityKey: 'custom:minibar', name: 'Minibar', price: 20, isActive: 1 },
+      { amenityKey: 'custom:vista', name: 'Vista al mar', price: 30, isActive: 1 },
+    ]
+    created.length = 0
+    vi.clearAllMocks()
+  })
+
+  async function openEditWith3(): Promise<Awaited<ReturnType<typeof render>>> {
+    const w = await render()
+    await openEdit(w, 'r1')
+    expect(rows()).toHaveLength(3)
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna', 'Minibar', 'Vista al mar'])
+    return w
+  }
+
+  it('quitar la PRIMERA (Cuna) → quedan 2 filas y saveRoom recibe sólo minibar y vista con su key', async () => {
+    await openEditWith3()
+    removeBtn(0).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(2)
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Minibar', 'Vista al mar'])
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledTimes(1)
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi'], [MINIBAR, VISTA])
+    expect(savedItems().map(i => i.key)).toEqual(['custom:minibar', 'custom:vista'])
+  })
+
+  it('quitar la INTERMEDIA (Minibar) → saveRoom recibe cuna y vista (no se corre el índice)', async () => {
+    await openEditWith3()
+    removeBtn(1).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(2)
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna', 'Vista al mar'])
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi'], [CUNA, VISTA])
+    expect(savedItems().map(i => i.key)).toEqual(['custom:cuna', 'custom:vista'])
+  })
+
+  it('quitar la ÚLTIMA (Vista al mar) → saveRoom recibe cuna y minibar', async () => {
+    await openEditWith3()
+    removeBtn(2).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(2)
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna', 'Minibar'])
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi'], [CUNA, MINIBAR])
+    expect(savedItems().map(i => i.key)).toEqual(['custom:cuna', 'custom:minibar'])
+  })
+
+  it('quitar las TRES → 0 filas y saveRoom recibe items [] (guardar sin amenidades personalizadas es válido)', async () => {
+    await openEditWith3()
+    removeBtn(0).click()
+    await flushPromises()
+    removeBtn(0).click()
+    await flushPromises()
+    removeBtn(0).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(0)
+    expect(q('custom-amenity-remove')).toHaveLength(0)
+    expect(guardarBtn().disabled).toBe(false)
+
+    guardarBtn().click()
+    await flushPromises()
+
+    expect(RoomService.update).toHaveBeenCalledWith('r1', expect.objectContaining({ number: '101' }))
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledTimes(1)
+    expect(AmenitiesService.saveRoom).toHaveBeenCalledWith('r1', ['wifi'], [])
+  })
+
+  it('quitar una y CANCELAR → saveRoom no se llama y al reabrir Editar vuelven las 3 filas', async () => {
+    const w = await openEditWith3()
+    removeBtn(1).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(2)
+
+    cancelarBtn().click()
+    await flushPromises()
+
+    expect(RoomService.update).not.toHaveBeenCalled()
+    expect(AmenitiesService.saveRoom).not.toHaveBeenCalled()
+    expect(rows()).toHaveLength(0)
+
+    // El form se clona del room en openEdit: la fila quitada sin guardar sigue en la card.
+    await openEdit(w, 'r1')
+    expect(rows()).toHaveLength(3)
+    expect(q('custom-amenity-name').map(i => i.value)).toEqual(['Cuna', 'Minibar', 'Vista al mar'])
+    expect(q('custom-amenity-price').map(i => i.value)).toEqual(['15', '20', '30'])
   })
 })
