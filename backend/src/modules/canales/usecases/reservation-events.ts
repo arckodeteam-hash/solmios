@@ -9,12 +9,18 @@
 export interface ReservationEventDeps {
   /** Recalcula y publica la disponibilidad de una habitación concreta. */
   pushAvailabilityByRoom: (hotelId: string, roomId: string) => Promise<unknown>
+  /**
+   * REQ-HAC-05 (#260): la reserva puede nacer SIN unidad (`roomId` null) y sólo con `roomType`
+   * — panel, widget, OTA. Ahí se publica por tipo. Opcional para no romper cableados viejos.
+   */
+  pushAvailabilityByType?: (hotelId: string, roomType: string) => Promise<unknown>
 }
 
 /** Lo que el evento trae de la reserva afectada. Puede venir incompleto (eventos viejos). */
 export interface ReservationRef {
   hotelId?: string
   roomId?: string | null
+  roomType?: string | null
 }
 
 /**
@@ -26,7 +32,17 @@ export interface ReservationRef {
  * disponibles indefinidamente.
  */
 export async function onReservationRoomChanged(deps: ReservationEventDeps, ref: ReservationRef | undefined): Promise<void> {
-  if (!ref?.hotelId || !ref.roomId) return
+  if (!ref?.hotelId) return
+  if (!ref.roomId) {
+    // Sin unidad: la fila descuenta del tipo (`availableOfType`), así que lo que cambió en Channex
+    // es la disponibilidad de ese tipo. Sin tipo ni unidad no hay con qué recalcular.
+    if (!ref.roomType || !deps.pushAvailabilityByType) return
+    const { hotelId, roomType } = ref
+    void deps.pushAvailabilityByType(hotelId, roomType).catch((err: unknown) => {
+      console.error(`[reservation-events] push de availability por tipo falló (hotel=${hotelId} type=${roomType}):`, err instanceof Error ? err.message : err)
+    })
+    return
+  }
   // `void`, NO `await`: el push tiene que salir DESPUÉS de responderle al usuario.
   //
   // Hasta el 2026-09-09 esto era un `await` con un `.catch(() => {})`. El catch tapaba el error,

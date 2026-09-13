@@ -98,12 +98,15 @@ describe('REQ-HAC-02 — widget (createPublicBookingDirect): N+1 del mismo tipo 
     expect(tables.Reservations).toHaveLength(2)
   })
 
-  it('control: 2 unidades + 1 sin asignar → 201 y se asigna una unidad física del tipo', async () => {
+  it('control: 2 unidades + 1 sin asignar → 201 por TIPO, sin unidad (HAC-05: roomId null, roomType)', async () => {
     const { orm, tables } = makeDb({ rooms: twoDoubles(), reservations: [unassigned('u1')] })
     const res = await createPublicBookingDirect(orm, widgetBody)
     expect(res.status).toBe(201)
-    expect(['d1', 'd2']).toContain(res.body.reservation.roomId)
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('double')
     expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations[1].roomId).toBeNull()
+    expect(tables.Reservations[1].roomType).toBe('double')
   })
 
   it('control: 2 sin asignar que NO solapan las fechas pedidas → 201', async () => {
@@ -127,13 +130,13 @@ describe('REQ-HAC-02 — widget (createPublicBookingDirect): N+1 del mismo tipo 
     expect(res.status).toBe(201)
   })
 
-  it('roomId explícito con el tipo agotado por reservas sin asignar → 409 (red de seguridad final)', async () => {
+  it('roomId explícito (compat HAC-05: sólo deriva el tipo) con el tipo agotado por reservas sin asignar → 409', async () => {
     const { orm, tables } = makeDb({ rooms: twoDoubles(), reservations: [unassigned('u1'), unassigned('u2')] })
     const { roomType, ...withoutType } = widgetBody
     void roomType
     const res = await createPublicBookingDirect(orm, { ...withoutType, roomId: 'd1' })
     expect(res.status).toBe(409)
-    expect(res.body.error).toBe('Habitación no disponible en esas fechas')
+    expect(res.body.error).toBe(OVERSOLD)
     expect(tables.Reservations).toHaveLength(2)
   })
 })

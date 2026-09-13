@@ -7,7 +7,11 @@
 // con datos stale de hace más de los 60s de caché— crearía la reserva igual sobre inventario que
 // el hotel cerró, y el bug quedaría abierto justo donde importa.
 //
-// La regla la comparten los dos caminos vía `usecases/stay-restrictions.ts`.
+// La regla la comparten los dos caminos vía `usecases/stay-restrictions.ts` (stop-sell) y
+// `shared/usecases/type-availability.ts` (bloqueos, que descuentan inventario del TIPO).
+// REQ-HAC-05 (#260): la reserva nace por tipo SIN unidad (`roomId` null); un `roomId` en el body
+// sólo deriva el tipo, así que un bloqueo cuenta como una unidad menos del tipo, no como "esa"
+// habitación cerrada.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 
@@ -98,23 +102,37 @@ describe('POST /api/public/booking — no acepta una habitación bloqueada (room
     expect(created.filter((c) => c.model === 'Reservations')).toHaveLength(0)
   })
 
-  it('roomType: salta la unidad bloqueada y toma la siguiente libre (aunque sea más cara)', async () => {
-    const { orm } = makeOrm({
+  it('roomType: 2 unidades y 1 bloqueada → 201 por tipo, sin unidad (el bloqueo descuenta una del tipo)', async () => {
+    const { orm, created } = makeOrm({
       rooms: TWO_STANDARD,
       blocks: [block('r-cheap', '2026-09-11', '2026-09-11')],
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'standard' })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-pricey')
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('standard')
+    expect(created.find((c) => c.model === 'Reservations')!.row.roomId).toBeNull()
   })
 
-  it('roomId real: la habitación pedida está bloqueada → 409 (red de seguridad del otro camino)', async () => {
+  it('roomId real de la unidad bloqueada: sólo deriva el tipo, que aún tiene otra libre → 201 sin unidad', async () => {
     const { orm } = makeOrm({
       rooms: TWO_STANDARD,
       blocks: [block('r-cheap', '2026-09-11', '2026-09-11')],
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r-cheap' })
+    expect(res.status).toBe(201)
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('standard')
+  })
+
+  it('roomId real con TODAS las unidades del tipo bloqueadas → 409 (no se saltea el gate mandando el id físico)', async () => {
+    const { orm, created } = makeOrm({
+      rooms: TWO_STANDARD,
+      blocks: [block('r-cheap', '2026-09-11', '2026-09-11'), block('r-pricey', '2026-09-11', '2026-09-11')],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r-cheap' })
     expect(res.status).toBe(409)
+    expect(created.filter((c) => c.model === 'Reservations')).toHaveLength(0)
   })
 
   it('BORDE — bloqueo que termina el día del check-in (endDate inclusivo) → 409', async () => {
@@ -139,7 +157,8 @@ describe('POST /api/public/booking — no acepta una habitación bloqueada (room
     const { orm } = makeOrm({ rooms: [TWO_STANDARD[0]!], blocks: [block('r-cheap', '2026-09-20', '2026-09-25')] })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'standard' })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-cheap')
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('standard')
   })
 })
 
@@ -204,6 +223,7 @@ describe('POST /api/public/booking — no acepta un tipo con stop-sell (room_rat
     })
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'suite' })
     expect(res.status).toBe(201)
-    expect(res.body.reservation.roomId).toBe('r-suite')
+    expect(res.body.reservation.roomId).toBeNull()
+    expect(res.body.reservation.roomType).toBe('suite')
   })
 })

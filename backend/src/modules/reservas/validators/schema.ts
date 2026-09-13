@@ -6,9 +6,10 @@ const PRECHECKIN_ENUM = ['pending', 'sent', 'completed', 'expired']
 
 export const CreateReservasSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
-  // REQ-HAC-01 (#258): el alta del panel SIGUE exigiendo roomId (la creación sin habitación es
-  // HAC-05). `roomType` es opcional: si falta, el usecase lo toma de `rooms.type`.
-  roomId: { type: 'string' as const, required: true },
+  // REQ-HAC-05 (#260): el alta del panel vende un TIPO. `roomId` es opcional (la unidad se asigna
+  // después, assign-room); sin `roomId` hace falta `roomType` — regla cruzada que el DSL no expresa,
+  // vive en `createReservation` (crud.ts). Con `roomId`, `roomType` se toma de `rooms.type` si falta.
+  roomId: { type: 'string' as const },
   roomType: { type: 'string' as const, max: 50 },
   checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
@@ -76,13 +77,25 @@ export const CreateReservasSchema: Record<string, ValidationRule> = {
 }
 
 /** Body del quote del wizard (POST /api/reservas/quote). `guests` = ocupación tarifada (adultos).
- *  `hotelId` lo inyecta el controller desde el token (solo super_admin puede pisarlo). */
+ *  `hotelId` lo inyecta el controller desde el token (solo super_admin puede pisarlo).
+ *  REQ-HAC-05 (#260): `roomId` O `roomType` (la regla cruzada la aplica `quoteStay`). */
 export const StayQuoteSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const },
-  roomId: { type: 'string' as const, required: true },
+  roomId: { type: 'string' as const },
+  roomType: { type: 'string' as const, max: 50 },
   checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   guests: { type: 'number' as const, min: 1, max: 20 },
+}
+
+/** Query de GET /api/reservas/type-availability (REQ-HAC-05, #260): disponibilidad por tipo para el
+ *  wizard. `hotelId` lo inyecta el controller igual que en `quote`; `excludeReservationId` para
+ *  editar una reserva sin contarla a sí misma. */
+export const TypeAvailabilityQuerySchema: Record<string, ValidationRule> = {
+  hotelId: { type: 'string' as const },
+  checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
+  checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
+  excludeReservationId: { type: 'string' as const },
 }
 
 export const UpdateReservasSchema: Record<string, ValidationRule> = {

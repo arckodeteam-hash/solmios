@@ -59,3 +59,24 @@ test('sin hotel o sin habitación no se dispara ningún push', async () => {
   await onReservationRoomChanged(deps, { hotelId: 'h1', roomId: null })
   expect(veces).toBe(0)
 })
+
+// REQ-HAC-05 (#260): la reserva sin unidad (roomId null) publica por su tipo.
+test('sin habitación pero con roomType → push por tipo, no por habitación', async () => {
+  const porRoom: string[] = []
+  const porTipo: string[] = []
+  const deps = {
+    pushAvailabilityByRoom: async (_h: string, r: string) => { porRoom.push(r) },
+    pushAvailabilityByType: async (_h: string, t: string) => { porTipo.push(t) },
+  }
+  await onReservationRoomChanged(deps, { hotelId: 'h1', roomId: null, roomType: 'twin' })
+  await onReservationRoomChanged(deps, { hotelId: 'h1', roomId: 'r1', roomType: 'twin' })
+  await new Promise((r) => setTimeout(r, 10))
+  expect(porTipo).toEqual(['twin'])
+  expect(porRoom).toEqual(['r1'])
+})
+
+test('sin habitación y sin push por tipo cableado → no se dispara nada ni rompe', async () => {
+  let veces = 0
+  await onReservationRoomChanged({ pushAvailabilityByRoom: async () => { veces++ } }, { hotelId: 'h1', roomId: null, roomType: 'twin' })
+  expect(veces).toBe(0)
+})

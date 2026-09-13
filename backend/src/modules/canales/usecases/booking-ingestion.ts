@@ -1,5 +1,5 @@
 // canales/usecases/booking-ingestion.ts
-// Aplica una revisión de booking OTA al PMS: dedupe por locator, resolución de roomId, persistencia.
+// Aplica una revisión de booking OTA al PMS: dedupe por locator, resolución de roomType, persistencia.
 // Extraído del service para mantenerlo <200 líneas. Lógica preservada de la POC Channex.
 //
 // Cancelaciones → refrescan la reserva existente.
@@ -9,7 +9,6 @@ import type { ORM } from 'arckode-framework'
 import type { ChannexUseCase } from './channex'
 import type { BookingRevisionDTO } from '../types'
 import { localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
-import { availableOfType, typeAvailabilityPortFromOrm } from '../../../shared/usecases/type-availability'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/canales-reservas.ts`).
@@ -108,12 +107,24 @@ export function mapBookingRevision(booking: BookingRevisionDTO, hotelId: string)
 }
 
 /**
+ * Primer tipo del hotel para el fallback sin mapeo: el de la unidad con el número más bajo (orden
+ * numérico, luego por id). Estable entre corridas para que dos revisiones del mismo booking sin
+ * mapeo no caigan en tipos distintos.
+ */
+function firstRoomType(rooms: any[]): string | undefined {
+  const sorted = [...rooms].sort((a, b) =>
+    String(a.number ?? '').localeCompare(String(b.number ?? ''), undefined, { numeric: true }) || String(a.id ?? '').localeCompare(String(b.id ?? '')))
+  const first = sorted.find((r) => r?.type && String(r.type).trim())
+  return first ? String(first.type) : undefined
+}
+
+/**
  * Aplica UNA revisión de booking al PMS.
  * - Dedupe por externalLocator (ota_reservation_code / unique id de Channex).
  * - Cancelación OTA (status 'cancelled') → actualiza la reserva existente.
- * - Creación → resuelve roomId desde el roomTypeId de Channex eligiendo una unidad libre del tipo
- *   (`availableOfType`, REQ-HAC-02); fallback a cualquier room + flag.
- * - Nunca dropea un booking OTA: si no hay room libre, igual ingest con auto-asignación.
+ * - Creación → la reserva nace POR TIPO y SIN unidad (REQ-HAC-05, #260): `roomType` sale del
+ *   roomTypeId de Channex traducido al código local; `roomId` queda null hasta el assign-room.
+ * - Nunca dropea un booking OTA: sin mapeo se ingesta con el primer tipo del hotel + flag.
  */
 export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): Promise<ApplyBookingResult> {
   const { orm, channex, hotelId, apiKey, cancelReservation } = deps
@@ -149,54 +160,42 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
     }
   }
 
-  // Resolver roomId: Channex referencia roomTypeId (tipo), el PMS exige habitación individual.
+  // Resolver roomType: Channex referencia roomTypeId (tipo); la fila del PMS lleva ese tipo.
   const { channexRoomTypeId, channexRevisionId, channexBookingId, ...payload } = dto
-  let roomId: string | null = null
-  // REQ-HAC-01 (#258): el tipo vendido viaja en la fila (`rooms.type` de la unidad elegida), igual
-  // que en el panel y el motor público — sin él, soltar la unidad después dejaba la reserva sin
-  // tipo contra el cual validar ni contar disponibilidad.
+  // REQ-HAC-05 (#260): la OTA vende un TIPO, no una unidad. Antes acá se elegía habitación
+  // (`availableOfType` + `rooms[0]` de fallback) y dos OTA del mismo tipo con las mismas fechas
+  // terminaban en la misma unidad o marcadas como overbooking cuando en realidad había cupo. Ahora
+  // la reserva nace con `roomType` y `roomId` null, igual que el widget y el panel: la unidad la
+  // asigna recepción (assign-room) y la disponibilidad por tipo la cuenta `availableOfType` sobre
+  // las filas con `roomType`. La ingesta NUNCA rechaza — la OTA ya cobró esa noche.
   let roomType: string | undefined
+  let channexTitle = ''
   if (channexRoomTypeId) {
     const rt = await channex.getRoomTypeById(apiKey, channexRoomTypeId)
-    if (rt?.title) {
+    channexTitle = rt?.title || ''
+    if (channexTitle) {
       // El room type de Channex se publica con título vendible ("Twin Room"); la habitación local
-      // guarda el código del enum ('twin'). Sin traducir, toda reserva OTA caía en el fallback de
-      // auto-asignación y terminaba en una habitación de otro tipo.
-      const localType = localRoomTypeFromTitle(rt.title)
-      const rooms = await orm.findMany('Rooms', { hotelId, type: localType })
-      let chosen = rooms?.[0]
-      // REQ-HAC-02 (#257): la unidad se elige con la fuente ÚNICA de disponibilidad por tipo, no
-      // con `rooms[0]` a ciegas: antes dos OTA del mismo tipo caían en la misma habitación aunque
-      // hubiera otra libre. Si ninguna unidad está libre igual se ingesta (nunca dropear un booking
-      // OTA) y queda marcado como OVERBOOKING para que recepción lo resuelva a mano.
-      if (chosen && localType && dto.checkIn && dto.checkOut) {
-        try {
-          const avail = await availableOfType(typeAvailabilityPortFromOrm(orm), hotelId, localType, dto.checkIn, dto.checkOut)
-          // `available` cuenta también las reservas del tipo SIN unidad: con el tipo agotado por
-          // ellas, una habitación sin reserva asignada no está "libre" — es overbooking igual.
-          const free = avail.available >= 1 ? avail.sellableRooms.find((r) => !avail.busyRoomIds.has(String(r.id))) : undefined
-          if (free) chosen = free
-          else payload.notes = [payload.notes, `⚠ OVERBOOKING: sin unidad libre de ${localType} para esas fechas`].filter(Boolean).join(' | ')
-        } catch {
-          // La ingesta no puede fallar por el chequeo de disponibilidad: se conserva rooms[0].
-        }
-      }
-      roomId = chosen?.id || null
-      roomType = chosen?.type ? String(chosen.type) : undefined
+      // guarda el código del enum ('twin'). Sin traducir, ninguna reserva OTA encontraba su tipo.
+      const localType = localRoomTypeFromTitle(channexTitle)
+      const rooms = localType ? await orm.findMany('Rooms', { hotelId, type: localType }) : []
+      // Sólo vale un tipo que el hotel efectivamente tenga: un mapeo viejo a un tipo que ya no
+      // existe dejaría la reserva sin contra qué contar disponibilidad. Se guarda `rooms.type`
+      // tal cual está en la BD (mismo código que el panel y el widget), no el título traducido.
+      if (rooms?.length) roomType = String(rooms[0].type || localType)
     }
   }
-  if (!roomId) {
-    // Fallback: cualquier habitación del hotel + flag de auto-asignación (nunca dropear un OTA booking).
+  if (!roomType) {
+    // Sin mapeo (sin roomTypeId, título desconocido o tipo sin unidades en el hotel): primer tipo
+    // del hotel + flag para que recepción lo corrija. Determinístico: la unidad de número más bajo.
     const any = await orm.findMany('Rooms', { hotelId })
-    roomId = any?.[0]?.id || null
-    roomType = any?.[0]?.type ? String(any[0].type) : undefined
-    if (roomId && payload.notes) payload.notes = `${payload.notes} | ⚠ AUTO-ASSIGNED ROOM (no type match)`
+    roomType = firstRoomType(any || [])
+    if (roomType) payload.notes = [payload.notes, `⚠ TIPO SIN MAPEAR (${channexTitle || channexRoomTypeId || 'sin room type'})`].filter(Boolean).join(' | ')
   }
-  if (!roomId) throw new Error(`Sin habitaciones para el hotel ${hotelId}`)
+  if (!roomType) throw new Error(`Sin habitaciones para el hotel ${hotelId}`)
 
   payload.id = crypto.randomUUID()
-  payload.roomId = roomId
-  if (roomType) payload.roomType = roomType
+  payload.roomId = null
+  payload.roomType = roomType
   await orm.create('Reservations', payload)
   // La reserva ya está guardada: un aviso que falla no la deshace ni frena el ack de la revisión.
   try {

@@ -40,7 +40,9 @@ export async function enqueueReservationEmail(
   if (!guest?.email) return
   if (guest.hotelId && dto.hotelId && guest.hotelId !== dto.hotelId) return // tenacy
 
-  const room = await roomRepo.findById(dto.roomId)
+  // REQ-HAC-05 (#260): la reserva puede nacer sin unidad — sin `roomId` no hay fila que leer y el
+  // email sale con `room_number` vacío y `room_type` del tipo vendido.
+  const room = dto.roomId ? await roomRepo.findById(dto.roomId) : null
   if (room?.hotelId && dto.hotelId && room.hotelId !== dto.hotelId) return // tenacy
 
   const hotel = await hotelRepo.findById(dto.hotelId)
@@ -72,7 +74,7 @@ export async function enqueueReservationEmail(
     checkin_date: dto.checkIn,
     checkout_date: dto.checkOut,
     room_number: room?.number ?? '',
-    room_type: room?.type ?? '',
+    room_type: room?.type ?? dto.roomType ?? '',
     room_capacity: room?.maxGuests ?? '',
     room_base_price: room?.basePrice ? `$${room.basePrice}` : '',
     adults: adults ? String(adults) : '',

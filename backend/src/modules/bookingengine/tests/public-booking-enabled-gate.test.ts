@@ -25,7 +25,8 @@ function makeOrm() {
   const created: Array<{ model: string; row: any }> = []
   const orm: any = {
     findById: async (model: string, id: string) => (model === 'Rooms' && id === 'r1' ? room : null),
-    findMany: async (model: string) => (model === 'Reservations' ? [] : []),
+    // REQ-HAC-05 (#260): la venta es por TIPO — `findMany('Rooms')` tiene que devolver la unidad.
+    findMany: async (model: string) => (model === 'Rooms' ? [room] : []),
     create: async (model: string, payload: any) => {
       const row = { id: payload.id || crypto.randomUUID(), ...payload }
       created.push({ model, row })

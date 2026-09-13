@@ -28,6 +28,8 @@ import {
   type AvailabilityReservation,
 } from '../utils/daily-availability'
 import { isRoomSellable } from './room-status'
+import { fitsRoomCapacity, type ChildComposition } from './child-composition'
+import { effectiveRoomCapacity, type RoomTypeCapacity } from './room-type-capacity'
 
 /**
  * Estados de reserva que consumen inventario. Es la misma whitelist que aplicaba el motor
@@ -96,6 +98,12 @@ export interface TypeAvailabilityResult {
    * `excludeReservationId`). Sólo para los callers que aún eligen unidad física; NO decide venta.
    */
   busyRoomIds: Set<string>
+  /**
+   * Revisión #260 — ids de unidades del tipo con un bloqueo (`room_blocks`) que toca alguna noche
+   * de la estadía. Como `busyRoomIds`: informa qué unidades NO están físicamente libres; no
+   * decide venta (eso ya lo cuenta `available`).
+   */
+  blockedRoomIds: Set<string>
 }
 
 /** Bloqueo de una unidad (`room_blocks`): `[startDate, endDate]` inclusivo. */
@@ -166,7 +174,72 @@ export function countAvailableOfType(
     if (r.roomId && typeRoomIds.has(String(r.roomId)) && stayOverlaps(r, checkIn, checkOut)) busyRoomIds.add(String(r.roomId))
   }
 
-  return { rooms: sellableRooms.length, booked, available, perNight, sellableRooms, busyRoomIds }
+  // Bloqueo `[startDate, endDate]` inclusivo vs. estadía `[checkIn, checkOut)`: toca alguna noche
+  // si empieza antes del check-out y termina en o después del check-in.
+  const blockedRoomIds = new Set<string>()
+  const stayStart = day(checkIn)
+  const stayEnd = day(checkOut)
+  for (const b of relBlocks) {
+    if (b.startDate < stayEnd && b.endDate >= stayStart) blockedRoomIds.add(String(b.roomId))
+  }
+
+  return { rooms: sellableRooms.length, booked, available, perNight, sellableRooms, busyRoomIds, blockedRoomIds }
+}
+
+/**
+ * Revisión #260 — unidades VENDIBLES del tipo que están físicamente libres TODA la estadía: sin
+ * reserva bloqueante ASIGNADA que solape (`busyRoomIds`) ni bloqueo (`blockedRoomIds`). Es el
+ * conjunto sobre el que hay que calcular el perfil de CAPACIDAD de un alta por tipo
+ * (`roomTypeProfileOf`): una reserva sin unidad se asignará después a una de ÉSTAS, así que si
+ * ninguna admite la composición pedida, no hay asignación posible aunque `available ≥ 1` (el
+ * ejemplo: unidad de 2 libre + unidad de 6 ocupada → 5 adultos no entran). Las reservas SIN
+ * asignar no pinean unidad y por eso no descuentan de acá — ya las cuenta `available`.
+ */
+export function unoccupiedSellableRooms(result: Pick<TypeAvailabilityResult, 'sellableRooms' | 'busyRoomIds' | 'blockedRoomIds'>): any[] {
+  return (result.sellableRooms ?? []).filter((r) => {
+    const id = String(r?.id)
+    return !result.busyRoomIds.has(id) && !result.blockedRoomIds.has(id)
+  })
+}
+
+/**
+ * Revisión #260 (3ª pasada) — ¿ALGUNA de estas unidades admite la composición con sus TRES límites
+ * a la vez (`capacity`, `maxAdults`, `maxChildren`)? Es la regla que decide si un alta/edición por
+ * TIPO entra: la reserva se asignará después a UNA unidad concreta, así que tiene que existir una
+ * que la aloje entera. El perfil agregado (`roomTypeProfileOf`: `Math.max` INDEPENDIENTE por
+ * campo) no sirve para esto — con una unidad "adultos-solo" {6, 6, 0} y una "familiar chica"
+ * {2, 1, 1} arma {6, 6, 1} y deja pasar 5 adultos + 1 niño, que NINGUNA unidad real admite. El
+ * perfil agregado queda para precio (`minBasePrice`) y para el mensaje de error.
+ *
+ * Misma evaluación por unidad que el alta de grupo (`public-booking-group.ts`):
+ * `fitsRoomCapacity(effectiveRoomCapacity(map, unidad), composition)` — la política
+ * `room_type_capacity` del hotel, si existe para el tipo, pisa los tres campos de la unidad.
+ * Sin `capacity` en una fila (dato viejo) cuenta `fallbackCapacity` (por defecto la ocupación
+ * pedida: un dato incompleto no bloquea, criterio de `availability.ts`). Lista vacía → false.
+ */
+export function someUnitFits(
+  rooms: readonly any[] | null | undefined,
+  composition: ChildComposition,
+  roomTypeCapacityMap?: Map<string, RoomTypeCapacity>,
+  fallbackCapacity: number = composition.chargeableOccupancy,
+): boolean {
+  return (rooms ?? []).some((r) => {
+    const capacity = effectiveRoomCapacity(roomTypeCapacityMap, {
+      type: r?.type,
+      capacity: Number(r?.capacity ?? fallbackCapacity) || 0,
+      maxAdults: r?.maxAdults,
+      maxChildren: r?.maxChildren,
+    })
+    return fitsRoomCapacity(capacity, composition)
+  })
+}
+
+/**
+ * Mensaje 409 cuando `someUnitFits` es false y el TOTAL sí entraría en el perfil agregado (el
+ * clásico "admite hasta N" no aplica: el problema es el reparto adultos/niños, no la suma).
+ */
+export function noUnitFitsCompositionMessage(roomType: string, composition: Pick<ChildComposition, 'effectiveAdults' | 'payingChildren'>): string {
+  return `Ninguna habitación de tipo "${roomType}" libre para esas fechas admite ${composition.effectiveAdults} adulto(s) y ${composition.payingChildren} niño(s) con plaza`
 }
 
 /** Unidades tomadas la noche `d` (misma regla que `computeDailyAvailability`, sin el clamp). */
@@ -217,4 +290,42 @@ export async function availableOfType(
     port.blocks ? port.blocks.findMany({ hotelId }) : Promise.resolve([] as any[]),
   ])
   return countAvailableOfType(roomType, rooms ?? [], reservations ?? [], blocks ?? [], checkIn, checkOut, opts)
+}
+
+/**
+ * REQ-HAC-05 (#260) — Perfil de un TIPO a partir de sus unidades (normalmente las VENDIBLES,
+ * `sellableRooms`): lo que necesita quien reserva sin unidad para validar capacidad y cotizar.
+ * Mismo criterio que el motor público (`bookingengine/usecases/public-booking.ts`), copiado
+ * acá porque `shared` no importa `modules/`:
+ *  - `capacity`/`maxAdults`/`maxChildren` = el MÁXIMO entre las unidades (la reserva entra si
+ *    entra en alguna; recepción elige cuál al asignar). `null` = ninguna unidad lo limita.
+ *  - `minBasePrice` = el MÍNIMO `basePrice` > 0 (el "desde" que publica `/rates`); 0 si ninguna
+ *    tiene precio.
+ * Tiene la forma que espera `assertReservationFitsCapacity`/`effectiveRoomCapacity` (`type`,
+ * `capacity`, `maxAdults`, `maxChildren`), así el alta por tipo reusa la MISMA validación que el
+ * alta por unidad. Sin `capacity` en una fila (dato viejo) cuenta `fallbackCapacity`.
+ */
+export interface RoomTypeProfile {
+  type: string
+  capacity: number
+  maxAdults: number | null
+  maxChildren: number | null
+  minBasePrice: number
+}
+
+export function roomTypeProfileOf(type: string, rooms: any[], fallbackCapacity = 0): RoomTypeProfile {
+  let capacity = 0
+  let maxAdults: number | null = null
+  let maxChildren: number | null = null
+  let minBasePrice = 0
+  for (const r of rooms ?? []) {
+    capacity = Math.max(capacity, Number(r?.capacity ?? fallbackCapacity) || 0)
+    const ma = Number(r?.maxAdults)
+    if (r?.maxAdults != null && Number.isFinite(ma)) maxAdults = maxAdults == null ? ma : Math.max(maxAdults, ma)
+    const mc = Number(r?.maxChildren)
+    if (r?.maxChildren != null && Number.isFinite(mc)) maxChildren = maxChildren == null ? mc : Math.max(maxChildren, mc)
+    const price = Number(r?.basePrice ?? r?.price ?? 0)
+    if (price > 0 && (minBasePrice === 0 || price < minBasePrice)) minBasePrice = price
+  }
+  return { type, capacity, maxAdults, maxChildren, minBasePrice }
 }

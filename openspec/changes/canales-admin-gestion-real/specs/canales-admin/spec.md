@@ -127,12 +127,16 @@ cron sale una sola vez.
   del hotel con `reservations:view` (permisos de la fila `roles`), correo a `hotels.email` con
   `{platform_name}`, push si `pushtokens` está. Best-effort: un fallo del aviso no deshace la
   reserva ni impide el ack de la revisión.
-- (REQ-HAC-02, #257) La unidad que recibe la reserva OTA se elige con `availableOfType`
-  (`shared/usecases/type-availability.ts`): la primera unidad vendible del tipo que no esté ocupada
-  esas noches. Si el tipo no tiene ninguna libre, la reserva se crea igual (nunca se dropea un
-  booking OTA) sobre la primera unidad del tipo y `notes` lleva `⚠ OVERBOOKING: sin unidad libre de
-  <tipo> para esas fechas`. Sin `checkIn`/`checkOut` en el dto, o si la consulta falla, se conserva
-  el comportamiento anterior (primera unidad del tipo).
+- (REQ-HAC-05, #260) La reserva OTA nace POR TIPO y SIN unidad: `roomType` = `rooms.type` del tipo
+  local al que mapea el room type de Channex (`getRoomTypeById` → `localRoomTypeFromTitle`), y
+  `roomId` null hasta que recepción la asigne (assign-room). La ingesta no elige unidad ni consulta
+  `availableOfType`: la OTA ya vendió, así que dos bookings del mismo tipo y fechas son dos filas del
+  tipo; la disponibilidad por tipo la descuenta `availableOfType` después, porque la fila lleva
+  `roomType`. Sin mapeo (sin `roomTypeId`, título desconocido o tipo sin unidades en el hotel) la
+  reserva se crea igual con el primer tipo del hotel (el de la unidad de número más bajo) y `notes`
+  lleva `⚠ TIPO SIN MAPEAR (<título Channex o id>)`. Sólo un hotel sin habitaciones hace fallar la
+  revisión (`Sin habitaciones para el hotel`). Las notas `⚠ OVERBOOKING` y `⚠ AUTO-ASSIGNED ROOM`
+  desaparecen.
 
 **Given** una revisión nueva de Channex para un hotel con recepción y camarera
 **When** la ingesta crea la reserva

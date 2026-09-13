@@ -47,8 +47,9 @@ import {
 export class AiRecepcionistaService {
   private sockets: AiRecepcionistaSockets = {}
   private auditPort: AuditPort | null = null
-  /** Pusher de availability a Channex al crear una reserva desde la IA. Inyectado desde composition-root. */
-  channexPusher: ((hotelId: string, roomId: string) => void) | null = null
+  /** Pusher de availability a Channex al crear una reserva desde la IA — por TIPO (REQ-HAC-05: la
+   *  reserva nace sin unidad). Inyectado desde composition-root (`pushAvailabilityByType`). */
+  channexPusher: ((hotelId: string, roomType: string) => void) | null = null
   /** Cancelación real de reservas (política + snapshot + release de depósito). Lo inyecta el connector `ai-recepcionista-reservas`. */
   cancelReservationPort: ReservationCancelPort | null = null
   /** Emisión de factura vía el módulo `facturas`. Lo inyecta el connector `ai-facturas`. */
@@ -83,7 +84,7 @@ export class AiRecepcionistaService {
     private readonly logger: any,
     private readonly cache: any,
     private readonly auth: any,
-    private readonly onReservationCreated?: (hotelId: string, roomId: string) => Promise<void>,
+    private readonly onReservationCreated?: (hotelId: string, roomType: string) => Promise<void>,
   ) {}
 
   setSockets(s: Partial<AiRecepcionistaSockets>): void { accumulateSockets(this.sockets as any, s as any) }

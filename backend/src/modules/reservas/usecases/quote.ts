@@ -20,6 +20,8 @@ import { ConflictError, NotFoundError } from 'arckode-framework'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, overrideRateFor } from '../../../shared/utils/rate-resolution'
 import { round2 } from '../../../shared/utils/money'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { roomTypeProfileOf } from '../../../shared/usecases/type-availability'
 
 export interface QuoteRepos {
   roomRepo: any
@@ -35,7 +37,11 @@ export interface QuoteRepos {
 
 export interface QuoteParams {
   hotelId: string
-  roomId: string
+  /** Unidad concreta. Con `roomId` el tipo y el fallback salen de esa fila (comportamiento histórico). */
+  roomId?: string | null
+  /** REQ-HAC-05 (#260): cotizar por TIPO sin unidad (el wizard elige tipo y asigna después). Con
+   *  `roomId` se ignora. Sin ninguno de los dos → 409. */
+  roomType?: string
   checkIn: string
   checkOut: string
   /** Ocupación tarifada (adultos). Mismo default que `guestsOfReservation` (reprice.ts). */
@@ -54,9 +60,11 @@ export interface QuoteNight {
 }
 
 export interface StayQuote {
-  roomId: string
+  /** null = cotización por tipo (sin unidad). */
+  roomId: string | null
   roomType: string
-  /** Precio por noche sin temporadas (`rooms.basePrice`) — lo que cotizaba el wizard antes. */
+  /** Precio por noche sin temporadas (`rooms.basePrice`; por tipo, el MÍNIMO entre las unidades
+   *  vendibles del tipo — el "desde" del motor público) — lo que cotizaba el wizard antes. */
   basePrice: number
   nights: QuoteNight[]
   nightsCount: number
@@ -73,20 +81,41 @@ export interface StayQuote {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
- * Cotiza la estadía de UNA habitación. No escribe nada: es el quote que el wizard muestra y
- * el que `createReservation` recalcula server-side cuando el alta viene con `priceFrom:'rates'`.
+ * Qué se cotiza: la unidad (`roomId`) o el tipo (`roomType`, REQ-HAC-05). Por tipo, el fallback es
+ * el MÍNIMO `basePrice` de `rooms {hotelId, type}` — unidades vendibles primero; si ninguna lo es
+ * (todas en mantenimiento) se mira el tipo entero, así el quote no queda en $0 por un estado
+ * transitorio. 404 si el hotel no tiene unidades del tipo.
+ */
+async function resolveQuoteTarget(roomRepo: any, params: QuoteParams): Promise<{ roomId: string | null; roomType: string; fallbackPrice: number }> {
+  if (params.roomId) {
+    const room = await roomRepo.findOne({ id: params.roomId })
+    if (!room) throw new NotFoundError('Habitación no encontrada')
+    if (room.hotelId !== params.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
+    return { roomId: String(params.roomId), roomType: String(room.type ?? ''), fallbackPrice: Number(room.basePrice) || 0 }
+  }
+  const roomType = String(params.roomType ?? '').trim()
+  if (!roomType) throw new ConflictError('Indicá roomId o roomType', { reason: 'room_or_type_required' })
+  if (typeof roomRepo?.findMany !== 'function') throw new ConflictError('No se puede cotizar por tipo sin catálogo de habitaciones')
+  const units = ((await roomRepo.findMany({ hotelId: params.hotelId, type: roomType })) ?? []) as any[]
+  if (units.length === 0) throw new NotFoundError('Tipo de habitación inexistente')
+  const sellable = units.filter((r) => isRoomSellable(r?.status))
+  const profile = roomTypeProfileOf(roomType, sellable.length > 0 ? sellable : units)
+  return { roomId: null, roomType, fallbackPrice: profile.minBasePrice }
+}
+
+/**
+ * Cotiza la estadía de UNA habitación o de UN tipo. No escribe nada: es el quote que el wizard
+ * muestra y el que `createReservation` recalcula server-side cuando el alta viene con
+ * `priceFrom:'rates'`. La cadena de tarifas es por TIPO, así que `{ roomType }` y
+ * `{ roomId: <una unidad del tipo> }` dan el mismo desglose; sólo cambia de dónde sale el
+ * fallback `basePrice` (la unidad vs. el mínimo de las unidades del tipo).
  */
 export async function quoteStay(repos: QuoteRepos, params: QuoteParams): Promise<StayQuote> {
-  const { hotelId, roomId, checkIn, checkOut } = params
+  const { hotelId, checkIn, checkOut } = params
   if (!DATE_RE.test(checkIn) || !DATE_RE.test(checkOut)) throw new ConflictError('Fechas inválidas (YYYY-MM-DD)')
   if (checkIn >= checkOut) throw new ConflictError('checkIn debe ser anterior a checkOut')
 
-  const room = await repos.roomRepo.findOne({ id: roomId })
-  if (!room) throw new NotFoundError('Habitación no encontrada')
-  if (room.hotelId !== hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
-
-  const roomType = String(room.type ?? '')
-  const fallbackPrice = Number(room.basePrice) || 0
+  const { roomId, roomType, fallbackPrice } = await resolveQuoteTarget(repos.roomRepo, params)
   const nightDates = eachDayExclusive(checkIn, checkOut)
   const guests = Number.isFinite(params.guests) && params.guests > 0 ? Math.floor(params.guests) : 2
 

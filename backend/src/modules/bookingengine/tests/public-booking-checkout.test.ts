@@ -14,11 +14,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function makeOrm(overrides: Partial<{ room: any; reservations: any[] }> = {}) {
   const created: any[] = []
-  const room = overrides.room ?? { id: 'r1', hotelId: 'h1', basePrice: 100, status: 'available' }
+  // REQ-HAC-05 (#260): la venta es por TIPO — la unidad necesita `type` y `findMany('Rooms')` la devuelve.
+  const room = overrides.room ?? { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }
   const reservations = overrides.reservations ?? []
   const orm: any = {
     findById: async (_model: string, _id: string) => room,
-    findMany: async (_model: string) => reservations,
+    findMany: async (model: string) => (model === 'Rooms' ? [room] : model === 'Reservations' ? reservations : []),
     create: async (model: string, payload: any) => {
       const row = { id: payload.id || 'row-1', ...payload }
       created.push({ model, row })
