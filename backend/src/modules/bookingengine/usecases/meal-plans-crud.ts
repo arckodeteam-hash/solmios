@@ -7,6 +7,10 @@
 // Reglas de negocio:
 //  - `code` es el identificador ESTABLE (reservas/emails/widget keyean por él): slug del `name`
 //    (a-z0-9_, max 40) con sufijo `_2`, `_3`… si ya existe en el hotel. NO se edita.
+//  - Unicidad (hotelId, code) la garantiza el índice `meal_plans_hotel_code` (migrate-db.ts). El
+//    pre-check findMany → uniqueCode no alcanza bajo concurrencia: `create()` captura la violación
+//    (`isUniqueViolation`) y reintenta con el siguiente sufijo (máx. `CREATE_MAX_ATTEMPTS`);
+//    `seedIfNeeded()` ignora la violación (otro request ya sembró esa fila) y relee.
 //  - Semilla: `list()` crea UNA sola vez las 4 filas default que falten por code
 //    (`DEFAULT_MEAL_PLANS`) y marca `booking_config.mealPlansSeeded = true`. Si no hay fila de
 //    booking_config todavía, siembra sin marcar (la próxima carga vuelve a completar por code, sin
@@ -51,6 +55,8 @@ export const DEFAULT_MEAL_PLANS: ReadonlyArray<Pick<MealPlanDTO, 'code' | 'name'
 export const NAME_MAX = 80
 export const DESCRIPTION_MAX = 500
 export const CODE_MAX = 40
+/** Intentos de `create()` ante violaciones consecutivas del UNIQUE (hotelId, code). */
+export const CREATE_MAX_ATTEMPTS = 5
 
 /** Nombre visible de una fila: `name` propio, o el legacy por code, o el code pelado. */
 export function displayName(row: { code?: string | null; name?: string | null }): string {
@@ -103,6 +109,20 @@ function assertSortOrder(s: unknown): number {
   const n = Number(s)
   if (!Number.isFinite(n)) throw new ValidationError('sortOrder debe ser un número')
   return n
+}
+
+/**
+ * Violación del índice único `meal_plans_hotel_code` en SQLite ("UNIQUE constraint failed") o
+ * Postgres (código 23505 / "duplicate key"). Mismo criterio que `public-booking.isUniqueViolation`
+ * (copiado a propósito para no acoplar este usecase al de reservas públicas).
+ */
+function isUniqueViolation(e: unknown): boolean {
+  const code = String((e as any)?.code ?? '')
+  const msg = String((e as any)?.message ?? e).toLowerCase()
+  return code === '23505'
+    || msg.includes('unique')
+    || msg.includes('duplicate key')
+    || msg.includes('meal_plans_hotel_code')
 }
 
 async function assertOwnershipOf(deps: MealPlansCrudDeps, resourceHotelId: string, user: UpsellCurrentUser): Promise<void> {
@@ -160,24 +180,34 @@ function sortRows(rows: MealPlanDTO[]): MealPlanDTO[] {
 // ─── semilla ───────────────────────────────────────────────────────────────
 /**
  * Crea las filas default que falten por code y marca `booking_config.mealPlansSeeded`. Devuelve
- * las filas del hotel después de sembrar. Si ya está marcado, no toca nada (aunque el hotel haya
- * borrado todo — eso es una decisión suya).
+ * las filas del hotel después de sembrar (relectura fresca). Si ya está marcado, no toca nada
+ * (aunque el hotel haya borrado todo — eso es una decisión suya).
+ *
+ * Race (dos GET simultáneos en un hotel sin sembrar): cada `create` puede chocar con el UNIQUE
+ * `meal_plans_hotel_code` porque otro request ya insertó esa default. Se ignora la violación (la
+ * fila existe, que es lo que queríamos) y al final se relee `findMany` para devolver lo que quedó
+ * en DB en vez de concatenar lo que creyó crear este request.
  */
 async function seedIfNeeded(deps: MealPlansCrudDeps, hotelId: string, existing: MealPlanDTO[]): Promise<MealPlanDTO[]> {
   const config = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId }) : null
   if (config && (config as any).mealPlansSeeded === true) return existing
 
   const byCode = new Set(existing.map((r) => r.code))
-  const created: MealPlanDTO[] = []
+  let touched = false
   for (const def of DEFAULT_MEAL_PLANS) {
     if (byCode.has(def.code)) continue
-    const row = await deps.mealPlans.create({ hotelId, ...def } as any) as MealPlanDTO
-    created.push(row)
+    touched = true
+    try {
+      await deps.mealPlans.create({ hotelId, ...def } as any)
+    } catch (e: unknown) {
+      if (!isUniqueViolation(e)) throw e
+      // Otro request la sembró entre nuestro findMany y este create: ya existe, seguimos.
+    }
   }
   if (config && deps.bookingConfig) {
     await deps.bookingConfig.update((config as any).id, { mealPlansSeeded: true } as any)
   }
-  return [...existing, ...created]
+  return touched ? await deps.mealPlans.findMany({ hotelId }) : existing
 }
 
 // ─── list ──────────────────────────────────────────────────────────────────
@@ -208,12 +238,8 @@ export async function create(
   const price = dto.price !== undefined ? assertPrice(dto.price) : 0
   const sortOrder = dto.sortOrder !== undefined ? assertSortOrder(dto.sortOrder) : 0
 
-  const siblings = await deps.mealPlans.findMany({ hotelId })
-  const code = uniqueCode(name, new Set(siblings.map((r) => r.code)))
-
-  const record: Omit<MealPlanDTO, 'id' | 'createdAt' | 'updatedAt'> = {
+  const base: Omit<MealPlanDTO, 'id' | 'createdAt' | 'updatedAt' | 'code'> = {
     hotelId,
-    code,
     name,
     description,
     priceMode,
@@ -221,8 +247,25 @@ export async function create(
     active: typeof dto.active === 'boolean' ? dto.active : true,
     sortOrder,
   }
-  const created = await deps.mealPlans.create(record as any) as MealPlanDTO
-  return normalize(created)
+
+  // Race (dos POST con el mismo nombre): findMany → uniqueCode → create no es atómico, así que el
+  // UNIQUE `meal_plans_hotel_code` puede rechazar el insert. Releemos los codes del hotel, sumamos
+  // el code que acaba de chocar (por si la relectura todavía no lo ve) y probamos el siguiente
+  // sufijo, acotado a CREATE_MAX_ATTEMPTS para no loopear.
+  const failed = new Set<string>()
+  for (let attempt = 1; attempt <= CREATE_MAX_ATTEMPTS; attempt++) {
+    const siblings = await deps.mealPlans.findMany({ hotelId })
+    const taken = new Set([...siblings.map((r) => r.code), ...failed])
+    const code = uniqueCode(name, taken)
+    try {
+      const created = await deps.mealPlans.create({ ...base, code } as any) as MealPlanDTO
+      return normalize(created)
+    } catch (e: unknown) {
+      if (!isUniqueViolation(e)) throw e
+      failed.add(code)
+    }
+  }
+  throw new ValidationError('No se pudo generar un código único para el régimen')
 }
 
 // ─── update ────────────────────────────────────────────────────────────────

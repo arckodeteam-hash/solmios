@@ -1018,6 +1018,28 @@ async function createPromoCodesUniqueIndex(): Promise<void> {
   }
 }
 
+// ─── #360 — UNIQUE index (hotelId, code) para meal_plans ──
+// Mismo molde que createPromoCodesUniqueIndex: `code` es el identificador estable del régimen
+// (reservas/emails/widget keyean por él) y el usecase lo genera con findMany → uniqueCode → create,
+// que bajo concurrencia (dos POST con el mismo nombre, dos GET simultáneos sembrando) puede
+// producir dos filas con el mismo (hotelId, code). El índice es la red de seguridad definitiva;
+// `meal-plans-crud.isUniqueViolation` captura la violación y reintenta con el siguiente sufijo.
+// Pre-check de duplicados legacy: si ya hay repetidos, se loggea y NO se crea hasta reconciliar.
+async function createMealPlansUniqueIndex(): Promise<void> {
+  try {
+    const dupes = (await db.query(
+      `SELECT code, hotelId, COUNT(*) c FROM meal_plans GROUP BY code, hotelId HAVING COUNT(*) > 1`,
+    )) as Array<{ code: string; hotelId: string; c: number }>
+    if (dupes.length > 0) {
+      console.warn(`⚠ meal_plans: ${dupes.length} code(s) duplicados — meal_plans_hotel_code NO se crea hasta reconciliar.`, dupes)
+    } else {
+      await exec(`CREATE UNIQUE INDEX IF NOT EXISTS meal_plans_hotel_code ON meal_plans(hotelId, code)`)
+    }
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'meal_plans_hotel_code', missingTable: 'meal_plans', consequence: 'Sin este UNIQUE, el mismo código de régimen puede existir dos veces en un hotel (race en create/semilla).' })
+  }
+}
+
 // ─── F3 3.1 (solmi-direct-booking) — UNIQUE + index compuesto para external_reviews ──
 // El ORM no crea UNIQUE compuesto ni índices compuestos: hay que hacerlo a mano con
 // `CREATE UNIQUE INDEX` / `CREATE INDEX`. Portable SQLite + Postgres: identificadores SIN
@@ -1454,6 +1476,10 @@ async function main(): Promise<void> {
   // F2 2.1 (solmi-direct-booking): UNIQUE (hotelId, code) para promo_codes (idempotente).
   // El service captura la violación de este index y la traduce a ValidationError.
   await createPromoCodesUniqueIndex()
+
+  // #360: UNIQUE (hotelId, code) para meal_plans (idempotente). El usecase captura la violación
+  // y reintenta con el siguiente sufijo / relee la fila sembrada por otro request.
+  await createMealPlansUniqueIndex()
 
   // F3 3.1 (solmi-direct-booking): UNIQUE (source, sourceExternalId) + INDEX (hotelId, source,
   // submittedAt) para external_reviews (idempotente). Tabla creada por el ORM via RUN_MIGRATE.

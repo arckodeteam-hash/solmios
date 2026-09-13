@@ -13,9 +13,11 @@
 //  (9) name vacío / demasiado largo → ValidationError
 // (10) price negativo / priceMode inválido / description larga → ValidationError
 // (11) list filtra por hotelId (foreign queda afuera)
+// (12) race UNIQUE meal_plans_hotel_code: create reintenta con el siguiente sufijo; la semilla
+//      concurrente ignora la violación y relee; reintentos agotados → ValidationError
 import { describe, it, expect } from 'bun:test'
 import { ValidationError, NotFoundError } from 'arckode-framework'
-import { list, create, update, remove, displayName, slugifyCode, DEFAULT_MEAL_PLANS, LEGACY_NAMES } from '../usecases/meal-plans-crud'
+import { list, create, update, remove, displayName, slugifyCode, DEFAULT_MEAL_PLANS, LEGACY_NAMES, CREATE_MAX_ATTEMPTS } from '../usecases/meal-plans-crud'
 import type { MealPlanDTO, UpsellCurrentUser } from '../types'
 
 const adminUser: UpsellCurrentUser = { id: 'u1', hotelId: 'h1', role: 'hotel_admin', userType: 'merchant' }
@@ -352,6 +354,114 @@ describe('meal-plans-crud (#360) — list + semilla', () => {
   it('propaga el error de ownership (defense-in-depth)', async () => {
     const { deps } = makeDeps({ configRows: seededConfig(), ownershipOk: false })
     await expect(list(deps, adminUser)).rejects.toThrow(/forbidden: not owner/)
+  })
+})
+
+describe('meal-plans-crud (#360) — race UNIQUE meal_plans_hotel_code', () => {
+  /** Error tal como lo devuelve Postgres al violar el índice compuesto. */
+  const uniqueError = () => ({
+    code: '23505',
+    message: 'duplicate key value violates unique constraint "meal_plans_hotel_code"',
+  })
+
+  /**
+   * Repo cuyo `create` lanza unique violation la PRIMERA vez que ve cada code de `failOnce` (simula
+   * que otro request insertó ese code entre nuestro findMany y el create). Si `insertOnFail` está
+   * en true, además mete la fila "del otro request" en el store al fallar (así la relectura la ve).
+   */
+  function makeRacingRepo(failOnce: string[], insertOnFail = false) {
+    const repo = makeRepo<MealPlanDTO>([])
+    const pending = new Set(failOnce)
+    const inner = repo.create
+    const attempts: string[] = []
+    repo.create = async (data: any) => {
+      attempts.push(data.code)
+      if (pending.has(data.code)) {
+        pending.delete(data.code)
+        if (insertOnFail) await inner({ ...data, id: undefined, name: 'otro request' })
+        throw uniqueError()
+      }
+      return inner(data)
+    }
+    return { repo, attempts }
+  }
+
+  function depsWith(repo: ReturnType<typeof makeRepo<MealPlanDTO>>, configRows?: any[]) {
+    const { deps, bookingConfig } = makeDeps({ configRows })
+    deps.mealPlans = repo as any
+    return { deps, bookingConfig }
+  }
+
+  it('create: violación del UNIQUE en el primer intento → reintenta y devuelve desayuno_2', async () => {
+    const { repo, attempts } = makeRacingRepo(['desayuno'])
+    const { deps } = depsWith(repo, seededConfig())
+    const created = await create(deps, { name: 'Desayuno' }, adminUser)
+    expect(created.code).toBe('desayuno_2')
+    expect(created.name).toBe('Desayuno')
+    expect(attempts).toEqual(['desayuno', 'desayuno_2'])
+    expect(repo.rows).toHaveLength(1)
+  })
+
+  it('create: si la relectura ya ve la fila del otro request, salta directo al siguiente sufijo libre', async () => {
+    const { repo, attempts } = makeRacingRepo(['desayuno'], true)
+    const { deps } = depsWith(repo, seededConfig())
+    const created = await create(deps, { name: 'Desayuno' }, adminUser)
+    expect(created.code).toBe('desayuno_2')
+    expect(attempts).toEqual(['desayuno', 'desayuno_2'])
+    expect(repo.rows.map((r) => r.code).sort()).toEqual(['desayuno', 'desayuno_2'])
+  })
+
+  it('create: un error que NO es unique violation se propaga sin reintentar', async () => {
+    const repo = makeRepo<MealPlanDTO>([])
+    let calls = 0
+    repo.create = async () => { calls += 1; throw new Error('connection reset') }
+    const { deps } = depsWith(repo, seededConfig())
+    await expect(create(deps, { name: 'Desayuno' }, adminUser)).rejects.toThrow(/connection reset/)
+    expect(calls).toBe(1)
+  })
+
+  it('create: reintentos agotados → ValidationError', async () => {
+    const repo = makeRepo<MealPlanDTO>([])
+    let calls = 0
+    repo.create = async () => { calls += 1; throw uniqueError() }
+    const { deps } = depsWith(repo, seededConfig())
+    const err = await create(deps, { name: 'Desayuno' }, adminUser).catch((e) => e)
+    expect(err).toBeInstanceOf(ValidationError)
+    expect(String(err.message)).toBe('No se pudo generar un código único para el régimen')
+    expect(calls).toBe(CREATE_MAX_ATTEMPTS)
+    expect(repo.rows).toHaveLength(0)
+  })
+
+  it('seed concurrente: otro request ya insertó room_only → list no falla y devuelve 4 filas sin duplicar', async () => {
+    // El fake ya tiene room_only "insertada por otro request" pero nuestro findMany inicial no la
+    // vio (rows vacío al momento del findMany): simulamos eso haciendo que el create de room_only
+    // choque con el UNIQUE y recién ahí aparezca en el store.
+    const { repo, attempts } = makeRacingRepo(['room_only'], true)
+    const { deps, bookingConfig } = depsWith(repo, unseededConfig())
+    const r = await list(deps, adminUser)
+    expect(r.total).toBe(4)
+    expect(r.data.map((m) => m.code)).toEqual(['room_only', 'breakfast', 'half_board', 'all_inclusive'])
+    expect(repo.rows).toHaveLength(4)
+    expect(repo.rows.filter((m) => m.code === 'room_only')).toHaveLength(1)
+    expect(r.data.find((m) => m.code === 'room_only')!.name).toBe('otro request') // la del otro, no la nuestra
+    expect(attempts).toEqual(['room_only', 'breakfast', 'half_board', 'all_inclusive'])
+    expect(bookingConfig!.rows[0].mealPlansSeeded).toBe(true)
+  })
+
+  it('seed concurrente: el otro request ya sembró las 4 → list devuelve 4 (relectura fresca, no concatena)', async () => {
+    const { repo } = makeRacingRepo(['room_only', 'breakfast', 'half_board', 'all_inclusive'], true)
+    const { deps } = depsWith(repo, unseededConfig())
+    const r = await list(deps, adminUser)
+    expect(r.total).toBe(4)
+    expect(repo.rows).toHaveLength(4)
+    expect(new Set(r.data.map((m) => m.code)).size).toBe(4)
+  })
+
+  it('seed: un error que NO es unique violation se propaga', async () => {
+    const repo = makeRepo<MealPlanDTO>([])
+    repo.create = async () => { throw new Error('connection reset') }
+    const { deps } = depsWith(repo, unseededConfig())
+    await expect(list(deps, adminUser)).rejects.toThrow(/connection reset/)
   })
 })
 
