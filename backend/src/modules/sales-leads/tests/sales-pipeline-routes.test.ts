@@ -5,7 +5,7 @@
 // `whatsappUrl` en E.164; (c) el PUT es parcial (no borra lo que no vino), `lostReason` sin
 // `lostAt` sella `lostAt`, un motivo fuera del enum es 400, y cada cambio deja fila en `audit_log`
 // con `hotelId='platform'`.
-import { describe, it, expect, beforeEach } from 'bun:test'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, setSystemTime } from 'bun:test'
 import { Router } from 'arckode-framework'
 import { makeAuth, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { SalesLeadsModule } from '../index'
@@ -13,6 +13,10 @@ import { SalesLeadsModule } from '../index'
 const NOW = new Date('2026-09-10T12:00:00.000Z')
 const DAY = 24 * 60 * 60 * 1000
 const iso = (offsetDays: number) => new Date(NOW.getTime() + offsetDays * DAY).toISOString()
+// #355 — las fixtures son relativas a NOW pero la ruta mira el reloj real: el 2026-09-13 el trial de
+// h2 (iso(3)) ya había vencido y el test pasó de 'registered' a 'expired' solo. Reloj congelado.
+beforeAll(() => setSystemTime(NOW))
+afterAll(() => setSystemTime())
 
 /** ORM en memoria con estado por modelo: lo mínimo que usa OrmRepository. */
 function memOrm(seed: Record<string, any[]> = {}) {
