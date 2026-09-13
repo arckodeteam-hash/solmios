@@ -5,14 +5,13 @@
 // textos que no coincidían entre sí y con la regla `mealPlan ?? regime` al revés de lo que el
 // panel edita. Todo lo que muestre un régimen lo resuelve acá; un .vue no importa de otro .vue.
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import type { MealPlanCode } from '@/types/booking'
 
 /** Códigos que admite `Reservations.regime` (el select del panel, `ReservationWizardModal.vue`).
- *  Es un SUPERCONJUNTO de `MealPlanCode` (lo reservable desde la web: breakfast / half_board /
- *  all_inclusive): `full_board` existe solo como régimen cargado a mano — no está en el catálogo
- *  `meal_plans` y la web no lo ofrece, pero una reserva del panel puede tenerlo y hay que
- *  etiquetarlo. `room_only` = sin régimen. */
-export type RegimeCode = MealPlanCode | 'room_only' | 'full_board'
+ *  `full_board` existe solo como régimen cargado a mano — no está en el catálogo `meal_plans` y
+ *  la web no lo ofrece, pero una reserva del panel puede tenerlo y hay que etiquetarlo.
+ *  `room_only` = sin régimen. #360: `MealPlanCode` pasó a ser `string` (catálogo abierto); estos
+ *  5 siguen siendo los únicos con etiqueta fija del panel. */
+export type RegimeCode = 'room_only' | 'breakfast' | 'half_board' | 'full_board' | 'all_inclusive'
 
 /** Etiquetas del PANEL (castellano). El widget público usa `MEAL_PLAN_LABEL_KEY` + i18n. */
 export const MEAL_PLAN_LABELS: Record<RegimeCode, string> = {
@@ -30,19 +29,37 @@ export function mealPlanLabel(code?: string | null, fallback = '—'): string {
   return (MEAL_PLAN_LABELS as Record<string, string>)[code] ?? code
 }
 
-/** Código → key i18n del widget público (es/en/pt via `useBookingI18n`). Mapa explícito para que
- *  un código nuevo en el backend rompa el typecheck acá en vez de mostrar la key cruda. Solo los
- *  reservables desde la web: `full_board` no llega al widget. */
-export const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode | 'room_only', BookingMessageKey> = {
+/** Código LEGACY → key i18n del widget público (es/en/pt via `useBookingI18n`). #360: el catálogo
+ *  es abierto y cada fila trae su `name`; estas 4 keys quedan SOLO como fallback para snapshots
+ *  sin nombre (reservas/líneas anteriores al catálogo abierto). Un código custom no tiene key:
+ *  se muestra `name` o, sin él, el código crudo (ver `mealPlanDisplayName`). */
+export const MEAL_PLAN_LABEL_KEY: Record<string, BookingMessageKey> = {
   room_only: 'rooms.board.roomOnly',
   breakfast: 'rooms.board.breakfast',
   half_board: 'rooms.board.halfBoard',
   all_inclusive: 'rooms.board.allInclusive',
 }
 
-/** Key i18n del widget para un código, o `undefined` si no es reservable desde la web. */
+/** Key i18n del widget para un código legacy, o `undefined` si no tiene (código custom). */
 export function mealPlanLabelKey(code?: string | null): BookingMessageKey | undefined {
   return code ? (MEAL_PLAN_LABEL_KEY as Record<string, BookingMessageKey | undefined>)[code] : undefined
+}
+
+/** #360 — nombre visible de un régimen en el widget público, UNA regla para radio, carrito,
+ *  pago, desglose y confirmación: `name` si viene (catálogo/snapshot); si no, la key i18n legacy
+ *  traducida con `t` (cuando el caller la pasa); si no, el código crudo (nunca se oculta ni se
+ *  muestra una key). `''` cuando no hay ni código. */
+export function mealPlanDisplayName(
+  code?: string | null,
+  name?: string | null,
+  t?: (key: BookingMessageKey) => string,
+): string {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (trimmed) return trimmed
+  if (!code) return ''
+  const key = mealPlanLabelKey(code)
+  if (key && t) return t(key)
+  return code
 }
 
 /** Qué régimen MUESTRA el panel para una reserva.

@@ -703,43 +703,72 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
   })
 
-  // MR-03 (#268) — el régimen es un radio POR TARJETA. Regla del dueño (se mantiene): los códigos
-  // que el hotel no ofrece siguen VISIBLES, deshabilitados y con el motivo — nunca ocultos.
-  it('sin regímenes configurados: "Sólo alojamiento" marcado y los 3 códigos visibles pero deshabilitados', () => {
+  // MR-03 (#268) / #360 — el régimen es un radio POR TARJETA con SOLO las filas activas del
+  // catálogo del hotel (cada una con su `name`): nada se antepone ni se pintan códigos que el
+  // hotel no ofrece.
+  it('#360 sin regímenes configurados: no existe el bloque de régimen en la tarjeta', () => {
     const w = render()
     const text = w.text()
 
-    expect(text).toContain('Sólo alojamiento')
-    expect(text).toContain('Desayuno incluido')
-    expect(text).toContain('Desayuno y cena')
-    expect(text).toContain('Todo incluido')
-
-    const radios = w.get('[role="radiogroup"]').findAll('input[type="radio"]')
-    expect(radios.map((r) => r.attributes('value'))).toEqual(['room_only', 'breakfast', 'half_board', 'all_inclusive'])
-    expect((radios[0]!.element as HTMLInputElement).checked).toBe(true)
-    expect(radios[0]!.attributes('disabled')).toBeUndefined()
-    for (const r of radios.slice(1)) expect(r.attributes('disabled')).toBeDefined()
-    const disabledLabels = w.findAll('[data-testid="meal-plan-option"]').filter((l) => l.attributes('title') === 'Este hotel no ofrece este régimen')
-    expect(disabledLabels).toHaveLength(3)
+    expect(w.find('[data-testid="meal-plan-options"]').exists()).toBe(false)
+    expect(w.find('[role="radiogroup"] input[type="radio"]').exists()).toBe(false)
+    expect(text).not.toContain('Sólo alojamiento')
+    expect(text).not.toContain('Desayuno incluido')
+    expect(text).not.toContain('Este hotel no ofrece este régimen')
     w.unmount()
   })
 
-  it('régimen incluido en la tarifa: radio habilitado con "Incluido"; al elegirlo se marca (mismo estilo que "Sólo alojamiento")', async () => {
+  it('#360 el radio lista SOLO el catálogo activo, con el name de cada fila (custom incluido) y la primera marcada', () => {
     const store = useBookingStore()
     store.init('hotel-demo')
     store.ratesResponse = ratesResponse(true)
-    store.mealPlans = [{ code: 'breakfast', priceMode: 'included', price: 0 }]
+    store.mealPlans = [
+      { code: 'room_only', name: 'Solo alojamiento', priceMode: 'included', price: 0 },
+      { code: 'breakfast', name: 'Desayuno buffet', priceMode: 'included', price: 0 },
+      { code: 'brunch_premium', name: 'Brunch premium', priceMode: 'per_person_per_night', price: 25 },
+    ]
+    const w = mount(RoomsStep)
+
+    const radios = w.get('[role="radiogroup"]').findAll('input[type="radio"]')
+    expect(radios.map((r) => r.attributes('value'))).toEqual(['room_only', 'breakfast', 'brunch_premium'])
+    expect((radios[0]!.element as HTMLInputElement).checked).toBe(true)
+    for (const r of radios) expect(r.attributes('disabled')).toBeUndefined()
+    const text = w.text()
+    // El `name` configurado por el hotel manda sobre la etiqueta i18n legacy del código.
+    expect(text).toContain('Solo alojamiento')
+    expect(text).toContain('Desayuno buffet')
+    expect(text).not.toContain('Desayuno incluido')
+    expect(text).toContain('Brunch premium')
+    expect(text).not.toContain('brunch_premium')
+    expect(text).not.toContain('Todo incluido')
+    w.unmount()
+  })
+
+  it('régimen incluido en la tarifa: primera opción ya marcada con "Incluido"; cambiar a otra la marca', async () => {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = ratesResponse(true)
+    store.mealPlans = [
+      { code: 'breakfast', name: 'Desayuno incluido', priceMode: 'included', price: 0 },
+      { code: 'half_board', name: 'Desayuno y cena', priceMode: 'per_person_per_night', price: 20 },
+    ]
     const w = mount(RoomsStep)
 
     const breakfast = w.get('input[value="breakfast"]')
     expect(breakfast.attributes('disabled')).toBeUndefined()
-    const label = w.findAll('[data-testid="meal-plan-option"]').find((l) => l.text().includes('Desayuno incluido'))!
-    expect(label.text()).toContain('Incluido')
-    expect(label.classes().join(' ')).not.toContain('bg-navy')
-
-    await breakfast.setValue(true)
-    expect(label.classes().join(' ')).toContain('bg-navy')
     expect((breakfast.element as HTMLInputElement).checked).toBe(true)
+    const labels = w.findAll('[data-testid="meal-plan-option"]')
+    const label = labels.find((l) => l.text().includes('Desayuno incluido'))!
+    expect(label.text()).toContain('Incluido')
+    expect(label.classes().join(' ')).toContain('bg-navy')
+    const other = labels.find((l) => l.text().includes('Desayuno y cena'))!
+    expect(other.classes().join(' ')).not.toContain('bg-navy')
+
+    const halfBoard = w.get('input[value="half_board"]')
+    await halfBoard.setValue(true)
+    expect(other.classes().join(' ')).toContain('bg-navy')
+    expect(label.classes().join(' ')).not.toContain('bg-navy')
+    expect((halfBoard.element as HTMLInputElement).checked).toBe(true)
     w.unmount()
   })
 
@@ -969,7 +998,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     res.currency = 'EUR'
     res.chargeCurrency = 'USD'
     store.ratesResponse = res
-    store.mealPlans = [{ code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 }]
+    store.mealPlans = [{ code: 'all_inclusive', name: 'Todo incluido', priceMode: 'per_person_per_night', price: 45 }]
     const w = mount(RoomsStep)
 
     // MR-03 (#268) — el importe va visible en la opción del radio (1 adulto × 3 noches × 45).

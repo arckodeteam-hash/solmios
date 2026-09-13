@@ -225,6 +225,9 @@ export async function getPublicReservation(
         // MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado), no un dato
         // interno del hotel. `null`/0 en reservas anteriores a esta feature o sin régimen.
         mealPlan: reservation.mealPlan ?? null,
+        // #360 — nombre congelado al reservar (catálogo abierto); `null` en reservas anteriores →
+        // el widget cae a la etiqueta legacy por código.
+        mealPlanName: reservation.mealPlanName ?? null,
         mealPlanPriceMode: reservation.mealPlanPriceMode ?? null,
         mealPlanUnitPrice: reservation.mealPlanUnitPrice ?? 0,
         mealPlanTotal: reservation.mealPlanTotal ?? 0,

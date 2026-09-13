@@ -13,10 +13,18 @@
 // se rechaza con `meal_plan_unavailable` (a diferencia de las amenidades, que se ignoran con
 // warn: un régimen cambia el precio total de forma visible y el huésped lo eligió a propósito).
 //
-// "Solo alojamiento" (`room_only`) NO tiene fila en `meal_plans` — es la base implícita, sin
-// costo, siempre disponible. Se representa como `line: null`.
+// #360 — catálogo ABIERTO: "Solo alojamiento" (`room_only`) es una fila normal de `meal_plans`
+// (included, 0) que el hotel edita/desactiva/borra. Si está activa, `resolveMealPlanLine` devuelve
+// una línea como para cualquier otro code (con `name` snapshot, total 0). `line: null` queda solo
+// para "sin régimen": body vacío, o `room_only` cuando el hotel NO tiene esa fila (compat con
+// widgets/reservas anteriores al catálogo abierto).
+//
+// `booking_config.showMealPlans === false` → `visibleMealPlans` devuelve `[]` y todos los
+// consumidores tratan el catálogo como vacío (`/meal-plans` y `/rates` listan `[]`, `/booking`
+// rechaza cualquier code con `meal_plan_unavailable`).
 import { round2 } from '../../../shared/utils/money'
 import type { MealPlanCode, MealPlanPriceMode, PublicRateMealPlan } from '../types'
+import { displayName } from './meal-plans-crud'
 
 /**
  * Línea del snapshot que se persiste en `Reservations.mealPlan*`. Precio CONGELADO al reservar:
@@ -24,6 +32,8 @@ import type { MealPlanCode, MealPlanPriceMode, PublicRateMealPlan } from '../typ
  */
 export interface MealPlanLine {
   code: string
+  /** #360 — nombre visible al momento de reservar (snapshot: renombrar el régimen no lo cambia). */
+  name: string
   priceMode: MealPlanPriceMode
   /** Precio por persona por noche en `hotels.currency` (0 si `included`). */
   unitPrice: number
@@ -32,13 +42,38 @@ export interface MealPlanLine {
   total: number
 }
 
-/** Orden fijo de presentación — el mismo en admin, `/meal-plans` y widget. */
-export const MEAL_PLAN_CODE_ORDER: Record<string, number> = { breakfast: 0, half_board: 1, all_inclusive: 2 }
-
-/** Código reservado para "Solo alojamiento" — no existe en `meal_plans`, equivale a "sin régimen". */
+/**
+ * Código de "Solo alojamiento". #360: es una fila más del catálogo; el valor sigue reservado
+ * porque `reservations.mealPlan` lo usa como "sin régimen" cuando el hotel no tiene esa fila.
+ */
 export const ROOM_ONLY_CODE = 'room_only'
 
 const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
+
+/**
+ * Orden de presentación del catálogo — el mismo en admin, `/meal-plans`, `/rates` y widget:
+ * `sortOrder` ASC y luego `createdAt` ASC (#360). Estable: sin ambos campos conserva el orden de
+ * llegada. No muta el array.
+ */
+export function sortMealPlans<T extends { sortOrder?: unknown; createdAt?: unknown }>(rows: T[]): T[] {
+  return [...(rows ?? [])].sort((a, b) => {
+    const so = (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
+    if (so !== 0) return so
+    return String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''))
+  })
+}
+
+/**
+ * Catálogo tal como lo ve el motor público: `[]` cuando el hotel apagó
+ * `booking_config.showMealPlans` (#360), el catálogo intacto en cualquier otro caso (sin fila de
+ * config, o `showMealPlans` ausente/true → visible, default del toggle). Todos los consumidores
+ * públicos (`/meal-plans`, `/rates`, `/booking`, `/booking-group`) pasan por acá para que el
+ * toggle apague TODO de una vez.
+ */
+export function visibleMealPlans<T>(catalog: T[], bookingConfig: { showMealPlans?: unknown } | null | undefined): T[] {
+  if (bookingConfig?.showMealPlans === false) return []
+  return catalog ?? []
+}
 
 /** Total del régimen para la estadía. `included` → 0 (ya está en la tarifa de la habitación). */
 export function mealPlanTotal(
@@ -54,9 +89,12 @@ export function mealPlanTotal(
 
 /**
  * Resuelve el `mealPlan` del body contra el catálogo del hotel.
- *  - sin code / `room_only` → `{ ok: true, line: null }` (base implícita, sin cargo).
- *  - code activo del hotel → línea con precio releído del catálogo (NUNCA del body).
- *  - cualquier otra cosa (no existe, inactivo, de otro hotel) → `meal_plan_unavailable`.
+ *  - sin code → `{ ok: true, line: null }` (sin régimen, sin cargo).
+ *  - code activo del hotel (INCLUIDO `room_only` si existe como fila) → línea con `name` y precio
+ *    releídos del catálogo (NUNCA del body); `included` → total 0.
+ *  - `room_only` sin fila en el catálogo → `{ ok: true, line: null }` (compat: widgets/reservas
+ *    anteriores a #360 lo mandan como "sin régimen").
+ *  - cualquier otra cosa (no existe, inactivo, de otro hotel, catálogo oculto) → `meal_plan_unavailable`.
  */
 export function resolveMealPlanLine(
   catalog: any[],
@@ -66,10 +104,13 @@ export function resolveMealPlanLine(
   nights: number,
 ): { ok: true; line: MealPlanLine | null } | { ok: false; reason: 'meal_plan_unavailable' } {
   const wanted = typeof code === 'string' ? code.trim() : ''
-  if (!wanted || wanted === ROOM_ONLY_CODE) return { ok: true, line: null }
+  if (!wanted) return { ok: true, line: null }
 
   const found = (catalog ?? []).find((m) => m && m.code === wanted && m.hotelId === hotelId && isOn(m.active))
-  if (!found) return { ok: false, reason: 'meal_plan_unavailable' }
+  if (!found) {
+    if (wanted === ROOM_ONLY_CODE) return { ok: true, line: null }
+    return { ok: false, reason: 'meal_plan_unavailable' }
+  }
 
   const priceMode: MealPlanPriceMode = found.priceMode === 'per_person_per_night' ? 'per_person_per_night' : 'included'
   const unitPrice = priceMode === 'per_person_per_night' ? round2(Math.max(0, Number(found.price) || 0)) : 0
@@ -77,6 +118,7 @@ export function resolveMealPlanLine(
     ok: true,
     line: {
       code: wanted,
+      name: displayName(found),
       priceMode,
       unitPrice,
       persons,
@@ -87,9 +129,11 @@ export function resolveMealPlanLine(
 }
 
 /**
- * Catálogo público para `GET /rates`: regímenes ACTIVOS del hotel, en `MEAL_PLAN_CODE_ORDER`,
- * con `perNight`/`totalForStay` ya resueltos para `persons × nights`. "Solo alojamiento" no va:
- * el widget lo antepone (igual que hace `/meal-plans`).
+ * Catálogo público para `GET /rates`: regímenes ACTIVOS del hotel, ordenados por
+ * `sortOrder`/`createdAt` (`sortMealPlans`), con `name`/`description` y `perNight`/`totalForStay`
+ * ya resueltos para `persons × nights`. #360: "Solo alojamiento" va como cualquier otra fila si
+ * el hotel la tiene activa (el widget ya no antepone nada). El caller pasa el catálogo por
+ * `visibleMealPlans` para respetar `showMealPlans`.
  *
  * Cada ítem ecoa `persons`/`nights` (para qué ocupación/estadía se calculó). El widget recalcula
  * por composición con la MISMA fórmula (`price × persons × nights`) cuando el huésped cambia
@@ -101,14 +145,14 @@ export function buildPublicMealPlans(
   persons: number,
   nights: number,
 ): PublicRateMealPlan[] {
-  return (catalog ?? [])
-    .filter((m) => m && m.hotelId === hotelId && isOn(m.active))
-    .sort((a, b) => (MEAL_PLAN_CODE_ORDER[a.code] ?? 99) - (MEAL_PLAN_CODE_ORDER[b.code] ?? 99))
+  return sortMealPlans((catalog ?? []).filter((m) => m && m.hotelId === hotelId && isOn(m.active)))
     .map((m) => {
       const priceMode: MealPlanPriceMode = m.priceMode === 'per_person_per_night' ? 'per_person_per_night' : 'included'
       const price = priceMode === 'per_person_per_night' ? round2(Math.max(0, Number(m.price) || 0)) : 0
       return {
         code: m.code as MealPlanCode,
+        name: displayName(m),
+        description: String(m.description ?? ''),
         priceMode,
         price,
         persons: Math.max(0, persons),

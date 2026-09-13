@@ -486,7 +486,7 @@ import { PublicHotelService } from '@/services/PublicHotel.service'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
 import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
-import { mealPlanLabelKey } from '@/utils/meal-plans'
+import { mealPlanDisplayName } from '@/utils/meal-plans'
 import { useTracking, initTracking } from '@/composables/useTracking'
 import AppModal from '@/components/ui/AppModal.vue'
 import {
@@ -532,13 +532,18 @@ const nights = computed(() => nightsBetween(reservation.value?.reservation?.chec
 const guestDisplayName = computed(() => displayName(reservation.value?.guest?.name))
 
 // ── MR-03 (#268) — régimen elegido (snapshot en la reserva) ─────────────────
-/** Etiqueta del régimen (`mealPlanLabelKey`, mapa único en utils/meal-plans.ts), o '' con solo
- *  alojamiento / reserva anterior a la feature. */
+/** Etiqueta del régimen: `mealPlanName` congelado en la reserva (#360, catálogo abierto) →
+ *  key i18n legacy del código → código crudo (`mealPlanDisplayName`, regla única en
+ *  utils/meal-plans.ts). '' sin régimen / reserva anterior a la feature: `room_only` SIN nombre
+ *  es "sin régimen" (no se muestra); con nombre ("Solo alojamiento", fila real del catálogo) se
+ *  muestra como texto — no es un cargo, el importe queda en "incluido". */
 const mealPlanLabel = computed(() => {
-  const code = reservation.value?.reservation?.mealPlan
-  if (!code || code === 'room_only') return ''
-  const key = mealPlanLabelKey(code)
-  return key ? t(key) : ''
+  const r = reservation.value?.reservation
+  const code = r?.mealPlan
+  const name = r?.mealPlanName
+  if (!code) return ''
+  if (code === 'room_only' && !(name && name.trim())) return ''
+  return mealPlanDisplayName(code, name, t)
 })
 const mealPlanTotal = computed(() => Number(reservation.value?.reservation?.mealPlanTotal ?? 0))
 const hotelCheckInTime = computed(() => hotelTimeOrEmpty(hotel.value?.checkIn))

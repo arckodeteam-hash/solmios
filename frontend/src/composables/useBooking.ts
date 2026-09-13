@@ -202,12 +202,14 @@ export interface RoomAmenityLine {
 
 /** MR-03 (#268) — el régimen de una línea del carrito, resuelto para el resumen/pago (espejo de
  *  `RoomAmenityLine`, pero UNA fila por línea, no por ítem). Solo líneas con régimen ≠
- *  `room_only`; las `included` van con `total` 0 para que el desglose diga "incluido". `total` =
- *  `mealPlan.total × quantity`. */
+ *  `room_only` (#360: "Solo alojamiento" puede ser una fila del catálogo, pero no es un cargo ni
+ *  se lista en el desglose); las `included` van con `total` 0 para que el desglose diga
+ *  "incluido". `total` = `mealPlan.total × quantity`. `name` = snapshot del catálogo. */
 export interface MealPlanLine {
   lineKey: string
   roomName: string
   code: MealPlanCode
+  name: string
   priceMode: MealPlanPriceMode
   persons: number
   nights: number
@@ -215,11 +217,6 @@ export interface MealPlanLine {
   unitPrice: number
   total: number
 }
-
-/** MR-03 (#268) — los 3 códigos fijos del catálogo, en el orden que muestra la UI (mismo criterio
- *  que el backend, `public-meal-plans.ts` CODE_ORDER). "Solo alojamiento" no es un código del
- *  catálogo: es la base implícita. */
-export const MEAL_PLAN_CODES: readonly MealPlanCode[] = ['breakfast', 'half_board', 'all_inclusive']
 
 /** MR-03 (#268) — importe de un régimen para UNA habitación: la MISMA fórmula que el backend
  *  (`public-meal-plan-lines.ts:resolveMealPlanLine`): `price × persons × nights` si se cobra por
@@ -268,8 +265,9 @@ export interface CartLine {
   /** MR-03 (#268, régimen) — elegido para ESTA línea, POR LÍNEA como las amenidades. SNAPSHOT del
    *  catálogo (`store.mealPlans`) tomado al agregar: código, modo, precio unitario, personas que
    *  pagan y el importe por unidad ya calculado. Al backend viaja solo el código (`mealPlan`) — él
-   *  recalcula contra su catálogo activo. `undefined` = solo alojamiento (nunca se guarda
-   *  `room_only`). Importe de la línea = `mealPlan.total × quantity`. */
+   *  recalcula contra su catálogo activo. `undefined` = sin régimen (#360: `room_only` SÍ se
+   *  guarda cuando el hotel lo tiene como fila del catálogo, con su `name`). Importe de la línea
+   *  = `mealPlan.total × quantity`. */
   mealPlan?: CartLineMealPlan
   /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
   unitPrice: number
@@ -305,8 +303,8 @@ export interface ComposerState {
   roomAmenityKeys?: string[]
   // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
   // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);
-  // ausente = 'room_only'. Se conserva al cambiar adultos/niños — solo cambia el importe. Leer vía
-  // `mealPlanCode(rt)`.
+  // ausente = la primera opción del catálogo (#360), o 'room_only' sin catálogo. Se conserva al
+  // cambiar adultos/niños — solo cambia el importe. Leer vía `mealPlanCode(rt)`.
   mealPlan?: MealPlanCode | 'room_only'
 }
 
@@ -385,8 +383,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
     const base = `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}`
     const withRoomAmenities = sortedRoomAmenities ? `${base}|ra${sortedRoomAmenities}` : base
     // MR-03 (#268) — el régimen, ídem: misma composición con distinto régimen = habitaciones
-    // DISTINTAS (una con desayuno y otra sin no se funden en "×2"). Segmento solo si hay régimen.
-    return mealPlan && mealPlan !== 'room_only' ? `${withRoomAmenities}|mp${mealPlan}` : withRoomAmenities
+    // DISTINTAS (una con desayuno y otra sin no se funden en "×2"). Segmento solo si hay régimen
+    // (#360: `room_only` entra en la key cuando es una fila real del catálogo — el caller pasa
+    // el código del snapshot resuelto, `null` sin régimen).
+    return mealPlan ? `${withRoomAmenities}|mp${mealPlan}` : withRoomAmenities
   }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
@@ -693,7 +693,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
       const mp = l.mealPlan
       if (!mp || mp.code === 'room_only' || !mp.priceMode) continue
       lines.push({
-        lineKey: l.key, roomName: l.roomName, code: mp.code, priceMode: mp.priceMode,
+        lineKey: l.key, roomName: l.roomName, code: mp.code, name: mp.name, priceMode: mp.priceMode,
         persons: mp.persons, nights: nights.value, quantity: l.quantity, unitPrice: mp.unitPrice,
         total: round2((Number(mp.total) || 0) * l.quantity),
       })
@@ -967,9 +967,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
    * bebé y con el tipo ofreciéndola; el backend la re-valida contra la composición real.
    *
    * MR-03 (#268): `mealPlan` (código del catálogo `mealPlans`) se resuelve a un SNAPSHOT
-   * `{code, priceMode, unitPrice, persons, total}` en la línea, con `total = price × (adultos +
+   * `{code, name, priceMode, unitPrice, persons, total}` en la línea, con `total = price × (adultos +
    * niños con plaza) × noches` (0 si `included`) — misma fórmula que el backend. Un código que el
-   * hotel no tiene activo (o `'room_only'`) se ignora: la línea queda como solo alojamiento.
+   * hotel no tiene activo se ignora: la línea queda sin régimen (#360: `'room_only'` se resuelve
+   * como cualquier otro si el hotel lo tiene como fila; sin fila = sin régimen).
    */
   async function addToCart(
     room: RoomTypeRate,
@@ -979,7 +980,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
       needsCrib?: boolean; cribCount?: number
       // REQ-01 (#290) — amenidades DE la habitación (cuna, cama extra…) de ESTA línea.
       roomAmenityKeys?: string[]
-      // MR-03 (#268) — régimen de ESTA línea ('room_only' u omitido = solo alojamiento).
+      // MR-03 (#268) — régimen de ESTA línea (omitido = sin régimen; #360: 'room_only' es una
+      // fila más del catálogo si el hotel la tiene, si no equivale a omitido).
       mealPlan?: string
     },
   ): Promise<void> {
@@ -1050,7 +1052,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
         ...(isComposition && occupancy.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
         // REQ-01 (#290) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
         ...(lineRoomAmenities.length > 0 ? { roomAmenities: lineRoomAmenities } : {}),
-        // MR-03 (#268) — solo con régimen ≠ solo alojamiento (nunca se guarda `room_only`).
+        // MR-03 (#268) — solo con un régimen resuelto contra el catálogo activo.
         ...(lineMealPlan ? { mealPlan: lineMealPlan } : {}),
       })
     }
@@ -1079,17 +1081,18 @@ export const useBookingStore = defineStore('booking-widget', () => {
   }
 
   /** MR-03 (#268) — resuelve el código elegido contra el catálogo activo cargado
-   *  (`store.mealPlans`). Devuelve el snapshot `{code, priceMode, unitPrice, persons, total}` o
-   *  `null` para `room_only`/omitido/código que el hotel no tiene activo (el backend igual lo
-   *  rechazaría con `meal_plan_unavailable` — acá se degrada a solo alojamiento, nunca se muestra
-   *  un total con un régimen que después no se cobra). */
+   *  (`store.mealPlans`). Devuelve el snapshot `{code, name, priceMode, unitPrice, persons, total}`
+   *  o `null` para omitido/código que el hotel no tiene activo (el backend igual lo rechazaría
+   *  con `meal_plan_unavailable` — acá se degrada a sin régimen, nunca se muestra un total con
+   *  un régimen que después no se cobra). #360: `room_only` es una fila más — si el hotel la
+   *  tiene activa se snapshotea con su `name` (included, total 0); si no, `null` como antes. */
   function resolveMealPlan(code: string | undefined, persons: number): CartLineMealPlan | null {
-    if (!code || code === 'room_only') return null
+    if (!code) return null
     const found = mealPlans.value.find((m) => m.code === code)
     if (!found) return null
     const unitPrice = Number(found.price) || 0
     return {
-      code: found.code, priceMode: found.priceMode, unitPrice, persons,
+      code: found.code, name: String(found.name ?? ''), priceMode: found.priceMode, unitPrice, persons,
       total: computeMealPlanTotal(found.priceMode, unitPrice, persons, nights.value),
     }
   }
@@ -1315,8 +1318,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
           ...(line.roomAmenities && line.roomAmenities.length > 0
             ? { roomAmenities: line.roomAmenities.map((a) => ({ key: a.key })) }
             : {}),
-          // MR-03 (#268) — solo el código: el backend recalcula contra su catálogo activo.
-          ...(line.mealPlan && line.mealPlan.code !== 'room_only' ? { mealPlan: line.mealPlan.code } : {}),
+          // MR-03 (#268) — solo el código: el backend recalcula contra su catálogo activo (#360:
+          // `room_only` viaja también cuando es una fila real — el snapshot solo existe si lo era).
+          ...(line.mealPlan ? { mealPlan: line.mealPlan.code } : {}),
           guest: guestPayload,
           ...promoPayload,
           ...upsellsPayload,
@@ -1345,7 +1349,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
               ? { roomAmenities: l.roomAmenities.map((a) => ({ key: a.key })) }
               : {}),
             // MR-03 (#268) — POR LÍNEA, igual que las amenidades.
-            ...(l.mealPlan && l.mealPlan.code !== 'room_only' ? { mealPlan: l.mealPlan.code } : {}),
+            ...(l.mealPlan ? { mealPlan: l.mealPlan.code } : {}),
           })),
           guest: guestPayload,
           ...promoPayload,

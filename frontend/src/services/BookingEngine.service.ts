@@ -21,6 +21,9 @@ export interface BookingConfig {
   autoAssignBeforeArrivalHours: number
   cancellationPolicy: string
   showComparison: boolean
+  /** #360 — si está apagado, el motor de reservas no ofrece regímenes (el huésped reserva sin
+   *  elegir). El catálogo se administra en Configuración → Regímenes; default true. */
+  showMealPlans: boolean
   googleAdsEnabled: boolean
   whatsappConfirmation: boolean
   instantConfirmation: boolean

@@ -25,6 +25,10 @@ export interface BookingConfigDTO {
   approvalDeadlineHours: number
   /** #262 REQ-HAC-07 — Horas antes de la llegada para auto-asignar habitación (0–168, 0 = apagado). */
   autoAssignBeforeArrivalHours: number
+  /** #360 — ¿El motor de reservas ofrece los regímenes del hotel? Default true. */
+  showMealPlans: boolean
+  /** #360 — Las 4 filas default de `meal_plans` ya se sembraron (una sola vez). */
+  mealPlansSeeded: boolean
   createdAt: string
   updatedAt: string
 }
@@ -47,6 +51,7 @@ export interface UpdateBookingConfigDTO {
   pendingTtlMinutes?: number
   approvalDeadlineHours?: number
   autoAssignBeforeArrivalHours?: number
+  showMealPlans?: boolean
 }
 
 // ─── Availability ──────────────────────────────────────
@@ -364,10 +369,11 @@ export interface UpsellCurrentUser {
   userType?: string
 }
 
-// ─── Regímenes de alimentación (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes) ────────────
-// Catálogo FIJO de 3 códigos (no abierto como upsells) — "Solo alojamiento" es la base
-// implícita, sin fila propia. Ver el comentario de `MealPlanModel` en model.ts.
-export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+// ─── Regímenes de alimentación (#360 — catálogo ABIERTO por hotel) ─────────────────────────
+// Antes (tasks.md 2.2/2.4): enum fijo de 3 códigos. Ahora `code` es un slug libre (a-z0-9_,
+// max 40) generado a partir de `name`, único por hotel y estable (reservas/emails keyean por él).
+// Ver el comentario de `MealPlanModel` en model.ts.
+export type MealPlanCode = string
 export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 
 /** DTO de lectura. Espeja los campos persistidos en `meal_plans` (model.ts). */
@@ -375,6 +381,10 @@ export interface MealPlanDTO {
   id: string
   hotelId: string
   code: MealPlanCode
+  /** Nombre visible. Filas legacy sin name se rellenan al leer (`displayName`). */
+  name: string
+  description: string
+  sortOrder: number
   active: boolean
   priceMode: MealPlanPriceMode
   price: number
@@ -382,16 +392,34 @@ export interface MealPlanDTO {
   updatedAt: string
 }
 
-/** Body del PUT /api/meal-plans/:code. */
-export interface UpsertMealPlanDTO {
-  active?: boolean
+/** Body del POST /api/meal-plans. */
+export interface CreateMealPlanDTO {
+  name: string
+  description?: string
   priceMode?: MealPlanPriceMode
   price?: number
+  active?: boolean
+  sortOrder?: number
 }
+
+/** Body del PUT /api/meal-plans/:id. Todos opcionales (partial). `code` NO se edita. */
+export interface UpdateMealPlanDTO {
+  name?: string
+  description?: string
+  priceMode?: MealPlanPriceMode
+  price?: number
+  active?: boolean
+  sortOrder?: number
+}
+
+/** @deprecated (#360) — alias de compatibilidad del viejo PUT /api/meal-plans/:code. */
+export type UpsertMealPlanDTO = UpdateMealPlanDTO
 
 /** Fila pública (lo que el widget necesita) — sin hotelId/timestamps. */
 export interface PublicMealPlan {
   code: MealPlanCode
+  name: string
+  description: string
   priceMode: MealPlanPriceMode
   price: number
 }

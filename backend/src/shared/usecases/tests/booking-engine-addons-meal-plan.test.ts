@@ -91,7 +91,7 @@ function configRepo() {
 }
 
 const CATALOG = [
-  { id: 'mp-bf', hotelId: HOTEL_ID, code: 'breakfast', active: true, priceMode: 'per_person_per_night', price: 10 },
+  { id: 'mp-bf', hotelId: HOTEL_ID, code: 'breakfast', active: true, priceMode: 'per_person_per_night', price: 10, name: 'Desayuno incluido' },
   { id: 'mp-ai', hotelId: HOTEL_ID, code: 'all_inclusive', active: true, priceMode: 'included', price: 0 },
 ]
 
@@ -155,7 +155,7 @@ describe('createPublicBookingDirect — el régimen cobrado online queda como Re
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       reservationId: reservation.id, hotelId: HOTEL_ID, source: 'booking_engine', status: 'pending',
-      description: 'Régimen: Desayuno', quantity: 9, amount: 10, unitPrice: 10, taxRate: 10,
+      description: 'Régimen: Desayuno incluido', quantity: 9, amount: 10, unitPrice: 10, taxRate: 10,
     })
     expect(lineTotal(rows)).toBe(reservation.mealPlanTotal)
     // Ninguna otra fila: no había upsells ni amenidades.
@@ -210,7 +210,7 @@ describe('createPublicBookingGroup — una fila meal_plan por línea con régime
 
     const rows = mealPlanRows(tables.ReservationAddons)
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ reservationId: leader.id, description: 'Régimen: Desayuno', quantity: 12, amount: 10, unitPrice: 10 })
+    expect(rows[0]).toMatchObject({ reservationId: leader.id, description: 'Régimen: Desayuno incluido', quantity: 12, amount: 10, unitPrice: 10 })
     expect(lineTotal(rows)).toBe(120)
     for (const sibling of tables.Reservations.slice(1)) {
       expect(tables.ReservationAddons.filter((a: any) => a.reservationId === sibling.id)).toHaveLength(0)

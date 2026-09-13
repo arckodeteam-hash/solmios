@@ -17,6 +17,7 @@
 //  (7) Conversión de moneda: hotel DOP, ?currency=USD, rates guardadas → convierte.
 //  (8) Sin rates guardadas → degrada a hotels.currency (display=charge=base).
 //  (9) Sin configuration('taxes') → fallback a hotels.taxRate / hotels.taxName.
+// (10) mealPlans[] (#360): name/description, orden por sortOrder, showMealPlans:false → [].
 import { describe, it, expect } from 'bun:test'
 import { getPublicRates } from '../usecases/public-rates'
 import type { AvailabilityResult } from '../types'
@@ -319,6 +320,63 @@ describe('getPublicRates — F2 2.4', () => {
       }
       const res = await getPublicRates(deps as any, 'caribe-paradise', { checkIn: '2026-08-10', checkOut: '2026-08-12' })
       expect(res.body.cancellationPolicy).toBeNull()
+    })
+  })
+
+  // ─── mealPlans[] (MR-03 #268 + catálogo abierto #360) ─────────────────────────
+  describe('mealPlans (#360: name/description, orden por sortOrder, gate showMealPlans)', () => {
+    const mealPlanRows = [
+      { id: 'mp-v', hotelId: 'h1', code: 'pension_vip', name: 'Pensión VIP', description: 'Con vinos', sortOrder: 2, active: true, priceMode: 'per_person_per_night', price: 30, createdAt: '2026-01-03T00:00:00Z' },
+      { id: 'mp-r', hotelId: 'h1', code: 'room_only', name: 'Solo alojamiento', description: '', sortOrder: 0, active: true, priceMode: 'included', price: 0, createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'mp-b', hotelId: 'h1', code: 'breakfast', name: 'Desayuno incluido', description: 'Buffet', sortOrder: 1, active: true, priceMode: 'included', price: 0, createdAt: '2026-01-02T00:00:00Z' },
+      { id: 'mp-x', hotelId: 'h1', code: 'all_inclusive', name: 'Todo incluido', description: '', sortOrder: 3, active: false, priceMode: 'per_person_per_night', price: 90, createdAt: '2026-01-04T00:00:00Z' },
+    ]
+    const makeMealPlans = (rows: any[]) => ({ findMany: async () => rows })
+    const depsWith = (bookingConfig: any | null | undefined) => ({
+      hotels: makeHotels(baseHotel()),
+      availability: makeAvailability([{ roomType: 'standard', available: 5, price: 100, currency: 'USD', capacity: 2, amenities: [] }]),
+      config: { findMany: async () => [] } as any,
+      mealPlans: makeMealPlans(mealPlanRows),
+      ...(bookingConfig === undefined ? {} : { bookingConfig: makeBookingConfig(bookingConfig) }),
+    })
+    const query = { checkIn: '2026-08-10', checkOut: '2026-08-12', guests: 2 }
+
+    it('cada ítem trae name/description, solo activos (room_only incluido como fila normal), ordenados por sortOrder', async () => {
+      const res = await getPublicRates(depsWith({ hotelId: 'h1', enabled: true, showMealPlans: true }) as any, 'caribe-paradise', query)
+      expect(res.status).toBe(200)
+      expect(res.body.mealPlans.map((m: any) => m.code)).toEqual(['room_only', 'breakfast', 'pension_vip'])
+      expect(res.body.mealPlans[1]).toEqual({
+        code: 'breakfast', name: 'Desayuno incluido', description: 'Buffet', priceMode: 'included', price: 0,
+        persons: 2, nights: 2, perNight: 0, totalForStay: 0,
+      })
+      expect(res.body.mealPlans[2]).toEqual({
+        code: 'pension_vip', name: 'Pensión VIP', description: 'Con vinos', priceMode: 'per_person_per_night', price: 30,
+        persons: 2, nights: 2, perNight: 60, totalForStay: 120,
+      })
+    })
+
+    it('showMealPlans:false → mealPlans [] y el RESTO de la respuesta sigue normal', async () => {
+      const res = await getPublicRates(depsWith({ hotelId: 'h1', enabled: true, showMealPlans: false }) as any, 'caribe-paradise', query)
+      expect(res.status).toBe(200)
+      expect(res.body.mealPlans).toEqual([])
+      expect(res.body.roomTypes).toHaveLength(1)
+      expect(res.body.roomTypes[0].fromPrice).toBe(200)
+      expect(res.body.nights).toBe(2)
+    })
+
+    it('showMealPlans ausente (config vieja) o sin fila de bookingConfig → visible por default', async () => {
+      const sinCampo = await getPublicRates(depsWith({ hotelId: 'h1', enabled: true }) as any, 'caribe-paradise', query)
+      expect(sinCampo.body.mealPlans.map((m: any) => m.code)).toEqual(['room_only', 'breakfast', 'pension_vip'])
+      const sinFila = await getPublicRates(depsWith(null) as any, 'caribe-paradise', query)
+      expect(sinFila.body.mealPlans).toHaveLength(3)
+      const sinRepo = await getPublicRates(depsWith(undefined) as any, 'caribe-paradise', query)
+      expect(sinRepo.body.mealPlans).toHaveLength(3)
+    })
+
+    it('sin `mealPlans` cableado (compat callers viejos) → []', async () => {
+      const { mealPlans: _omit, ...deps } = depsWith(null)
+      const res = await getPublicRates(deps as any, 'caribe-paradise', query)
+      expect(res.body.mealPlans).toEqual([])
     })
   })
 
