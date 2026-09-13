@@ -452,19 +452,28 @@ export interface SelectedUpsell {
   quantity: number
 }
 
-export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+/** #360 — catálogo ABIERTO: el código es un string libre por hotel (slug del nombre, max 40).
+ *  `'room_only'` sigue reservado como "sin régimen" cuando el hotel NO tiene esa fila (compat
+ *  con reservas anteriores); los 4 códigos legacy (`room_only`, `breakfast`, `half_board`,
+ *  `all_inclusive`) conservan key i18n en `utils/meal-plans.ts` como fallback sin `name`. */
+export type MealPlanCode = string
 export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 
 /**
  * Régimen de alimentación activo del hotel (`GET /api/public/hotels/:slug/meal-plans`).
- * Público, sin auth. "Solo alojamiento" NO viene acá — es la base implícita que arma el
- * widget (ver RoomsStep.vue / useGuestComposer.ts). MR-03 (#268): los regímenes son
- * SELECCIONABLES por habitación y `priceMode:'per_person_per_night'` se cobra
- * `price × (adultos + niños con plaza) × noches` (el backend recalcula; `included` → 0).
- * `price` está SIEMPRE en `hotels.currency` (chargeCurrency), nunca convertido.
+ * Público, sin auth. #360: viene SOLO lo activo, ya ordenado por el hotel (`sortOrder`), con el
+ * `name` que el hotel escribió — "Solo alojamiento" (`room_only`) es una fila más si el hotel la
+ * tiene activa; si la lista viene vacía (sin activos o `showMealPlans` apagado) el widget no
+ * muestra selector. MR-03 (#268): los regímenes son SELECCIONABLES por habitación y
+ * `priceMode:'per_person_per_night'` se cobra `price × (adultos + niños con plaza) × noches`
+ * (el backend recalcula; `included` → 0). `price` está SIEMPRE en `hotels.currency`
+ * (chargeCurrency), nunca convertido.
  */
 export interface PublicMealPlan {
   code: MealPlanCode
+  /** Nombre visible que configuró el hotel (Configuración → Regímenes). */
+  name: string
+  description?: string
   priceMode: MealPlanPriceMode
   price: number
 }
@@ -482,9 +491,12 @@ export interface PublicRateMealPlan extends PublicMealPlan {
  *  tomado del catálogo `store.mealPlans` al agregar: si el hotel cambia el precio después, la
  *  línea sigue mostrando lo que el huésped vio. `persons` = adultos + niños con plaza de ESA
  *  línea; `total` = `unitPrice × persons × nights` por unidad (0 si `included`). Solo se guarda
- *  para códigos ≠ `room_only` (el flujo base no lleva snapshot). */
+ *  para códigos del catálogo activo (#360: `room_only` incluido si el hotel lo tiene como fila);
+ *  sin régimen elegido — o `room_only` sin fila — la línea no lleva snapshot. */
 export interface CartLineMealPlan {
   code: MealPlanCode | 'room_only'
+  /** #360 — nombre del catálogo al agregar (snapshot: lo que el huésped vio en el radio). */
+  name: string
   priceMode: MealPlanPriceMode | null
   unitPrice: number
   persons: number
@@ -633,6 +645,10 @@ export interface PublicReservation {
   /** MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado en la reserva).
    *  `null`/`undefined`/`'room_only'` = solo alojamiento; `mealPlanTotal` 0 con `included`. */
   mealPlan?: MealPlanCode | 'room_only' | null
+  /** #360 — nombre del régimen congelado al reservar (el catálogo puede renombrarse después).
+   *  `null`/ausente en reservas anteriores o sin régimen: la confirmación cae a la key i18n
+   *  legacy del código, o al código crudo. */
+  mealPlanName?: string | null
   mealPlanPriceMode?: MealPlanPriceMode | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number

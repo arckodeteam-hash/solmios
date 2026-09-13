@@ -104,11 +104,12 @@
           </div>
 
           <!--
-            RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`; MR-03
-            #268 lo hace RESERVABLE). Un radio POR TARJETA: "Sólo alojamiento" es la base implícita
-            (siempre disponible, sin costo, no tiene fila en la DB) y los otros 3 códigos fijos
-            vienen de `store.mealPlans` (solo los `active` llegan del backend — el resto se pinta
-            deshabilitado con el motivo, mismo criterio que la matriz de ocupación: nunca ocultar).
+            RÉGIMEN — catálogo ABIERTO configurable por hotel (Configuración → Regímenes, #360;
+            MR-03 #268 lo hace RESERVABLE). Un radio POR TARJETA con las filas ACTIVAS que manda el
+            backend (`store.mealPlans`, ya ordenadas, cada una con su `name`): "Solo alojamiento"
+            es una fila más si el hotel la tiene, no se antepone nada ni se pintan códigos que el
+            hotel no ofrece. Sin filas (ninguna activa o `showMealPlans` apagado) el bloque NO se
+            renderiza y la línea va sin régimen. La primera opción queda elegida por defecto.
             `included` → etiqueta "Incluido"; `per_person_per_night` → el importe para la
             composición ACTUAL de la tarjeta (`price × personas × noches`, misma fórmula que el
             backend, que recalcula y revalida al crear la reserva). El precio del régimen NUNCA se
@@ -116,7 +117,7 @@
             displayCurrency mostraría "€25.00" cuando el cobro real es $25.00 (D10, mismo bug ya
             resuelto en UpsellsStep.vue).
           -->
-          <div class="mt-3">
+          <div v-if="mealPlanOptions(rt).length > 0" class="mt-3">
             <p :id="`meal-plan-label-${rt.id}`" class="text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ t('rooms.board.label') }}</p>
             <div class="mt-1 flex flex-wrap gap-1.5" role="radiogroup" :aria-labelledby="`meal-plan-label-${rt.id}`" data-testid="meal-plan-options">
               <label
@@ -144,7 +145,7 @@
                   :disabled="!opt.available"
                   @change="setMealPlan(rt, opt.code)"
                 />
-                <span>{{ mealPlanLabel(opt.code) }}</span>
+                <span>{{ mealPlanOptionLabel(opt) }}</span>
                 <span v-if="opt.priceMode === 'included'" class="text-[10px] font-black uppercase opacity-80">· {{ t('rooms.board.included') }}</span>
                 <span v-else-if="opt.priceMode === 'per_person_per_night'" class="tabular-nums opacity-90" data-testid="meal-plan-price">· {{ formatPrice(opt.total, store.chargeCurrency) }}</span>
               </label>
@@ -263,7 +264,7 @@
                   <!-- MR-03 (#268) — el régimen elegido suma aparte del alojamiento, igual que las
                        amenidades ("+ $X"), en chargeCurrency (nunca se convierte). -->
                   <span v-if="composedMealPlanTotal(rt) > 0" class="block text-[11px] font-bold tabular-nums text-navy" data-testid="meal-plan-total">
-                    + {{ formatPrice(composedMealPlanTotal(rt), store.chargeCurrency) }} · {{ mealPlanLabel(mealPlanCode(rt)) }}
+                    + {{ formatPrice(composedMealPlanTotal(rt), store.chargeCurrency) }} · {{ selectedMealPlanLabel(rt) }}
                   </span>
                 </template>
                 <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(matchedRow(rt)!.unavailableReason) }}</span>
@@ -361,9 +362,9 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
+import type { OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
 import { isCribAmenityKey } from '@/utils/crib-amenity'
-import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
+import { mealPlanDisplayName } from '@/utils/meal-plans'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import { classifyAge } from '@/utils/child-composition'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
@@ -448,17 +449,24 @@ function cartHasType(roomTypeId: string): boolean {
 }
 
 // ─── Régimen de alimentación (tasks.md 2.2/2.4 → MR-03 #268, reservable) ─────────────────────
-/** Código → key i18n: `MEAL_PLAN_LABEL_KEY` de `utils/meal-plans.ts` (mapa único del widget). Las
- *  opciones (disponibilidad, precio para la composición actual) las arma
+/** #360 — etiqueta de una opción: el `name` que configuró el hotel; si viniera vacío, la key
+ *  i18n legacy del código (`mealPlanDisplayName`, regla única en `utils/meal-plans.ts`) o el
+ *  código crudo. Las opciones (precio para la composición actual) las arma
  *  `useGuestComposer.mealPlanOptions`. */
-function mealPlanLabel(code: MealPlanCode | 'room_only'): string {
-  return t(MEAL_PLAN_LABEL_KEY[code])
+function mealPlanOptionLabel(opt: Pick<MealPlanOption, 'code' | 'name'>): string {
+  return mealPlanDisplayName(opt.code, opt.name, t)
 }
 
 /** La opción elegida en esta tarjeta (para la ayuda "{price} por persona y noche"). */
 function selectedMealPlanOption(rt: RoomTypeRate): MealPlanOption | undefined {
   const code = mealPlanCode(rt)
   return mealPlanOptions(rt).find((o) => o.code === code)
+}
+
+/** Etiqueta del régimen elegido en la tarjeta (para el "+ $X · Desayuno"); '' sin opción. */
+function selectedMealPlanLabel(rt: RoomTypeRate): string {
+  const opt = selectedMealPlanOption(rt)
+  return opt ? mealPlanOptionLabel(opt) : ''
 }
 
 /** Motivo → key i18n. Mapa explícito (no template literal) para que agregar un motivo nuevo en
@@ -534,9 +542,10 @@ function cartLineGuestsLabel(line: CartLine): string {
   const cribListed = (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name))
   const withCrib = line.needsCrib && !cribListed ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
-  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
+  // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea, por `name`;
+  // #360). "Solo alojamiento" no se anuncia: no es un régimen que sume nada al pedido.
   return line.mealPlan && line.mealPlan.code !== 'room_only'
-    ? `${withRoomAmenities} · ${mealPlanLabel(line.mealPlan.code)}`
+    ? `${withRoomAmenities} · ${mealPlanDisplayName(line.mealPlan.code, line.mealPlan.name, t)}`
     : withRoomAmenities
 }
 

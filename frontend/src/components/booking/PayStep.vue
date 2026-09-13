@@ -123,7 +123,7 @@
       <!-- MR-03 (#268) — régimen, una fila por habitación con régimen ≠ solo alojamiento; los
            incluidos se listan sin importe para que el huésped vea que están en la tarifa. -->
       <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">
-        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: t(MEAL_PLAN_LABEL_KEY[line.code]), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="text-text-muted">{{ t('pay.mealPlan') }} · {{ t(line.nights === 1 ? 'pay.mealPlanLineOne' : 'pay.mealPlanLine', { label: mealPlanDisplayName(line.code, line.name, t), persons: line.persons, nights: line.nights }) }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span v-if="line.priceMode !== 'included'" class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span v-if="line.priceMode === 'included'" class="font-semibold text-green-700">{{ t('pay.mealPlanIncluded') }}</span>
         <span v-else class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
@@ -244,12 +244,13 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { PromoValidationReason } from '@/types/booking'
 import { isCribAmenityKey } from '@/utils/crib-amenity'
-import { MEAL_PLAN_LABEL_KEY } from '@/utils/meal-plans'
+import { mealPlanDisplayName } from '@/utils/meal-plans'
 import { classifyAge } from '@/utils/child-composition'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
-// MR-03 (#268) — etiqueta del régimen por código: `MEAL_PLAN_LABEL_KEY` (mapa único en utils/meal-plans.ts).
+// MR-03 (#268) / #360 — etiqueta del régimen: `name` del snapshot de la línea, con fallback a la
+// key i18n legacy o al código (`mealPlanDisplayName`, regla única en utils/meal-plans.ts).
 
 // FIX 2026-08-22 — paridad con BookingModal.vue (`termsAccepted`): arranca en `false` siempre.
 // Sin `watch` de reset acá: a diferencia del modal (que queda montado con TODOS los steps
