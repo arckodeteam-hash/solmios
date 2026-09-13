@@ -13,6 +13,9 @@ describe('parseHexColor', () => {
     expect(parseHexColor('#0d2b4e')).toEqual({ r: 13, g: 43, b: 78 })
     expect(parseHexColor('#0D2B4E')).toEqual({ r: 13, g: 43, b: 78 })
   })
+  it('#RRGGBBAA: ignora el alfa (formato que el backend acepta)', () => {
+    expect(parseHexColor('#0D2B4E80')).toEqual({ r: 13, g: 43, b: 78 })
+  })
   it('rechaza lo que no es hex', () => {
     expect(parseHexColor('red')).toBeNull()
     expect(parseHexColor('#12345')).toBeNull()
@@ -35,12 +38,21 @@ describe('mergeThemeTokens — preset + overrides', () => {
     const merged = mergeThemeTokens({ templateId: 'modern', colors: { gold: '#123456' } })
     expect(merged).toEqual({ ...PRESET_MAP.modern, gold: '#123456' })
   })
-  it('override vacío o no-hex NO pisa el preset', () => {
+  it('override vacío NO pisa el preset', () => {
     const merged = mergeThemeTokens({
       templateId: 'classic',
-      colors: { navy: '', cyan: '   ', gold: 'red', teal: '#12', blue: undefined },
+      colors: { navy: '', cyan: '   ', blue: undefined },
     })
     expect(merged).toEqual(PRESET_MAP.classic)
+  })
+  it('override con alfa o var(--token) SÍ pisa el preset (formatos válidos para el backend y el CSS)', () => {
+    const merged = mergeThemeTokens({
+      templateId: 'classic',
+      colors: { gold: '#12345680', teal: 'var(--brand-primary)' },
+    })
+    expect(merged).toEqual({ ...PRESET_MAP.classic, gold: '#12345680', teal: 'var(--brand-primary)' })
+    expect(themeToCssVars({ templateId: 'classic', colors: { teal: 'var(--brand-primary)' } })['--color-teal'])
+      .toBe('var(--brand-primary)')
   })
   it('no devuelve la misma referencia del preset (no muta PRESET_MAP)', () => {
     const merged = mergeThemeTokens({ templateId: 'classic' })
@@ -74,8 +86,8 @@ describe('themeToCssVars — camelCase → --color-kebab', () => {
     expect(vars['--color-navy']).toBe(PRESET_MAP.boutique.navy)
     expect(Object.keys(vars)).toHaveLength(10)
   })
-  it('un override inválido cae al preset en vez de llegar al CSS', () => {
-    const vars = themeToCssVars({ templateId: 'classic', colors: { navy: 'rgb(0,0,0)' } })
+  it('un override vacío cae al preset en vez de llegar al CSS', () => {
+    const vars = themeToCssVars({ templateId: 'classic', colors: { navy: '  ' } })
     expect(vars['--color-navy']).toBe('#0D2B4E')
   })
 })
@@ -118,7 +130,13 @@ describe('contrastTextColor', () => {
     expect(contrastTextColor('#F8FAFC')).toBe('#0D2B4E')
     expect(contrastTextColor('#FFFFFF')).toBe('#0D2B4E')
   })
-  it('hex inválido → se trata como claro (navy)', () => {
+  it('elige por ratio WCAG real, no por umbral 0.5: un fondo medio (#9AA5B1, lum≈0.38) va con navy', () => {
+    expect(contrastTextColor('#9AA5B1')).toBe('#0D2B4E')
+    // Un fondo oscuro medio (#3A4A5A, lum≈0.07) sigue yendo con blanco.
+    expect(contrastTextColor('#3A4A5A')).toBe('#FFFFFF')
+  })
+  it('hex inválido o var(--x) → se trata como claro (navy)', () => {
     expect(contrastTextColor('nope')).toBe('#0D2B4E')
+    expect(contrastTextColor('var(--brand)')).toBe('#0D2B4E')
   })
 })

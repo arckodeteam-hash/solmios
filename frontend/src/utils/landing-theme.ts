@@ -12,15 +12,19 @@ const TOKEN_KEYS: ReadonlyArray<keyof ThemeTokens> = [
   'navy', 'navyLight', 'blue', 'cyan', 'cyanLight', 'teal', 'gold', 'goldLight', 'surface', 'surfaceDark',
 ]
 
-const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
 
-/** `#RGB` / `#RRGGBB` (mayúsc/minúsc) → {r,g,b} 0–255. Cualquier otra cosa → null. */
+/**
+ * `#RGB` / `#RRGGBB` / `#RRGGBBAA` (mayúsc/minúsc) → {r,g,b} 0–255; el alfa se ignora (la
+ * luminancia es la del color base). Cualquier otra cosa (`var(--x)`, nombres) → null.
+ */
 export function parseHexColor(hex: string | null | undefined): { r: number; g: number; b: number } | null {
   if (typeof hex !== 'string') return null
   const value = hex.trim()
   if (!HEX_RE.test(value)) return null
   let digits = value.slice(1)
   if (digits.length === 3) digits = digits.split('').map(c => c + c).join('')
+  if (digits.length === 8) digits = digits.slice(0, 6)
   return {
     r: parseInt(digits.slice(0, 2), 16),
     g: parseInt(digits.slice(2, 4), 16),
@@ -30,8 +34,10 @@ export function parseHexColor(hex: string | null | undefined): { r: number; g: n
 
 /**
  * mergeThemeTokens — PRESET_MAP[templateId] (default classic) pisado por `theme.colors`.
- * Solo pisa un override que sea string no vacío Y hex válido: un color roto del backend cae
- * al preset en vez de llegar al CSS (mismo criterio que tenía `themeCssVars` en la landing).
+ * Pisa cualquier override que sea string no vacío (mismo criterio que tenía `themeCssVars` en
+ * la landing): el backend ya valida el formato al guardar (hex 3/6/8 dígitos o `var(--token)`,
+ * theme-crud.ts isValidColorString) y un `var(--x)` es un color legítimo para el CSS aunque
+ * acá no se pueda medir su luminancia.
  */
 export function mergeThemeTokens(theme: LandingTheme | null | undefined): ThemeTokens {
   const preset = (theme?.templateId && PRESET_MAP[theme.templateId]) || PRESET_MAP.classic
@@ -40,7 +46,6 @@ export function mergeThemeTokens(theme: LandingTheme | null | undefined): ThemeT
   for (const key of TOKEN_KEYS) {
     const value = overrides[key]
     if (typeof value !== 'string' || value.trim() === '') continue
-    if (!parseHexColor(value)) continue
     merged[key] = value
   }
   return merged
@@ -97,7 +102,24 @@ export function darkestThemeColor(theme: LandingTheme | null | undefined): strin
   return darkest
 }
 
-/** Texto legible sobre `bgHex`: blanco si el fondo es oscuro (luminancia < 0.5), navy classic si no. */
+/** Ratio de contraste WCAG 2 entre dos luminancias (1 = iguales, 21 = blanco/negro). */
+function contrastRatio(l1: number, l2: number): number {
+  const [hi, lo] = l1 >= l2 ? [l1, l2] : [l2, l1]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+const WHITE = '#FFFFFF'
+
+/**
+ * Texto legible sobre `bgHex`: el que más contraste WCAG tenga entre blanco y navy classic.
+ * No es un umbral fijo de luminancia: el cruce real blanco/navy está en ≈0.23, y con un corte
+ * en 0.5 un fondo medio (luminancia 0.4) salía blanco con ≈2.3:1 cuando navy daba ≈6:1.
+ * Hex inválido (`var(--x)`) → luminancia 1 → navy, el caso seguro sobre un fondo desconocido.
+ */
 export function contrastTextColor(bgHex: string | null | undefined): string {
-  return relativeLuminance(bgHex) < 0.5 ? '#FFFFFF' : PRESET_MAP.classic.navy
+  const bg = relativeLuminance(bgHex)
+  const navy = PRESET_MAP.classic.navy
+  return contrastRatio(bg, relativeLuminance(WHITE)) >= contrastRatio(bg, relativeLuminance(navy))
+    ? WHITE
+    : navy
 }
