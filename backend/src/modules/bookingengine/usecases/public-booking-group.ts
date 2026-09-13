@@ -104,7 +104,7 @@ export interface RoomLineInput {
   needsCrib?: boolean
   /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
    *  por línea. REQ-HAC-05: sin unidad asignada se resuelven contra la UNIÓN de `RoomAmenities`
-   *  de las unidades vendibles del tipo (misma key → la más barata) y todas las filas de la
+   *  de las unidades vendibles del tipo (misma key → la de mayor precio, #365) y todas las filas de la
    *  línea llevan el mismo snapshot. #341 — una key cuna acá cuenta como pedido de cuna (se
    *  normaliza a la canónica más abajo, sin duplicar). */
   roomAmenities?: Array<{ key: string }>
@@ -479,7 +479,7 @@ export async function createPublicBookingGroup(
     const lineCribRequested = line.needsCrib === true
 
     // REQ-01 (#290) — amenidades de ESTA línea contra la UNIÓN de `RoomAmenities` de las unidades
-    // vendibles del tipo (misma key → la más barata, como publica el catálogo público). Sin keys
+    // vendibles del tipo (misma key → la de mayor precio, #365, como publica el catálogo público). Sin keys
     // (ni cuna pedida) no se lee nada. #292 — si la línea pide cuna, `custom:cuna` entra a las
     // keys de la línea (la key del body ya se filtró en `normalizeRoomLines`). El snapshot es
     // UNITARIO (quantity 1): cada fila de la línea lo persiste igual; la línea suma × `quantity`.

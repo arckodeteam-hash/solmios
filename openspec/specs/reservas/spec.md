@@ -354,7 +354,7 @@ personalizada de la habitación** `RoomAmenities` con key `custom:cuna` (nombre,
 más abajo). En el motor público la pregunta "¿Necesita cuna?" (Sí/No, con "(+ $precio)"
 cuando tiene precio) se ofrece SOLO si la tarjeta declara al menos un bebé Y el tipo
 publica `custom:cuna` en `GET /api/public/hotels/:slug/room-amenities` (unión de sus
-unidades vendibles, precio mínimo); "Sí" agrega la key `custom:cuna` a `roomAmenities`
+unidades vendibles, precio MÁXIMO entre ellas — #365); "Sí" agrega la key `custom:cuna` a `roomAmenities`
 de esa línea y la cuna NO aparece en el checklist genérico de amenidades de la
 habitación. En una reserva múltiple cada línea se evalúa contra su propio tipo. El
 backend (`public-booking.ts` / `public-booking-group.ts`) resuelve `needsCrib` = bebés > 0
@@ -376,17 +376,20 @@ habitación**: filas `RoomAmenities` con `amenityKey` `custom:<slug>`, `name`, `
 e `isActive`, configuradas desde el formulario de CADA habitación (las keys fijas del
 catálogo siguen siendo features gratuitas). Como el huésped elige un TIPO y no una unidad,
 `GET /api/public/hotels/:slug/room-amenities` expone por `roomType` la unión (por key) de
-las custom activas de sus habitaciones vendibles con el precio MÍNIMO
-(`public-room-amenities.ts`). El cliente las pide por habitación (`roomAmenities: [{key}]`
-en el body single y en cada `rooms[i]` del grupo); el backend prefiere, entre las unidades
-libres del tipo, las que ofrecen TODAS las keys pedidas, cobra el precio REAL de las filas
-`RoomAmenities` de la unidad asignada (NUNCA el del body), ignora con warn una key fija,
-inactiva o no ofrecida por esa unidad, y persiste en cada fila `reservations` el snapshot
-`roomAmenities` `[{key,name,price,quantity,total}]` + `roomAmenitiesTotal`. Su importe entra
-en `subtotal` y `priceBreakdown.roomAmenitiesTotal` lo desglosa; en un grupo cada unidad
-física resuelve contra sus propias filas (dos unidades del mismo tipo pueden cobrar la misma
-key a precio distinto) y lleva su propio snapshot. Sin `roomAmenities` en el body nada de
-esto se lee y el flujo queda idéntico al anterior.
+las custom activas de sus habitaciones vendibles con el precio MÁXIMO entre las unidades del
+tipo (`public-room-amenities.ts`, #365): ningún precio configurado queda oculto porque otra
+unidad lo tenga a 0 (el backfill de cuna dejó `custom:cuna` a 0 en todas las habitaciones),
+"Gratis" sólo cuando TODAS las unidades del tipo la tienen a 0, y sin ninguna lógica por
+nombre de amenidad. El cliente las pide por habitación (`roomAmenities: [{key}]` en el body
+single y en cada `rooms[i]` del grupo); el backend cobra el precio del MISMO agregado por
+tipo (`unionRoomAmenities`, `public-booking.ts`) — lo mostrado es lo cobrado, NUNCA el del
+body —, ignora con warn una key fija, inactiva o no ofrecida por ninguna unidad del tipo, y
+persiste en cada fila `reservations` el snapshot `roomAmenities`
+`[{key,name,price,quantity,total}]` + `roomAmenitiesTotal`. Su importe entra en `subtotal` y
+`priceBreakdown.roomAmenitiesTotal` lo desglosa; en un grupo cada línea resuelve contra la
+unión de su tipo (desde HAC la unidad física se asigna al check-in, así que dos líneas del
+mismo tipo cobran la misma key al mismo precio) y lleva su propio snapshot. Sin
+`roomAmenities` en el body nada de esto se lee y el flujo queda idéntico al anterior.
 
 REQ-03 (#235) agrega a `child_policy` el **máximo de niños que no consumen plaza por
 habitación** (`maxFreeChildrenPerRoom`): lo define cada hotel en Configuración junto a las demás

@@ -251,7 +251,7 @@ export function BookingengineModule(opts?: {
         return controller.getPublicMealPlans(req)
       })
       // REQ-01 (#290) — Amenidades PERSONALIZADAS por tipo de habitación (unión de las custom
-      // activas de sus rooms vendibles, precio mínimo). Rate-limit 60/60s (read-only). Sin auth.
+      // activas de sus rooms vendibles, precio MÁXIMO entre unidades, #365). Rate-limit 60/60s (read-only). Sin auth.
       router.get('/api/public/hotels/:slug/room-amenities', async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`public-room-amenities:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }

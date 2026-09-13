@@ -9,7 +9,12 @@
 // El catálogo NO es del hotel sino de CADA habitación física, y el huésped elige un TIPO (no una
 // unidad). Por eso:
 //   - `GET /api/public/hotels/:slug/room-amenities` expone, por `roomType`, la UNIÓN (por key)
-//     de las custom activas de sus rooms vendibles, con el precio MÍNIMO entre ellas.
+//     de las custom activas de sus rooms vendibles, con el precio MÁXIMO entre ellas (#365): así
+//     ningún precio configurado queda oculto por una unidad a 0 (el backfill de cuna dejó
+//     `custom:cuna` a 0 en todas las habitaciones; con el mínimo, "Cuna = 20" en una unidad se
+//     publicaba como "Gratis"). "Gratis" sólo si TODAS las unidades del tipo la tienen a 0. El
+//     cobro usa el MISMO agregado (`unionRoomAmenities` en public-booking.ts): lo mostrado == lo
+//     cobrado.
 //   - Al crear la reserva, el backend PREFIERE las rooms del tipo que ofrecen TODAS las keys
 //     pedidas (`preferRoomsOffering`; con cuna pedida, después las que al menos tienen la cuna) y
 //     cobra el precio REAL de la habitación asignada (`resolveRoomAmenityLines` contra las filas
@@ -202,9 +207,11 @@ export interface PublicRoomAmenitiesDeps {
  *
  * Por tipo: unión por key de las custom activas de sus rooms VENDIBLES (`isRoomSellable` y
  * `onlineBookingEnabled !== false`). Si la misma key tiene precios distintos entre rooms del tipo
- * se expone el MÍNIMO: es lo que el widget muestra como "desde"; al reservar, el backend prefiere
- * las rooms que la ofrecen y cobra el precio REAL de la habitación asignada (ver cabecera).
- * Ordenado por name. Anti-enumeración: mismo 404 para "no existe" y "no activo".
+ * se expone el MÁXIMO (#365): ningún precio configurado queda oculto por una unidad a 0, y
+ * "Gratis" sólo si todas la tienen a 0. Es el mismo agregado con el que se cobra al reservar
+ * (`unionRoomAmenities` en public-booking.ts), así lo que el huésped ve es lo que paga.
+ * Sin lógica por nombre de amenidad. Ordenado por name. Anti-enumeración: mismo 404 para
+ * "no existe" y "no activo".
  */
 export async function getPublicRoomAmenities(
   deps: PublicRoomAmenitiesDeps,
@@ -230,7 +237,8 @@ export async function getPublicRoomAmenities(
     for (const a of customRoomAmenities(amenitiesByRoom.get(r.id) ?? [])) {
       const price = round2(Math.max(0, Number(a.price) || 0))
       const prev = bucket.get(a.amenityKey)
-      if (!prev || price < prev.price) bucket.set(a.amenityKey, { key: a.amenityKey, name: String(a.name).trim(), price })
+      // #365 — gana el MAYOR precio entre las unidades del tipo (a igual precio, la primera).
+      if (!prev || price > prev.price) bucket.set(a.amenityKey, { key: a.amenityKey, name: String(a.name).trim(), price })
     }
   }
 
