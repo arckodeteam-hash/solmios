@@ -246,10 +246,17 @@ export function renderRoomInfoText(info: RoomInfoData): string {
  * Tope de fallos por huella y canal. Un fallo transitorio se reintenta en el tick siguiente
  * (CA20), pero un fallo PERMANENTE —plantilla de WhatsApp no aprobada, teléfono inválido,
  * SMTP sin configurar— no puede generar una fila failed cada 10 minutos hasta la llegada.
- * El tope se reinicia solo si cambia la huella (habitación o código nuevos): ahí el aviso es
- * otro y vuelve a merecer sus intentos.
+ * El tope se reinicia si cambia la huella (habitación o código nuevos): ahí el aviso es
+ * otro y vuelve a merecer sus intentos. También lo reabre un MARCADOR DE REINTENTO MANUAL
+ * (CA19): una fila de message_logs con `status: 'retry_requested'`, misma `response` y
+ * mismo `channel`, que escribe el usuario desde Comunicaciones. Sólo cuentan los failed
+ * POSTERIORES (por `sentAt`) al último marcador; los anteriores quedan amortizados.
  */
 export const ROOM_INFO_MAX_ATTEMPTS = 3
+
+/** `message_logs.status` del marcador de reintento manual. No es un envío: no cuenta como
+ *  entregado ni como fallo, sólo corre el piso desde el que se cuentan los failed. */
+export const ROOM_INFO_RETRY_STATUS = 'retry_requested'
 
 /** Valores de `message_logs.channel` que este aviso escribe y consulta. */
 export type RoomInfoChannel = 'email' | 'whatsapp_api'
@@ -258,10 +265,21 @@ export interface RoomInfoLog {
   response?: string | null
   channel?: string | null
   status?: string | null
+  /** ISO string; ordena los failed respecto del marcador de reintento. */
+  sentAt?: string | null
 }
 
 const DELIVERED_STATUS: ReadonlySet<string> = new Set(['sent', 'queued'])
 
+/**
+ * Decide qué hacer con una huella+canal mirando sus filas de message_logs:
+ * - 'sent'      → ya hay sent/queued: no se reenvía lo que llegó, ni con marcador de reintento.
+ * - 'exhausted' → ≥ ROOM_INFO_MAX_ATTEMPTS failed desde el último marcador `retry_requested`
+ *                 (o desde siempre, si no hay marcador).
+ * - 'pending'   → hay que (re)intentar.
+ * Un failed sin `sentAt` se considera anterior al marcador: si hubo un pedido manual de
+ * reintento, ese fallo ya quedó cubierto y no cuenta.
+ */
 export function roomInfoSendState(
   logs: RoomInfoLog[],
   dedupKey: string,
@@ -269,7 +287,20 @@ export function roomInfoSendState(
 ): 'sent' | 'exhausted' | 'pending' {
   const mine = logs.filter(l => l.response === dedupKey && l.channel === channel)
   if (mine.some(l => DELIVERED_STATUS.has(String(l.status)))) return 'sent'
-  const failed = mine.filter(l => String(l.status) === 'failed').length
+
+  let retryFloor: string | null = null
+  for (const l of mine) {
+    if (String(l.status) !== ROOM_INFO_RETRY_STATUS) continue
+    const at = l.sentAt ?? ''
+    if (retryFloor === null || at.localeCompare(retryFloor) > 0) retryFloor = at
+  }
+
+  const failed = mine.filter(l => {
+    if (String(l.status) !== 'failed') return false
+    if (retryFloor === null) return true
+    if (!l.sentAt) return false
+    return l.sentAt.localeCompare(retryFloor) > 0
+  }).length
   return failed >= ROOM_INFO_MAX_ATTEMPTS ? 'exhausted' : 'pending'
 }
 

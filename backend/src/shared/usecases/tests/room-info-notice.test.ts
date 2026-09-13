@@ -3,7 +3,7 @@ import {
   parseRoomInfoConfig, ROOM_INFO_DEFAULTS, MIN_HOURS_BEFORE, MAX_HOURS_BEFORE,
   buildRoomInfo, roomInfoFingerprint, roomInfoDedupKey,
   renderRoomInfoEmail, renderRoomInfoText,
-  roomInfoSendState, channelsFor, ROOM_INFO_MAX_ATTEMPTS,
+  roomInfoSendState, channelsFor, ROOM_INFO_MAX_ATTEMPTS, ROOM_INFO_RETRY_STATUS,
   type RoomInfoConfig, type RoomInfoData, type RoomInfoLog,
 } from '../room-info-notice'
 
@@ -183,6 +183,51 @@ describe('roomInfoSendState', () => {
     expect(roomInfoSendState(logs, KEY, 'email')).toBe('sent')
     expect(roomInfoSendState(logs, roomInfoDedupKey('otra'), 'email')).toBe('pending')
     expect(roomInfoSendState(logs, roomInfoDedupKey('nueva'), 'whatsapp_api')).toBe('pending')
+  })
+
+  describe('marcador de reintento manual (retry_requested, CA19)', () => {
+    const T = (h: number) => `2026-09-10T${String(h).padStart(2, '0')}:00:00.000Z`
+    const failedAt = (sentAt: string | null, channel = 'email', response = KEY): RoomInfoLog =>
+      ({ response, channel, status: 'failed', sentAt })
+    const retryAt = (sentAt: string | null, channel = 'email', response = KEY): RoomInfoLog =>
+      ({ response, channel, status: ROOM_INFO_RETRY_STATUS, sentAt })
+
+    it('3 failed + marcador POSTERIOR → pending (se reabren los intentos)', () => {
+      expect(ROOM_INFO_RETRY_STATUS).toBe('retry_requested')
+      const logs = [failedAt(T(1)), failedAt(T(2)), failedAt(T(3)), retryAt(T(4))]
+      expect(roomInfoSendState(logs, KEY, 'email')).toBe('pending')
+      // El orden de las filas no importa: manda sentAt
+      expect(roomInfoSendState([...logs].reverse(), KEY, 'email')).toBe('pending')
+    })
+
+    it('3 failed POSTERIORES al marcador → exhausted otra vez', () => {
+      const logs = [retryAt(T(1)), failedAt(T(2)), failedAt(T(3)), failedAt(T(4))]
+      expect(roomInfoSendState(logs, KEY, 'email')).toBe('exhausted')
+      // 2 posteriores + 1 anterior → sólo cuentan 2 → pending
+      expect(roomInfoSendState([failedAt(T(1)), retryAt(T(2)), failedAt(T(3)), failedAt(T(4))], KEY, 'email')).toBe('pending')
+    })
+
+    it('cuenta desde el ÚLTIMO marcador; un failed sin sentAt no cuenta si hay marcador', () => {
+      const logs = [
+        retryAt(T(1)), failedAt(T(2)), failedAt(T(3)), failedAt(T(4)),
+        retryAt(T(5)), failedAt(T(6)),
+      ]
+      expect(roomInfoSendState(logs, KEY, 'email')).toBe('pending')
+      expect(roomInfoSendState([failedAt(null), failedAt(null), failedAt(null), retryAt(T(1))], KEY, 'email')).toBe('pending')
+      // Sin marcador, los failed sin sentAt cuentan como siempre
+      expect(roomInfoSendState([failedAt(null), failedAt(null), failedAt(null)], KEY, 'email')).toBe('exhausted')
+    })
+
+    it('marcador de otro canal u otra key no reabre', () => {
+      const failed3 = [failedAt(T(1)), failedAt(T(2)), failedAt(T(3))]
+      expect(roomInfoSendState([...failed3, retryAt(T(4), 'whatsapp_api')], KEY, 'email')).toBe('exhausted')
+      expect(roomInfoSendState([...failed3, retryAt(T(4), 'email', roomInfoDedupKey('otra'))], KEY, 'email')).toBe('exhausted')
+    })
+
+    it('sent + marcador → sigue sent (no se reenvía lo que llegó)', () => {
+      const logs: RoomInfoLog[] = [{ response: KEY, channel: 'email', status: 'sent', sentAt: T(1) }, retryAt(T(2))]
+      expect(roomInfoSendState(logs, KEY, 'email')).toBe('sent')
+    })
   })
 })
 
