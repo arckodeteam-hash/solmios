@@ -1,30 +1,39 @@
 import { http } from './http'
 
-/** Régimen de alimentación (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes). Catálogo FIJO de
- *  3 códigos por hotel — a diferencia de `upsells`, no hay altas/bajas: el admin solo activa y
- *  fija precio de cada uno. "Solo alojamiento" es la base implícita, sin fila acá.
+/** Régimen de alimentación (issue #360). Catálogo ABIERTO por hotel: el admin crea, edita,
+ *  activa/desactiva y borra regímenes desde Configuración → Regímenes. "Solo alojamiento" ya
+ *  no es base implícita: es una fila más (el backend siembra 4 defaults la primera vez).
+ *  `code` es el identificador estable (slug generado por el backend a partir del nombre) que
+ *  keyea reservations.mealPlan, emails y widget.
  *  API: `/api/meal-plans` (admin, auth) — el widget los lee vía
  *  `GET /api/public/hotels/:slug/meal-plans` (sin auth). */
-export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
 export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 
 export interface MealPlan {
   id: string
   hotelId: string
-  code: MealPlanCode
+  code: string
+  name: string
+  description: string
   active: boolean
   priceMode: MealPlanPriceMode
   /** Precio por persona por noche, en la moneda del hotel. Solo aplica si priceMode='per_person_per_night'. */
   price: number
+  sortOrder: number
   createdAt: string
   updatedAt: string
 }
 
-export interface UpsertMealPlanInput {
-  active?: boolean
+export interface CreateMealPlanInput {
+  name: string
+  description?: string
   priceMode?: MealPlanPriceMode
   price?: number
+  active?: boolean
+  sortOrder?: number
 }
+
+export type UpdateMealPlanInput = Partial<CreateMealPlanInput>
 
 const BASE = '/meal-plans'
 
@@ -34,7 +43,15 @@ export const MealPlansService = {
     return res.data
   },
 
-  upsert(code: MealPlanCode, input: UpsertMealPlanInput): Promise<MealPlan> {
-    return http.put<MealPlan>(`${BASE}/${code}`, input)
+  create(input: CreateMealPlanInput): Promise<MealPlan> {
+    return http.post<MealPlan>(BASE, input)
+  },
+
+  update(id: string, input: UpdateMealPlanInput): Promise<MealPlan> {
+    return http.put<MealPlan>(`${BASE}/${id}`, input)
+  },
+
+  remove(id: string): Promise<void> {
+    return http.delete<void>(`${BASE}/${id}`)
   },
 }

@@ -485,6 +485,21 @@
          "dónde conecto X" había que adivinarlo. "Políticas para factura" NO se fue con ellas: no
          es una conexión con nadie, es texto al pie de la factura — vive en Condiciones. -->
 
+    <!-- ========== REGÍMENES (#360) ========== -->
+    <!-- El editor persiste solo (create/update/remove por fila): no entra en saveAll ni en
+         el snapshot de "cambios sin guardar". -->
+    <div v-if="(activeTab as string) === 'meal_plans'" class="space-y-6" data-testid="meal-plans-tab">
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="mb-4">
+          <h3 class="font-extrabold text-navy">Regímenes</h3>
+          <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+            Los regímenes que ofrece el hotel (solo alojamiento, desayuno, todo incluido…). Configuración opcional.
+          </p>
+        </div>
+        <MealPlansEditor />
+      </div>
+    </div>
+
     <!-- EMERGENCIAS -->
     <div v-if="(activeTab as string) === 'emergency'" class="space-y-6">
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
@@ -560,6 +575,7 @@ import WhatsappUsageCard from '@/components/features/WhatsappUsageCard.vue'
 // Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
 // reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
+import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
@@ -891,6 +907,9 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       { value: 'hotel', label: 'Hotel' },
       { value: 'conditions', label: 'Condiciones' },
+      // Regímenes (#360): catálogo abierto por hotel, antes vivía como catálogo fijo en
+      // Página pública → Motor de reservas. Allá queda sólo el toggle "Mostrar regímenes".
+      { value: 'meal_plans', label: 'Regímenes' },
       // "Tipos de habitación" se mudó a Habitaciones (pestaña "Tipos y capacidad"): definir el
       // inventario estaba partido entre dos entradas distintas del mismo menú.
       { value: 'emergency', label: 'Emergencias' },
