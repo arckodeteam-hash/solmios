@@ -118,7 +118,7 @@ import type {
   PublicLandingRoom,
   RoomTypeRate,
 } from '@/types'
-import { PRESET_MAP } from '@/types/landing'
+import { themeToCssVars } from '@/utils/landing-theme'
 
 import LandingNavbar from '@/components/landing/LandingNavbar.vue'
 import HeroBlock from '@/components/landing/HeroBlock.vue'
@@ -208,30 +208,13 @@ const activeTemplate = computed<LandingTemplateId>(
 )
 
 /**
- * themeCssVars — merge PRESET_MAP[templateId] + theme.colors (custom) → objeto de CSS custom
- * properties `{ '--color-navy': '#...', '--color-navy-light': '#...', ... }`. camelCase → kebab.
- * Las utilities `bg-navy`/`text-cyan`/etc. de Tailwind v4 compilan a `var(--color-navy)` →
- * heredan el override del <main> automáticamente. Si el backend manda un color inválido
- * (string vacío o no-hex), se cae al preset (no lo overridea).
- *
- * Nota: `--color-surface-dark` en @theme es el token, pero ThemeTokens usa `surfaceDark`
- * (camelCase) → el rename va acá para que el override aplique.
+ * themeCssVars — CSS custom properties `{ '--color-navy': '#...', '--color-navy-light': '#...' }`
+ * a partir de preset + overrides. El merge y el camelCase → kebab viven en `@/utils/landing-theme`
+ * (compartido con la card "Your stay" de la confirmación pública, #381). Las utilities
+ * `bg-navy`/`text-cyan`/etc. de Tailwind v4 compilan a `var(--color-navy)` → heredan el
+ * override del <main> automáticamente. Un color inválido del backend cae al preset.
  */
-const themeCssVars = computed<Record<string, string>>(() => {
-  const templateId = activeTemplate.value
-  const preset = PRESET_MAP[templateId] ?? PRESET_MAP.classic
-  const overrides = theme.value?.colors ?? {}
-  // Merge shallow: preset first, overrides ganadores. Solo tokens declarados en ThemeTokens.
-  const merged = { ...preset, ...overrides } as Record<string, string>
-  const vars: Record<string, string> = {}
-  for (const [camelKey, value] of Object.entries(merged)) {
-    if (typeof value !== 'string' || value.trim() === '') continue
-    // camelCase → kebab-case (navyLight → navy-light).
-    const kebab = camelKey.replace(/([A-Z])/g, '-$1').toLowerCase()
-    vars[`--color-${kebab}`] = value
-  }
-  return vars
-})
+const themeCssVars = computed<Record<string, string>>(() => themeToCssVars(theme.value))
 
 // ─── Rooms (F1 hero-search-rooms-content) ──────────────────────────────────
 // Bug UTC conocido del repo (ver CalendarView.vue:162 isoOf): `toISOString()` convierte a UTC
