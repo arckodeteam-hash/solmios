@@ -706,13 +706,14 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
   // MR-03 (#268) / #360 — el régimen es un radio POR TARJETA con SOLO las filas activas del
   // catálogo del hotel (cada una con su `name`): nada se antepone ni se pintan códigos que el
   // hotel no ofrece.
-  it('#360 sin regímenes configurados: no existe el bloque de régimen en la tarjeta', () => {
+  it('sin regímenes configurados: el bloque de régimen muestra únicamente "Sólo alojamiento"', () => {
     const w = render()
     const text = w.text()
 
-    expect(w.find('[data-testid="meal-plan-options"]').exists()).toBe(false)
-    expect(w.find('[role="radiogroup"] input[type="radio"]').exists()).toBe(false)
-    expect(text).not.toContain('Sólo alojamiento')
+    expect(w.find('[data-testid="meal-plan-options"]').exists()).toBe(true)
+    const radios = w.find('[role="radiogroup"]').findAll('input[type="radio"]')
+    expect(radios.map((r) => r.attributes('value'))).toEqual(['room_only'])
+    expect(text).toContain('Sólo alojamiento')
     expect(text).not.toContain('Desayuno incluido')
     expect(text).not.toContain('Este hotel no ofrece este régimen')
     w.unmount()

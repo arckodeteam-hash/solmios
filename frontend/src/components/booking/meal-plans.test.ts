@@ -148,11 +148,13 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(store.cart[0]!.mealPlan).toMatchObject({ code: 'breakfast', name: 'Desayuno incluido', total: 30 })
   })
 
-  it('#360 catálogo vacío (sin activos o showMealPlans apagado): sin opciones, mealPlanCode = room_only y la línea va sin régimen', async () => {
+  it('catálogo vacío (sin activos o showMealPlans apagado): única opción "Solo alojamiento" sintética, sin costo', async () => {
     const store = seedStore([])
     const { mealPlanCode, mealPlanOptions, composedMealPlanTotal, addComposedRoom } = useGuestComposer()
     const rt = roomType()
-    expect(mealPlanOptions(rt)).toEqual([])
+    // Regla del dueño: nunca se deja la tarjeta sin ninguna opción ni se ofrecen regímenes que
+    // el hotel no activó — se sintetiza "Solo alojamiento" (name vacío, resuelve por i18n).
+    expect(mealPlanOptions(rt)).toEqual([{ code: 'room_only', name: '', priceMode: 'included', unitPrice: 0, total: 0, available: true }])
     expect(mealPlanCode(rt)).toBe('room_only')
     expect(composedMealPlanTotal(rt)).toBe(0)
     await addComposedRoom(rt)
@@ -393,12 +395,15 @@ describe('RoomsStep — radio de régimen por tarjeta (MR-03 #268, catálogo abi
     w.unmount()
   })
 
-  it('#360 catálogo vacío: no existe el bloque de régimen en la tarjeta', () => {
+  it('catálogo vacío: el bloque de régimen muestra únicamente "Sólo alojamiento", nada más', () => {
     seedStore([])
     const w = mount(RoomsStep)
-    expect(w.find('[data-testid="meal-plan-options"]').exists()).toBe(false)
-    expect(w.find('[data-testid="meal-plan-option"]').exists()).toBe(false)
-    expect(w.text()).not.toContain('Solo alojamiento')
+    expect(w.find('[data-testid="meal-plan-options"]').exists()).toBe(true)
+    const options = w.findAll('[data-testid="meal-plan-option"]')
+    expect(options).toHaveLength(1)
+    expect(w.text()).toContain('Sólo alojamiento')
+    expect(w.text()).not.toContain('Desayuno')
+    expect(w.text()).not.toContain('Todo incluido')
     w.unmount()
   })
 

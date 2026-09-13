@@ -108,8 +108,10 @@
             MR-03 #268 lo hace RESERVABLE). Un radio POR TARJETA con las filas ACTIVAS que manda el
             backend (`store.mealPlans`, ya ordenadas, cada una con su `name`): "Solo alojamiento"
             es una fila más si el hotel la tiene, no se antepone nada ni se pintan códigos que el
-            hotel no ofrece. Sin filas (ninguna activa o `showMealPlans` apagado) el bloque NO se
-            renderiza y la línea va sin régimen. La primera opción queda elegida por defecto.
+            hotel no ofrece. Sin ninguna fila activa (catálogo vacío o `showMealPlans` apagado)
+            `mealPlanOptions` devuelve un único "Solo alojamiento" sintético (sin costo) — nunca
+            se ocultan el radio ni se ofrecen regímenes que el hotel no activó. La primera opción
+            queda elegida por defecto.
             `included` → etiqueta "Incluido"; `per_person_per_night` → el importe para la
             composición ACTUAL de la tarjeta (`price × personas × noches`, misma fórmula que el
             backend, que recalcula y revalida al crear la reserva). El precio del régimen NUNCA se

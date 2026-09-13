@@ -814,8 +814,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // ya pasa a 'selecting', RoomsStep monta con `store.mealPlans` todavía vacío y el eje entero
     // parpadea como "no disponible" un instante antes de asentarse en el estado real. Fallo
     // silencioso (degrada a array vacío) — nunca bloquea poder reservar el alojamiento.
-    const needsMealPlans = mealPlans.value.length === 0
-    if (needsMealPlans) mealPlansLoading.value = true
+    //
+    // SIEMPRE se pide de nuevo (no "solo si `mealPlans` está vacío"): el catálogo es config del
+    // hotel que puede cambiar EN VIVO (activar/desactivar un régimen, apagar `showMealPlans`)
+    // mientras el huésped tiene la pestaña abierta. Con el `if (needed)` de antes, la primera
+    // búsqueda de la sesión dejaba el catálogo pegado para SIEMPRE: un huésped que cambiaba de
+    // fechas y volvía a buscar seguía viendo regímenes que el hotel ya había desactivado (o
+    // seguía sin ver ninguno si los activó después de la primera carga).
+    mealPlansLoading.value = true
     // Envuelta en una función async: si `getMealPlans` explota de forma SÍNCRONA (mock de test
     // incompleto, o cualquier otro fallo antes del primer await), una función async lo convierte
     // en promesa rechazada en vez de tirar en el call site — Promise.all necesita que las DOS
@@ -827,7 +833,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
         return []
       }
     }
-    const mealPlansPromise = needsMealPlans ? fetchMealPlansSafe() : Promise.resolve(mealPlans.value)
+    const mealPlansPromise = fetchMealPlansSafe()
     const needsUpsells = upsells.value.length === 0
     if (needsUpsells) upsellsLoading.value = true
     const fetchUpsellsSafe = async (): Promise<Upsell[]> => {
@@ -865,7 +871,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
         roomAmenitiesPromise,
       ])
       ratesResponse.value = res
-      if (needsMealPlans) mealPlans.value = mp
+      mealPlans.value = mp
       if (needsUpsells) upsells.value = ups
       if (needsRoomAmenities) roomAmenities.value = ram && typeof ram === 'object' && !Array.isArray(ram) ? ram : {}
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display

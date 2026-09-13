@@ -763,14 +763,16 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   // MR-03 (#268) / #360 — el régimen es un radio POR TARJETA (mismo composer que RoomsStep.vue)
   // con SOLO las filas activas del catálogo del hotel (cada una con su `name`): nada se antepone
   // ni se pintan códigos que el hotel no ofrece.
-  it('#360 sin regímenes configurados: no existe el bloque de régimen en la tarjeta', async () => {
+  it('sin regímenes configurados: el bloque de régimen muestra únicamente "Sólo alojamiento"', async () => {
     // getMealPlans devuelve [] (ningún régimen activo en este hotel / showMealPlans apagado).
     await open()
 
-    expect(document.body.querySelector('[data-testid="meal-plan-options"]')).toBeNull()
-    expect(document.body.querySelector('[role="radiogroup"] input[type="radio"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="meal-plan-options"]')).not.toBeNull()
+    const radios = document.body.querySelectorAll('[role="radiogroup"] input[type="radio"]')
+    expect(radios).toHaveLength(1)
+    expect((radios[0] as HTMLInputElement).value).toBe('room_only')
     const text = document.body.textContent ?? ''
-    expect(text).not.toContain('Sólo alojamiento')
+    expect(text).toContain('Sólo alojamiento')
     expect(text).not.toContain('Desayuno incluido')
     expect(text).not.toContain('Este hotel no ofrece este régimen')
   })

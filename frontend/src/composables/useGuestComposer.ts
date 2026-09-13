@@ -195,13 +195,19 @@ export function useGuestComposer() {
   /** Las opciones del radio de régimen para esta tarjeta, con el importe YA resuelto para la
    *  composición actual (`price × personas × noches`, misma fórmula que el backend). #360: el
    *  catálogo (`store.mealPlans`) trae SOLO los activos del hotel, en su orden, y eso es lo que
-   *  se ofrece — `[]` cuando el hotel no tiene ninguno activo o apagó `showMealPlans` (la tarjeta
-   *  no muestra el bloque). */
+   *  se ofrece. Regla del dueño del producto: sin ningún régimen activo (catálogo vacío o
+   *  `showMealPlans` apagado) la tarjeta NO se queda sin nada ni ofrece códigos que el hotel no
+   *  activó — muestra ÚNICAMENTE "Solo alojamiento" (sin costo), nunca ninguna otra opción.
+   *  `code:'room_only'` sin `name` resuelve el label por i18n (`mealPlanDisplayName`), igual que
+   *  cualquier fila legacy sin nombre — ninguna traducción hardcodeada acá. */
   function mealPlanOptions(rt: RoomTypeRate): MealPlanOption[] {
     const persons = mealPlanPersons(rt)
     // Mismas noches que usa `store.addToCart` al tomar el snapshot (`store.nights`, de /rates):
     // la tarjeta y el carrito tienen que decir el mismo número.
     const nights = store.nights
+    if (store.mealPlans.length === 0) {
+      return [{ code: 'room_only', name: '', priceMode: 'included', unitPrice: 0, total: 0, available: true }]
+    }
     return store.mealPlans.map((found): MealPlanOption => {
       const unitPrice = Number(found.price) || 0
       return {
