@@ -14,6 +14,7 @@ import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
+import { backfillMealPlansPermission } from './scripts/backfill-mealplans-permission'
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
 import { backfillCribRoomAmenity } from './scripts/backfill-crib-room-amenity'
 import { backfillReservationSourceWeb } from './scripts/backfill-reservation-source-web'
@@ -1525,6 +1526,18 @@ async function main(): Promise<void> {
     console.log(`roles.restaurant:pay: ${paid} fila(s) actualizada(s)`)
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'roles.restaurant:pay', missingTable: 'roles', consequence: 'Sin este backfill, el mozo y la recepción de todo hotel existente reciben 403 al cobrar en el POS.' })
+  }
+
+  // REQ "Gestionar Regímenes desde Configuración Base" (#360/#375) — `mealplans:view`/`edit` a las
+  // filas de `roles` sembradas antes de que ese permiso existiera. Mismo motivo que `restaurant:pay`:
+  // los permisos efectivos salen de la fila de `roles` (pisa el mapa estático), y sin esto el
+  // hotel_admin de todo hotel existente ve "Sin permiso: mealplans:view" en Configuración Base →
+  // Regímenes hasta que alguien edite el rol a mano. Idempotente; no toca filas vacías/corruptas.
+  try {
+    const mealPlansGranted = await backfillMealPlansPermission(db)
+    console.log(`roles.mealplans: ${mealPlansGranted} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'roles.mealplans', missingTable: 'roles', consequence: 'Sin este backfill, el hotel_admin de un hotel existente recibe "Sin permiso: mealplans:view" en Configuración Base → Regímenes.' })
   }
 
   // #215 (REST-13) — `restaurant:discount` a las filas de `roles` de SISTEMA (hotel_admin, receptionist)

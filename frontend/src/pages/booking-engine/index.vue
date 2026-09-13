@@ -326,22 +326,11 @@
                 </div>
               </div>
 
-              <!-- #360 — Regímenes de alimentación: el catálogo (CRUD) se mudó a Configuración →
-                   Regímenes (settings/index.vue, tab meal_plans). Acá queda SOLO el toggle
-                   `showMealPlans` que decide si el motor de reservas los ofrece al huésped. -->
-              <div class="mt-4">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes de alimentación</label>
-                <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
-                  <input id="booking-engine-regimenes-mostrar" name="showMealPlans" type="checkbox" v-model="form.showMealPlans" class="w-4 h-4 text-cyan rounded" />
-                  <div>
-                    <div class="text-sm font-bold text-navy">Mostrar regímenes en el motor de reservas</div>
-                    <div class="text-[10px] text-text-muted">Si está apagado, el huésped no elige régimen al reservar. Los regímenes se administran en Configuración → Regímenes.</div>
-                  </div>
-                </label>
-              </div>
-
-              <!-- Texto display opcional (fallback). Colapsado por defecto; si ya tenía contenido
-                   se muestra expandido para no esconder data existente del merchant. -->
+              <!-- Texto display opcional (fallback de la política de cancelación, NO de
+                   Regímenes). Colapsado por defecto; si ya tenía contenido se muestra expandido
+                   para no esconder data existente del merchant. Va PEGADO a la política de
+                   cancelación de arriba — el bloque de Regímenes de abajo quedó insertado en el
+                   medio (#360) y hacía parecer que este texto era parte de Regímenes. -->
               <div class="mt-3">
                 <button
                   type="button"
@@ -363,6 +352,21 @@
                     Texto libre que se muestra al huésped en el motor de reservas. No afecta el cálculo de penalidades.
                   </p>
                 </div>
+              </div>
+
+              <!-- #360 — Regímenes de alimentación: el catálogo (CRUD) se mudó a Configuración →
+                   Regímenes (settings/index.vue, tab meal_plans). Acá queda SOLO el toggle
+                   `showMealPlans` que decide si el motor de reservas los ofrece al huésped —
+                   nada de formularios ni mantenimiento del catálogo en esta pantalla. -->
+              <div class="mt-4">
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes de alimentación</label>
+                <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
+                  <input id="booking-engine-regimenes-mostrar" name="showMealPlans" type="checkbox" v-model="form.showMealPlans" class="w-4 h-4 text-cyan rounded" />
+                  <div>
+                    <div class="text-sm font-bold text-navy">Mostrar regímenes en el motor de reservas</div>
+                    <div class="text-[10px] text-text-muted">Si está apagado, el huésped no elige régimen al reservar. Los regímenes se administran en Configuración → Regímenes.</div>
+                  </div>
+                </label>
               </div>
             </div>
 
