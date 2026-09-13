@@ -69,7 +69,7 @@ import type { Tier } from '../../cancellation/types'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { buildOccupancyMatrix } from './occupancy-matrix'
-import { buildPublicMealPlans } from './public-meal-plan-lines'
+import { buildPublicMealPlans, visibleMealPlans } from './public-meal-plan-lines'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
@@ -335,8 +335,13 @@ export async function getPublicRates(
       // sepa para qué ocupación se calculó. SIN convertir a displayCurrency: igual que upsells
       // (D10 en RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency),
       // que es exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
+      // #360 — `booking_config.showMealPlans === false` → `[]` (catálogo tratado como vacío);
+      // el resto de la respuesta no cambia. Cada ítem trae `name`/`description`.
       mealPlans: deps.mealPlans
-        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, mealPlanPersons, nights)
+        ? buildPublicMealPlans(
+            visibleMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), bookingConfig),
+            hotel.id, mealPlanPersons, nights,
+          )
         : [],
     },
   }
