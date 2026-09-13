@@ -139,8 +139,9 @@ export function roomInfoFingerprint(roomId: string, accessCode: string): string 
 
 /** Clave que se guarda en `message_logs.response`, mismo esquema `auto:{evento}:{...}` que
  *  usan los auto-messages de marketing. */
+export const ROOM_INFO_DEDUP_PREFIX = 'auto:room_info:'
 export function roomInfoDedupKey(fingerprint: string): string {
-  return `auto:room_info:${fingerprint}`
+  return `${ROOM_INFO_DEDUP_PREFIX}${fingerprint}`
 }
 
 // ─── Render ─────────────────────────────────────────────────────────────────────────────────
