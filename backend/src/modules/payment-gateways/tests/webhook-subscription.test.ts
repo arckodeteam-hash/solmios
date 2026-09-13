@@ -51,6 +51,12 @@ describe('stripeWebhookWarnings', () => {
     expect(w[0]).toContain('No hay endpoint')
   })
 
+  it("status 'disabled' con ['*'] → igual avisa que está deshabilitado", () => {
+    const w = stripeWebhookWarnings(HOTEL, [ep({ status: 'disabled', enabledEvents: ['*'] })])
+    expect(w).toHaveLength(1)
+    expect(w[0]).toContain('deshabilitado')
+  })
+
   it("status 'disabled' → warning que dice deshabilitado", () => {
     const w = stripeWebhookWarnings(HOTEL, [ep({ status: 'disabled' })])
     expect(w.length).toBe(1)

@@ -50,10 +50,10 @@ export function stripeWebhookWarnings(hotelId: string, endpoints: StripeWebhookE
 
   const warnings: string[] = []
   for (const ep of own) {
-    if (ep.enabledEvents.includes('*')) continue
     if (ep.status !== 'enabled') {
       warnings.push(`El webhook ${ep.url} está deshabilitado en Stripe (status: ${ep.status}).`)
     }
+    if (ep.enabledEvents.includes('*')) continue
     const missing = REQUIRED_STRIPE_WEBHOOK_EVENTS.filter(ev => !ep.enabledEvents.includes(ev))
     if (missing.length) {
       warnings.push(
