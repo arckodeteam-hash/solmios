@@ -302,10 +302,60 @@
             clave cifrada, y no se guarda en claro a propósito: firma los webhooks de todos los hoteles.
           </p>
 
+          <!-- Webhook: la URL y el token de verificación son lo que se pega en Meta → WhatsApp →
+               Configuración → Webhooks. El token lo elige quien opera el panel de Meta y se guarda
+               ACÁ: a diferencia de la clave secreta, este gana sobre el servidor, porque sólo decide si
+               Meta acepta la URL en el momento del alta — no rompe nada vigente. -->
+          <div class="rounded-xl border border-border bg-surface/40 p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h4 class="text-xs font-bold text-navy">Webhook de mensajes</h4>
+              <span class="text-[10px] font-bold px-3 py-1 rounded-full"
+                :class="meta?.webhookToken?.configurado ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
+                {{ meta?.webhookToken?.configurado
+                  ? (meta.webhookToken.origen === 'panel' ? 'Token configurado' : 'Token en el servidor')
+                  : 'Sin token' }}
+              </span>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Callback URL</label>
+              <div class="flex items-center gap-2">
+                <input :value="meta?.webhookUrl || 'Falta PUBLIC_URL en el servidor'" type="text" readonly
+                  class="w-full px-4 py-2.5 bg-surface/60 border border-border rounded-xl text-sm text-text-muted font-mono">
+                <button v-if="meta?.webhookUrl" type="button" @click="copiar(meta.webhookUrl, 'URL del webhook copiada')"
+                  class="shrink-0 rounded-xl border border-border px-3 py-2.5 text-xs font-bold text-navy hover:bg-surface cursor-pointer">
+                  Copiar
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Token de verificación</label>
+              <div class="flex items-center gap-2">
+                <input v-model="metaWebhookToken" type="text" autocomplete="off" name="meta-webhook-verify-token" spellcheck="false"
+                  :placeholder="meta?.webhookToken?.pista ? `Guardado (${meta.webhookToken.pista}) — escribí para reemplazar` : 'Pegá el que va en Meta, o generá uno'"
+                  class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono focus:outline-none focus:border-navy">
+                <button type="button" @click="generarTokenWebhook"
+                  class="shrink-0 rounded-xl border border-border px-3 py-2.5 text-xs font-bold text-navy hover:bg-surface cursor-pointer">
+                  Generar
+                </button>
+                <button v-if="metaWebhookToken" type="button" @click="copiar(metaWebhookToken, 'Token copiado')"
+                  class="shrink-0 rounded-xl border border-border px-3 py-2.5 text-xs font-bold text-navy hover:bg-surface cursor-pointer">
+                  Copiar
+                </button>
+              </div>
+              <p class="mt-2 text-[11px] leading-relaxed text-text-muted">
+                Tiene que ser <strong>el mismo</strong> que se pega en Meta como "Verify token". Una vez
+                guardado no se vuelve a mostrar: copialo antes. Si ya hay uno cargado en el servidor
+                (<code>META_WEBHOOK_VERIFY_TOKEN</code>), el que guardes acá lo reemplaza.
+              </p>
+            </div>
+          </div>
+
           <div class="flex flex-wrap items-center gap-3">
-            <button @click="guardarMeta" :disabled="metaGuardando || !metaAppSecret || !meta?.puedeGuardar"
+            <button @click="guardarMeta" :disabled="metaGuardando || (!metaAppSecret && !metaWebhookToken) || !meta?.puedeGuardar"
               class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
-              {{ metaGuardando ? 'Guardando…' : 'Guardar clave' }}
+              {{ metaGuardando ? 'Guardando…' : 'Guardar WhatsApp' }}
             </button>
             <a href="https://developers.facebook.com/apps/1727869705161184/settings/basic/" target="_blank" rel="noopener noreferrer"
               class="text-[11px] font-bold text-navy underline">Sacarla del panel de Meta →</a>
@@ -430,6 +480,23 @@ const metaCargando = ref(true)
 const metaGuardando = ref(false)
 const metaAppId = ref('')
 const metaAppSecret = ref('')
+const metaWebhookToken = ref('')
+
+/** 32 bytes aleatorios en hex: lo que Meta espera es "cualquier cadena larga", sin formato. */
+function generarTokenWebhook() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  metaWebhookToken.value = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function copiar(texto: string, aviso: string) {
+  try {
+    await navigator.clipboard.writeText(texto)
+    toast.success(aviso)
+  } catch {
+    toast.error('No se pudo copiar', 'Seleccioná el texto y copialo a mano')
+  }
+}
 
 async function cargarMeta() {
   metaCargando.value = true
@@ -444,16 +511,23 @@ async function cargarMeta() {
 }
 
 async function guardarMeta() {
-  if (!metaAppSecret.value) return
+  const appSecret = metaAppSecret.value.trim()
+  const webhookVerifyToken = metaWebhookToken.value.trim()
+  if (!appSecret && !webhookVerifyToken) return
   metaGuardando.value = true
   try {
+    // Sólo viaja lo que se escribió: el servidor conserva lo demás.
     meta.value = await PlatformService.saveMetaWhatsapp({
       appId: metaAppId.value.trim() || undefined,
-      appSecret: metaAppSecret.value.trim(),
+      appSecret: appSecret || undefined,
+      webhookVerifyToken: webhookVerifyToken || undefined,
     })
-    // No se conserva en el formulario: el secreto no tiene por qué quedar en memoria del navegador.
+    // No se conservan en el formulario: los secretos no tienen por qué quedar en memoria del navegador.
     metaAppSecret.value = ''
-    toast.success('Clave guardada', 'Los hoteles ya pueden conectar su WhatsApp')
+    metaWebhookToken.value = ''
+    toast.success('Guardado', webhookVerifyToken
+      ? 'El webhook ya acepta el alta de Meta con ese token'
+      : 'Los hoteles ya pueden conectar su WhatsApp')
   } catch (e: any) {
     toast.error('No se pudo guardar', e?.message || 'Revisá la clave e intentá de nuevo')
   } finally {

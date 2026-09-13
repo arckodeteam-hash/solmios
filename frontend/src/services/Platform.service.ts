@@ -44,6 +44,14 @@ export interface MetaAppEstado {
   pista: string | null
   /** Sin cifrado configurado en el servidor, esta pantalla no puede guardar. */
   puedeGuardar: boolean
+  /** Callback URL para pegar en el panel de Meta. Vacía si el servidor no tiene `PUBLIC_URL`. */
+  webhookUrl: string
+  /** Token de verificación del webhook (`hub.verify_token`). Acá el PANEL gana sobre el entorno. */
+  webhookToken: {
+    configurado: boolean
+    origen: 'entorno' | 'panel' | null
+    pista: string | null
+  }
 }
 
 /** Estado de la API key de Resend. `last4` sirve para reconocer cuál está cargada sin revelarla. */
@@ -63,7 +71,8 @@ export const PlatformService = {
   /** Estado de las credenciales de la app de Meta. NUNCA devuelve el secreto. */
   getMetaWhatsapp: () => http.get<MetaAppEstado>('/admin/meta-whatsapp'),
   /** Guarda el secreto cifrado. El del servidor (.env) sigue teniendo prioridad. */
-  saveMetaWhatsapp: (data: { appId?: string; appSecret: string }) =>
+  /** Cada campo vacío conserva lo guardado; tiene que venir al menos uno de los dos secretos. */
+  saveMetaWhatsapp: (data: { appId?: string; appSecret?: string; webhookVerifyToken?: string }) =>
     http.put<MetaAppEstado>('/admin/meta-whatsapp', data),
 
   // #100: API key de Resend (respaldo cuando no hay SMTP). Solo estado: la key nunca vuelve.

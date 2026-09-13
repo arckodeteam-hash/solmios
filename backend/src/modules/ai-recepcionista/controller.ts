@@ -4,7 +4,7 @@ import type { AiRecepcionistaService } from './service'
 import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema, ReplyConversationSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
 import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
-import { resolverCredencialesApp } from '../../infrastructure/meta-app-config'
+import { resolverCredencialesApp, resolverTokenVerificacionWebhook } from '../../infrastructure/meta-app-config'
 import { resolverHotelDelEvento, resolverHotelDeVerificacion } from './usecases/webhook-routing'
 
 export class AiRecepcionistaController {
@@ -250,9 +250,11 @@ export class AiRecepcionistaController {
 
     if (mode === 'subscribe' && token && challenge) {
       // Meta da de alta la URL UNA vez, para toda la aplicación y antes de que exista ningún hotel
-      // conectado. Ese alta se valida contra el token de la plataforma; el token por hotel de más
-      // abajo es para las conexiones que se dieron de alta con su propia URL.
-      const tokenPlataforma = process.env.META_WEBHOOK_VERIFY_TOKEN
+      // conectado. Ese alta se valida contra el token de la plataforma — el que el super_admin
+      // carga en Admin → Configuración → WhatsApp, o `META_WEBHOOK_VERIFY_TOKEN` de respaldo
+      // (infrastructure/meta-app-config.ts); el token por hotel de más abajo es para las
+      // conexiones que se dieron de alta con su propia URL.
+      const tokenPlataforma = await resolverTokenVerificacionWebhook((this.service as any).configRepo)
       if (tokenPlataforma && String(token) === tokenPlataforma) {
         return this.respuestaDeAlta(challenge)
       }
