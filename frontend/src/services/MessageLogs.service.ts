@@ -1,7 +1,18 @@
 import { http } from './http'
 
 export type MessageType = 'email' | 'whatsapp' | 'sms' | string
-export type MessageStatus = 'pending' | 'sent' | 'failed' | 'queued' | string
+export type MessageStatus = 'pending' | 'sent' | 'failed' | 'queued' | 'retry_requested' | string
+
+/** Prefijo de la clave de dedup con la que el cron registra el aviso de habitación. */
+export const ROOM_INFO_DEDUP_PREFIX = 'auto:room_info:'
+
+/**
+ * Sólo el aviso de habitación fallido admite reintento manual: el backend responde 409 para
+ * cualquier otra fila, así que el botón se muestra únicamente cuando esta condición es cierta.
+ */
+export function isRoomInfoRetryable(log: Pick<MessageLog, 'status' | 'response'>): boolean {
+  return log.status === 'failed' && (log.response ?? '').startsWith(ROOM_INFO_DEDUP_PREFIX)
+}
 
 export interface MessageLog {
   id: string
@@ -36,6 +47,8 @@ export const MessageLogsService = {
     const query = qs.toString()
     return http.get<{ data: MessageLog[] }>(`/message-logs${query ? `?${query}` : ''}`)
   },
+  /** Pide reenviar un aviso de habitación fallido. No manda nada en el acto: el cron lo retoma en el próximo tick. */
+  retry: (id: string) => http.post<{ data: MessageLog }>(`/message-logs/${encodeURIComponent(id)}/retry`),
 }
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
@@ -62,6 +75,8 @@ export const MSG_STATUS_META: Record<string, { icon: string; label: string; clas
   delivered: { icon: ICON_CHECK, label: 'Entregado', class: 'bg-teal/15 text-teal' },
   read: { icon: ICON_EYE, label: 'Leído', class: 'bg-cyan/10 text-cyan' },
   failed: { icon: ICON_X_CIRCLE, label: 'Fallido', class: 'bg-coral/10 text-coral' },
+  // Marcador, no un envío: el cron lo retoma en el próximo tick (hasta 10 minutos).
+  retry_requested: { icon: ICON_CLOCK, label: 'Reintento pedido', class: 'bg-gold/10 text-gold' },
 }
 
 /**
