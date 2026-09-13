@@ -57,6 +57,13 @@ let wrapper: VueWrapper | null = null
 /** router-link como <a href>: deja afirmar el destino del link de la pestaña Suscripciones. */
 const RouterLinkStub = { props: ['to'], template: '<a :href="to"><slot /></a>' }
 
+/** Lo que devuelve GET /api/admin/meta-whatsapp sin nada cargado. */
+const META_VACIO = {
+  appId: '', graphVersion: 'v23.0', configurado: false, origen: null, pista: null, puedeGuardar: true,
+  webhookUrl: 'https://solmios.com/api/ai/whatsapp/webhook',
+  webhookToken: { configurado: false, origen: null, pista: null },
+} as const
+
 async function montar() {
   wrapper = mount(Settings, { global: { stubs: { RouterLink: RouterLinkStub } } })
   await flushPromises()
@@ -102,8 +109,9 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
       return null // email_config / smtp / google_maps sin configurar
     })
     vi.mocked(ConfigService.set).mockReset().mockResolvedValue(undefined)
-    vi.mocked(PlatformService.getMetaWhatsapp).mockReset().mockResolvedValue({
-      appId: '', graphVersion: 'v23.0', configurado: false, origen: null, pista: null, puedeGuardar: true,
+    vi.mocked(PlatformService.getMetaWhatsapp).mockReset().mockResolvedValue({ ...META_VACIO })
+    vi.mocked(PlatformService.saveMetaWhatsapp).mockReset().mockResolvedValue({
+      ...META_VACIO, webhookToken: { configurado: true, origen: 'panel', pista: 'abcdefg…wxyz' },
     })
     vi.mocked(PlatformService.getResend).mockReset().mockResolvedValue({ configured: false, last4: null })
     vi.mocked(PlatformService.getSettingsStatus).mockReset().mockResolvedValue(STATUS_APAGADO)
@@ -187,6 +195,30 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
 
     expect(clavesGuardadas()).toEqual(['google_maps'])
     expect(vi.mocked(ConfigService.set).mock.calls[0]![1]).toEqual({ apiKey: '' })
+  })
+
+  // El token de verificación del webhook de WhatsApp se configura ACÁ, no en el .env: viaja por
+  // /api/admin/meta-whatsapp (cifrado con la clave de la app), nunca por /api/configuracion, y
+  // guardar sólo el token no manda un appSecret vacío que pise el que ya está.
+  it('Integraciones guarda el token de verificación del webhook de WhatsApp por su propio endpoint', async () => {
+    await montar()
+    await irATab('Integraciones')
+
+    const url = wrapper!.findAll('input').find((i) => (i.element as HTMLInputElement).value.includes('/api/ai/whatsapp/webhook'))
+    expect(url, 'la Callback URL del webhook tiene que verse para copiarla en Meta').toBeTruthy()
+
+    const token = wrapper!.find('input[name="meta-webhook-verify-token"]')
+    expect(token.exists()).toBe(true)
+    await token.setValue('0d2791af4feda2eccb81e7bb6136cc21')
+    await clickUnico('Guardar WhatsApp')
+
+    expect(PlatformService.saveMetaWhatsapp).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(PlatformService.saveMetaWhatsapp).mock.calls[0]![0]).toEqual({
+      appId: undefined, appSecret: undefined, webhookVerifyToken: '0d2791af4feda2eccb81e7bb6136cc21',
+    })
+    expect(ConfigService.set).not.toHaveBeenCalled()
+    // No queda en el formulario después de guardar.
+    expect((wrapper!.find('input[name="meta-webhook-verify-token"]').element as HTMLInputElement).value).toBe('')
   })
 
   it('no existe el botón global "Guardar Cambios" en ninguna pestaña', async () => {
