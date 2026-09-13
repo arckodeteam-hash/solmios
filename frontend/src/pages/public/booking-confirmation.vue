@@ -51,7 +51,9 @@
     (tel: / wa.me / mailto:, solo lo configurado) y "Cancelar reserva" como enlace discreto con
     confirmación. Helpers puros en `utils/booking-confirmation-format.ts`.
   -->
-  <div class="min-h-screen bg-surface flex flex-col">
+  <!-- #381 — `themeCssVars` en la raíz: navy/teal/cyan de la página (header incluido) salen del
+       theme público del hotel, mismo patrón que hotel-landing.vue. Sin theme → preset classic. -->
+  <div class="min-h-screen bg-surface flex flex-col" :style="themeCssVars">
     <!--
       #241 — Cabecera con la identidad del hotel: logo (si lo cargó), nombre grande y dirección.
       Todo sale de `GET /api/public/hotel/:slug` (allow-list pública) — nada hardcodeado. Mientras
@@ -182,47 +184,50 @@
           <p class="text-sm font-bold text-navy">{{ t('confirm.cribUnavailableNotice') }}</p>
         </div>
 
-        <!-- 2. Resumen de la estadía: fechas legibles en el idioma de la página, noches, huésped. -->
-        <div v-if="reservation" class="rounded-2xl border border-slate-200 bg-white p-5" data-testid="confirm-stay">
+        <!-- 2. Resumen de la estadía: fechas legibles en el idioma de la página, noches, huésped.
+             #381 — card OSCURA: fondo = el color más oscuro del theme público del hotel y texto por
+             contraste (blanco sobre fondo oscuro). Los hijos heredan `color` del contenedor: sin
+             clases de color propias, los secundarios van con opacity. -->
+        <div v-if="reservation" class="rounded-2xl border border-white/10 p-5" :style="{ backgroundColor: stayCardBg, color: stayCardFg }" data-testid="confirm-stay">
           <div class="flex items-center justify-between gap-3">
-            <h3 class="text-[11px] font-bold uppercase tracking-[0.18em] text-text-secondary">{{ t('confirm.stayTitle') }}</h3>
-            <span v-if="nights > 0" class="rounded-full bg-cyan/10 px-2.5 py-1 text-xs font-bold text-teal" data-testid="confirm-nights">{{ t('confirm.nights', { count: nights }) }}</span>
+            <h3 class="text-[11px] font-bold uppercase tracking-[0.18em] opacity-70">{{ t('confirm.stayTitle') }}</h3>
+            <span v-if="nights > 0" class="rounded-full bg-white/15 px-2.5 py-1 text-xs font-bold" data-testid="confirm-nights">{{ t('confirm.nights', { count: nights }) }}</span>
           </div>
           <div class="mt-3 grid grid-cols-2 gap-4">
             <div class="min-w-0">
-              <p class="text-xs text-text-secondary">{{ t('confirm.checkIn') }}</p>
-              <p class="mt-0.5 text-sm font-bold text-navy leading-snug" data-testid="confirm-checkin">{{ checkInLabel }}</p>
+              <p class="text-xs opacity-70">{{ t('confirm.checkIn') }}</p>
+              <p class="mt-0.5 text-sm font-bold leading-snug" data-testid="confirm-checkin">{{ checkInLabel }}</p>
             </div>
             <div class="min-w-0">
-              <p class="text-xs text-text-secondary">{{ t('confirm.checkOut') }}</p>
-              <p class="mt-0.5 text-sm font-bold text-navy leading-snug" data-testid="confirm-checkout">{{ checkOutLabel }}</p>
+              <p class="text-xs opacity-70">{{ t('confirm.checkOut') }}</p>
+              <p class="mt-0.5 text-sm font-bold leading-snug" data-testid="confirm-checkout">{{ checkOutLabel }}</p>
             </div>
           </div>
-          <dl v-if="guestDisplayName || mealPlanLabel" class="mt-4 space-y-1.5 border-t border-slate-100 pt-3 text-sm">
+          <dl v-if="guestDisplayName || mealPlanLabel" class="mt-4 space-y-1.5 border-t border-current/15 pt-3 text-sm">
             <div v-if="guestDisplayName" class="flex justify-between gap-3">
-              <dt class="text-text-secondary">{{ t('confirm.guest') }}</dt>
-              <dd class="font-bold text-navy text-right break-words" data-testid="confirm-guest">{{ guestDisplayName }}</dd>
+              <dt class="opacity-70">{{ t('confirm.guest') }}</dt>
+              <dd class="font-bold text-right break-words" data-testid="confirm-guest">{{ guestDisplayName }}</dd>
             </div>
             <!-- MR-03 (#268) — el régimen que EL HUÉSPED eligió y pagó (snapshot de la reserva).
                  Solo si ≠ solo alojamiento: con importe si se cobró, chip "incluido" si venía en
                  la tarifa. Reservas anteriores a la feature no traen el campo → nada. -->
             <div v-if="mealPlanLabel" class="flex justify-between gap-3" data-testid="confirm-meal-plan">
-              <dt class="text-text-secondary">{{ t('pay.mealPlan') }}</dt>
-              <dd class="flex items-center gap-2 font-bold text-navy text-right">
+              <dt class="opacity-70">{{ t('pay.mealPlan') }}</dt>
+              <dd class="flex items-center gap-2 font-bold text-right">
                 <span>{{ mealPlanLabel }}</span>
                 <span v-if="mealPlanTotal > 0" class="tabular-nums">{{ fmtMoney(mealPlanTotal) }}</span>
-                <span v-else class="rounded-full bg-cyan/10 px-2 py-0.5 text-xs font-bold text-teal">{{ t('pay.mealPlanIncluded') }}</span>
+                <span v-else class="rounded-full bg-white/15 px-2 py-0.5 text-xs font-bold">{{ t('pay.mealPlanIncluded') }}</span>
               </dd>
             </div>
           </dl>
           <!-- #272 (MR-07) — reserva de varias habitaciones: una línea por habitación del grupo.
                Con una sola, esta lista no existe y la tarjeta queda como siempre. -->
-          <div v-if="groupRooms.length > 1" class="mt-4 border-t border-slate-100 pt-3" data-testid="confirm-group-rooms">
-            <p class="text-xs text-text-secondary">{{ t('confirm.groupRooms') }}</p>
+          <div v-if="groupRooms.length > 1" class="mt-4 border-t border-current/15 pt-3" data-testid="confirm-group-rooms">
+            <p class="text-xs opacity-70">{{ t('confirm.groupRooms') }}</p>
             <ul class="mt-1.5 space-y-1 text-sm">
               <li v-for="(room, i) in groupRooms" :key="room.id" class="flex justify-between gap-3" data-testid="confirm-group-room">
-                <span class="font-bold text-navy break-words">{{ room.roomType || t('confirm.roomFallback', { n: i + 1 }) }}</span>
-                <span class="shrink-0 text-text-secondary">{{ t('confirm.roomGuests', { adults: room.adults, children: room.children }) }}</span>
+                <span class="font-bold break-words">{{ room.roomType || t('confirm.roomFallback', { n: i + 1 }) }}</span>
+                <span class="shrink-0 opacity-70">{{ t('confirm.roomGuests', { adults: room.adults, children: room.children }) }}</span>
               </li>
             </ul>
           </div>
@@ -483,6 +488,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
+import { LandingService } from '@/services/Landing.service'
+import { themeToCssVars, darkestThemeColor, contrastTextColor } from '@/utils/landing-theme'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
 import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
@@ -498,6 +505,7 @@ import {
 } from '@/utils/booking-confirmation-format'
 import type { PublicReservationResponse, CancelReservationResponse, PublicGroupRoom } from '@/types/booking'
 import type { PublicHotelInfo } from '@/types/public-hotel'
+import type { LandingTheme } from '@/types/landing'
 import { CurrencyCode } from '@/types/currency'
 
 const route = useRoute()
@@ -515,6 +523,13 @@ const errorMessage = ref(t('confirm.errorDefault'))
 /** Info pública del hotel (#241): identidad, dirección, contacto y horarios de la cabecera y
  *  las tarjetas. `null` mientras carga o si el endpoint falla — la página confirma igual. */
 const hotel = ref<PublicHotelInfo | null>(null)
+/** #381 — theme público de la landing (GET /api/public/hotels/:slug/landing). Best-effort: null → classic. */
+const landingTheme = ref<LandingTheme | null>(null)
+/** CSS custom properties del theme para la raíz de la página (mismo patrón que hotel-landing.vue). */
+const themeCssVars = computed<Record<string, string>>(() => themeToCssVars(landingTheme.value))
+/** Card "Your stay": fondo = token más oscuro del theme; texto blanco (o navy si el theme es claro). */
+const stayCardBg = computed(() => darkestThemeColor(landingTheme.value))
+const stayCardFg = computed(() => contrastTextColor(stayCardBg.value))
 const slug = ref('')
 // F4 4.1 — hotelId resuelto desde el slug. Lo lee firePurchaseTracking para persistir el
 // evento 'purchase' (mapeado a 'confirm' server-side) con el hotel correcto en tracking_events.
@@ -889,6 +904,16 @@ onMounted(async () => {
   // F4 4.1 — Resolvemos el hotel ANTES de disparar 'view' para que el POST server-side del
   // funnel lleve el hotelId correcto (mismo cambio que en booking-widget.vue).
   if (slug.value) {
+    // #381 — el theme público se pide EN PARALELO con el hotel y no se espera (ni el hotel ni el
+    // polling dependen de él): si el endpoint falla o cambia de forma (array plano / envelope sin
+    // theme, misma defensiva que hotel-landing.vue), la card "Your stay" cae al preset classic y
+    // la confirmación se muestra igual.
+    void LandingService.get(slug.value)
+      .then((res) => {
+        const v = res as unknown as { theme?: LandingTheme | null } | unknown[]
+        landingTheme.value = Array.isArray(v) ? null : (v?.theme ?? null)
+      })
+      .catch(() => { landingTheme.value = null })
     try {
       const info = await PublicHotelService.getBySlug(slug.value, i18n.locale)
       hotel.value = info

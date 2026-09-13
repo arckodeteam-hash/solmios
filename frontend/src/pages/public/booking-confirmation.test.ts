@@ -20,6 +20,9 @@ vi.mock('@/services/PublicHotel.service', () => ({ PublicHotelService: { getBySl
 const getReservation = vi.fn()
 vi.mock('@/services/Booking.service', () => ({ BookingService: { getReservation: (...a: unknown[]) => getReservation(...a) } }))
 
+const getLanding = vi.fn()
+vi.mock('@/services/Landing.service', () => ({ LandingService: { get: (...a: unknown[]) => getLanding(...a) } }))
+
 const cancelReservation = vi.fn()
 vi.mock('@/composables/useBooking', () => ({
   readStoredReservation: () => null,
@@ -75,6 +78,8 @@ beforeEach(() => {
   wrapper = null
   vi.clearAllMocks()
   sessionStorage.clear()
+  // #381 — theme público por defecto: sin theme → preset classic. Cada test lo pisa si lo necesita.
+  getLanding.mockResolvedValue({ data: [], theme: null })
 })
 
 describe('identidad del hotel en la cabecera', () => {
@@ -554,5 +559,75 @@ describe('cuna pedida que la habitación asignada no ofrece (#292, revisión)', 
     expect(w2.find('[data-testid="confirm-crib-unavailable"]').exists()).toBe(false)
     const w3 = await render()
     expect(w3.find('[data-testid="confirm-crib-unavailable"]').exists()).toBe(false)
+  })
+})
+
+// #381 — feedback del cliente: la card "Your stay" tiene que ser OSCURA con letras blancas, y los
+// colores salen de la configuración pública del hotel (theme de la landing), no de un hardcode.
+describe('theme público en la card "Your stay" (#381)', () => {
+  const stayStyle = (w: VueWrapper) => (w.get('[data-testid="confirm-stay"]').element as HTMLElement).style
+  // jsdom guarda el hex tal cual en `element.style` (no lo pasa a rgb); se compara sin distinguir mayúsculas.
+  const color = (v: string) => v.trim().toUpperCase()
+
+  it('sin theme configurado usa el navy del preset classic con texto blanco', async () => {
+    getLanding.mockResolvedValue({ data: [], theme: null })
+    const w = await render()
+    expect(getLanding).toHaveBeenCalledWith('hotel-boutique-palma')
+    expect(color(stayStyle(w).backgroundColor)).toBe('#0D2B4E')
+    expect(color(stayStyle(w).color)).toBe('#FFFFFF')
+  })
+
+  it('el fondo es el color más oscuro del theme del hotel y la página lleva sus CSS vars', async () => {
+    getLanding.mockResolvedValue({ data: [], theme: { templateId: 'classic', colors: { gold: '#111111' } } })
+    const w = await render()
+    expect(color(stayStyle(w).backgroundColor)).toBe('#111111')
+    expect(color(stayStyle(w).color)).toBe('#FFFFFF')
+    // Las CSS vars del theme van en la raíz: header + main heredan navy/teal/cyan del hotel.
+    const root = w.find('.min-h-screen')
+    expect(root.exists()).toBe(true)
+    expect(root.attributes('style')).toContain('--color-gold: #111111')
+    expect(root.attributes('style')).toContain('--color-navy: #0D2B4E')
+  })
+
+  it('con un theme claro el texto pasa a oscuro por contraste', async () => {
+    const light = '#FAFAFA'
+    getLanding.mockResolvedValue({
+      data: [],
+      theme: {
+        templateId: 'classic',
+        colors: {
+          navy: light, navyLight: light, blue: light, cyan: light, cyanLight: light,
+          teal: light, gold: light, goldLight: light, surface: light, surfaceDark: light,
+        },
+      },
+    })
+    const w = await render()
+    expect(color(stayStyle(w).backgroundColor)).toBe('#FAFAFA')
+    expect(color(stayStyle(w).color)).toBe('#0D2B4E')
+  })
+
+  it('la respuesta en forma de array plano (sin theme) cae al classic', async () => {
+    getLanding.mockResolvedValue([])
+    const w = await render()
+    expect(color(stayStyle(w).backgroundColor)).toBe('#0D2B4E')
+  })
+
+  it('si el endpoint del theme falla, la confirmación se muestra igual con el classic', async () => {
+    getLanding.mockRejectedValue(new Error('500'))
+    const w = await render()
+    expect(w.find('[data-testid="confirm-success"]').exists()).toBe(true)
+    expect(w.find('[data-testid="confirm-stay"]').exists()).toBe(true)
+    expect(color(stayStyle(w).backgroundColor)).toBe('#0D2B4E')
+    expect(color(stayStyle(w).color)).toBe('#FFFFFF')
+    expect(w.get('[data-testid="confirm-checkin"]').text()).not.toBe('')
+  })
+
+  it('la card no fija colores de texto propios: todo hereda del contenedor', async () => {
+    const w = await render()
+    const html = w.get('[data-testid="confirm-stay"]').html()
+    expect(html).not.toContain('text-navy')
+    expect(html).not.toContain('text-text-secondary')
+    expect(html).not.toContain('text-teal')
+    expect(html).not.toContain('bg-white ')
   })
 })
