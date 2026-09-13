@@ -217,3 +217,34 @@ describe('updateReservation — reserva por TIPO (roomId null): cambiar SÓLO la
     expect(err.details?.reason).toBe('room_overlap')
   })
 })
+
+describe('updateReservation — reserva por TIPO (roomId null): cambiar el tipo valida que exista en el hotel', () => {
+  // Revisión #260 (4ª pasada): `sellableTypeProfile` devolvía `unknown_type` para un roomType que
+  // el hotel no tiene, pero el PUT lo excluía del chequeo y seguía con `room = null` (capacidad
+  // no-op) → 200 y una fila con un tipo huérfano que nunca iba a poder asignarse. Ahora es el
+  // mismo 409 `unknown_room_type` que `createReservation`.
+  const inventory = [
+    ...doubles,
+    { id: 's-1', hotelId: HOTEL, type: 'suite', status: 'available', capacity: 4, basePrice: 300, number: '201' },
+  ]
+
+  it('PUT roomType:"nonexistent" (el hotel no tiene ese tipo) → 409 unknown_room_type, la fila queda igual', async () => {
+    const repo = resRepo(byType())
+    let err: any = null
+    try { await put(repo, roomRepo(inventory), { roomType: 'nonexistent' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.httpStatus).toBe(409)
+    expect(err.details?.reason).toBe('unknown_room_type')
+    expect(err.details?.roomType).toBe('nonexistent')
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('PUT roomType:"suite" (existe y libre) → 200 con roomType suite y sin unidad', async () => {
+    const repo = resRepo(byType())
+    const ok = await put(repo, roomRepo(inventory), { roomType: 'suite' } as any)
+    expect(ok.roomType).toBe('suite')
+    expect(ok.roomId).toBeNull()
+    expect(repo.updates).toHaveLength(1)
+    expect(repo.updates[0].roomType).toBe('suite')
+  })
+})

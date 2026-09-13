@@ -194,6 +194,10 @@ function noUnitFreeError(roomType: string): ConflictError {
 function typeSoldOutError(roomType: string): ConflictError {
   return new ConflictError('No hay habitaciones de este tipo disponibles para esas fechas', { reason: 'type_sold_out', roomType, available: 0 })
 }
+/** 409 del alta/edición por tipo cuando el tipo no existe en el hotel (`rooms {hotelId, type}` vacío). */
+function unknownRoomTypeError(roomType: string | undefined): ConflictError {
+  return new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType })
+}
 
 export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
   if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado para crear en otro hotel')
@@ -224,7 +228,7 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   } else if (roomRepo && typeof roomRepo.findMany === 'function') {
     const lookup = await sellableTypeProfile({ roomRepo, reservationRepo: repo, blockRepo }, dto.hotelId, String(dto.roomType), dto.checkIn, dto.checkOut)
-    if (!lookup || lookup.kind === 'unknown_type') throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
+    if (!lookup || lookup.kind === 'unknown_type') throw unknownRoomTypeError(dto.roomType)
     if (lookup.kind === 'none_free') throw noUnitFreeError(String(dto.roomType))
     typeProfile = lookup.profile
     freeUnits = lookup.freeUnits
@@ -434,8 +438,8 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
     // efectivo, mismo criterio que createReservation (`sellableTypeProfile`). Antes `findOne({id:
     // null})` daba null y la ocupación subía sin 409 por encima de cualquier unidad del tipo.
     // El perfil sale de las unidades del tipo LIBRES en las fechas efectivas (las nuevas si el
-    // patch las mueve, si no las actuales), sin contarse a sí misma; sin inventario del tipo →
-    // 409 `type_sold_out`; si ninguna unidad queda libre todas las noches → 409 con el mismo
+    // patch las mueve, si no las actuales), sin contarse a sí misma; tipo inexistente → 409
+    // `unknown_room_type` (como el alta); sin inventario del tipo → 409 `type_sold_out`; si ninguna unidad queda libre todas las noches → 409 con el mismo
     // formato que el rechazo por tipo del alta. La composición entra si ALGUNA unidad libre la
     // admite (`someUnitFits` vía `units`), no si entra en el perfil agregado.
     const effectiveRoomType = dto.roomType ?? existing.roomType
@@ -450,7 +454,12 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
         String(dto.checkIn ?? existing.checkIn), String(dto.checkOut ?? existing.checkOut),
         { excludeReservationId: id },
       )
-      if (lookup && lookup.kind !== 'unknown_type' && lookup.available < 1) throw typeSoldOutError(String(effectiveRoomType))
+      // Revisión #260 (4ª pasada): tipo inexistente en el hotel → mismo 409 `unknown_room_type`
+      // que el alta. Antes se excluía del chequeo y quedaba `room = null` (capacidad no-op): el
+      // PUT persistía un roomType huérfano que nunca iba a poder asignarse. `lookup` null (repo
+      // sin `findMany`, mocks viejos) sigue siendo no-op, igual que antes.
+      if (lookup?.kind === 'unknown_type') throw unknownRoomTypeError(String(effectiveRoomType))
+      if (lookup && lookup.available < 1) throw typeSoldOutError(String(effectiveRoomType))
       if (lookup?.kind === 'none_free') throw noUnitFreeError(String(effectiveRoomType))
       room = lookup?.kind === 'ok' ? lookup.profile : null
       units = lookup?.kind === 'ok' ? lookup.freeUnits : undefined
