@@ -62,7 +62,7 @@ import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
 import { mealPlanNote, mealPlanAddonInput, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation, roomTypeProfile, unionRoomAmenities, CRIB_UNAVAILABLE_NOTE } from './public-booking'
-import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
+import { resolveMealPlanLine, visibleMealPlans, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
 import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
 import { round2 } from '../../../shared/utils/money'
 import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
@@ -327,16 +327,21 @@ export async function createPublicBookingGroup(
     : null
 
   // MR-03 (#268) — catálogo de regímenes del hotel, UNA lectura para todo el grupo. Solo si alguna
-  // línea pidió uno distinto de `room_only`; sin repo cableado no se puede validar → se rechaza
-  // (a diferencia de las amenidades: el régimen cambia el precio que el huésped vio).
-  const anyLineHasMealPlan = lines.some((l) => !!l.mealPlan && l.mealPlan !== ROOM_ONLY_CODE)
+  // línea pidió uno; sin repo cableado no se puede validar → se rechaza (a diferencia de las
+  // amenidades: el régimen cambia el precio que el huésped vio), salvo `room_only` (compat: sin
+  // fila → "sin régimen"). #360 — el catálogo pasa por `visibleMealPlans` con el `bookingConfig`
+  // ya leído: `showMealPlans === false` → vacío → cualquier code salvo `room_only` se rechaza.
+  const anyLineHasMealPlan = lines.some((l) => !!l.mealPlan)
   let mealPlansCatalog: any[] = []
   if (anyLineHasMealPlan) {
     if (!extraDeps?.mealPlans) {
-      logger?.warn('createPublicBookingGroup: mealPlan en rooms[] sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId })
-      return { status: 400, body: { error: 'meal_plan_unavailable' } }
+      if (lines.some((l) => !!l.mealPlan && l.mealPlan !== ROOM_ONLY_CODE)) {
+        logger?.warn('createPublicBookingGroup: mealPlan en rooms[] sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId })
+        return { status: 400, body: { error: 'meal_plan_unavailable' } }
+      }
+    } else {
+      mealPlansCatalog = visibleMealPlans(((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? [], bookingConfig)
     }
-    mealPlansCatalog = ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? []
   }
 
   for (const [lineIndex, line] of lines.entries()) {
@@ -385,7 +390,7 @@ export async function createPublicBookingGroup(
     // no pagan), mismo criterio que public-booking.ts. Cualquier línea inválida corta ANTES de
     // la tx (todo o nada, igual que el resto del grupo).
     let lineMealPlan: MealPlanLine | null = null
-    if (line.mealPlan && line.mealPlan !== ROOM_ONLY_CODE) {
+    if (line.mealPlan) {
       const resolved = resolveMealPlanLine(
         mealPlansCatalog, line.mealPlan, hotelId, composition.effectiveAdults + composition.payingChildren, nights,
       )
@@ -766,6 +771,8 @@ export async function createPublicBookingGroup(
             // MR-03 (#268) — snapshot UNITARIO del régimen de la línea (persons de ESTA línea,
             // quantity 1) + `regime` con el mismo código para el modal/listado del panel.
             mealPlan: line.mealPlan?.code ?? ROOM_ONLY_CODE,
+            // #360 — nombre del catálogo congelado al reservar.
+            mealPlanName: line.mealPlan?.name ?? null,
             mealPlanPriceMode: line.mealPlan?.priceMode ?? null,
             mealPlanUnitPrice: line.mealPlan?.unitPrice ?? 0,
             mealPlanTotal: line.mealPlan?.total ?? 0,

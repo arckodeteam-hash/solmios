@@ -94,6 +94,11 @@ export const ReservasModel: ModelDefinition = {
     // feature (el panel muestra "—"). El flujo público escribe también `regime` (más abajo) con
     // el mismo código para que el modal/listado existentes lo muestren.
     mealPlan: { type: 'string' },
+    // #360 — nombre del régimen CONGELADO al reservar (catálogo abierto: el hotel puede
+    // renombrarlo o borrarlo después y la reserva sigue mostrando lo que el huésped eligió).
+    // `null` en reservas anteriores a la columna → email/recibo/confirmación caen a la etiqueta
+    // legacy por código (`mealPlanLabel`).
+    mealPlanName: { type: 'string' },
     mealPlanPriceMode: { type: 'string' },
     mealPlanUnitPrice: { type: 'number', default: 0 },
     mealPlanTotal: { type: 'number', default: 0 },

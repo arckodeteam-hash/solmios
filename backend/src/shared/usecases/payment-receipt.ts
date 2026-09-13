@@ -100,6 +100,8 @@ export interface ReceiptReservationLike {
   roomAmenities?: Array<{ id?: string; key?: string; name?: string; price?: number; quantity?: number; total?: number }> | null
   /** MR-03 (#268) — snapshot del régimen de ESTA fila (código, precio por persona y noche, personas, total). */
   mealPlan?: string | null
+  /** #360 — nombre del régimen congelado al reservar; `null` en reservas anteriores (cae a la etiqueta legacy). */
+  mealPlanName?: string | null
   mealPlanUnitPrice?: number | null
   mealPlanTotal?: number | null
   mealPlanPersons?: number | null
@@ -172,7 +174,7 @@ function nightsOf(row: ReceiptReservationLike): number {
  */
 function mealPlanLineOf(row: ReceiptReservationLike): ReceiptLine[] {
   if (!hasMealPlan(row.mealPlan)) return []
-  const label = mealPlanLabel(row.mealPlan, 'es')
+  const label = mealPlanLabel(row.mealPlan, 'es', row.mealPlanName)
   const amount = round2(num(row.mealPlanTotal))
   if (amount <= 0) return [{ kind: 'meal_plan', description: `Régimen · ${label} (incluido)`, amount: 0 }]
   const persons = Math.max(1, Math.floor(num(row.mealPlanPersons) || 1))

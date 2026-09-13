@@ -142,7 +142,8 @@ function mealPlanLine(row: any, currency: string, language: NotificationLanguage
   if (!hasMealPlan(row?.mealPlan)) return ''
   const words = MEAL_PLAN_WORD[language]
   const units = UPSELL_UNITS[language]
-  const label = escapeHtml(mealPlanLabel(row.mealPlan, language))
+  // #360 — `mealPlanName` (nombre congelado al reservar) manda; sin él, etiqueta legacy por código.
+  const label = escapeHtml(mealPlanLabel(row.mealPlan, language, row.mealPlanName))
   const total = Number(row.mealPlanTotal ?? 0) || 0
   if (total <= 0) return `${words.regime}: ${label} (${words.included})`
   const persons = Math.max(1, Number(row.mealPlanPersons ?? 1) || 1)
@@ -304,7 +305,7 @@ export async function sendBookingPaidEmail(
     // distintas (o "sólo alojamiento" si ninguna fila lo trae).
     const mealPlanRows: any[] = siblings.length ? siblings : [reservation]
     const mealPlanLines = mealPlanRows.map(r => mealPlanLine(r, currency, language)).filter(Boolean)
-    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => mealPlanLabel(r.mealPlan, language)))]
+    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => mealPlanLabel(r.mealPlan, language, r.mealPlanName)))]
 
     await emailSender.enqueueNotification({
       to,
