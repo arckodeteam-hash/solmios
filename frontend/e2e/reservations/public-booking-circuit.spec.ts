@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures'
 import type { APIRequestContext } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs'
 import { ADMIN_STORAGE_STATE } from '../global-setup'
 import { SLUG, roomCard, gotoWizardWithDates, logConsoleAndHttpErrors } from '../booking-children-capacity/helpers'
 import {
@@ -39,15 +39,23 @@ import {
 //   vite:    :5174 con proxy /api → :3011
 //   spec:    E2E_PORT=5174 E2E_BACKEND_URL=http://localhost:3011 MAILBOX_PASS=… \
 //              bunx playwright test e2e/reservations/public-booking-circuit.spec.ts --project=chromium
+//   (otro puerto para el doble de Stripe: E2E_STRIPE_STUB_PORT=… en el spec y STRIPE_API_PORT igual
+//   en el backend).
+//
+// Régimen (#361, catálogo abierto): el desayuno es una fila del catálogo (`GET /api/meal-plans`,
+// CRUD por id — ya no existe `PUT /api/meal-plans/:code`) y el motor sólo la muestra con el switch
+// `booking_config.showMealPlans` encendido. La siembra busca la fila `code === 'breakfast'` (o la
+// crea con POST si el hotel la borró), la deja activa a 12 por persona y noche, y prende el switch.
 //
 // Efectos que persisten en la base de prueba: 2 reservas pagadas (una checked_in, una cancelada
 // con reembolso) en fechas aleatorias de 2028, el huésped y sus cobros. El upsell creado se borra
-// al final; la config del motor (enabled/language/instantConfirmation), la política de niños, la
-// amenidad `custom:cuna` de las Double, el régimen, el email del hotel y la config SMTP vuelven a
-// su valor anterior (undo registrado ANTES de cada mutación, deshecho en orden inverso aunque la
-// siembra falle a mitad). Dos excepciones de la API: una `custom:cuna` que no existía queda
-// desactivada (isActive=0), porque `PUT /api/amenities/room/:id` desactiva, no borra; y una
-// `child_policy` que no existía queda sembrada, porque `/api/configuracion` no tiene DELETE.
+// al final; la config del motor (enabled/language/instantConfirmation/showMealPlans), la política
+// de niños, la amenidad `custom:cuna` de las Double, el régimen, el email del hotel y la config
+// SMTP vuelven a su valor anterior (undo registrado ANTES de cada mutación, deshecho en orden
+// inverso aunque la siembra falle a mitad). Dos excepciones de la API: una `custom:cuna` que no
+// existía queda desactivada (isActive=0), porque `PUT /api/amenities/room/:id` desactiva, no
+// borra; y una `child_policy` que no existía queda sembrada, porque `/api/configuracion` no tiene
+// DELETE.
 
 const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
 const FRONTEND = `http://localhost:${process.env.E2E_PORT || '5173'}`
@@ -57,7 +65,9 @@ const STRIPE_WEBHOOK_SECRET = process.env.E2E_STRIPE_WEBHOOK_SECRET || 'whsec_st
 /** Fixture de esta corrida. El nombre del upsell lleva un sufijo único por si el cleanup no llega. */
 const RUN = Date.now().toString(36)
 const UPSELL = { name: `Traslado aeropuerto E2E ${RUN}`, kind: 'per_stay', price: 30 }
-const BREAKFAST = { code: 'breakfast', priceMode: 'per_person_per_night', price: 12 }
+/** Fila `breakfast` del catálogo (seed de #361). `name` es lo que el widget muestra y lo que la
+ *  reserva persiste en `mealPlanName`; `code` es el que llega a `Reservations.mealPlan`. */
+const BREAKFAST = { code: 'breakfast', name: 'Desayuno incluido', priceMode: 'per_person_per_night', price: 12 }
 const CRIB_KEY = 'custom:cuna'
 const CRIB = { key: CRIB_KEY, name: 'Cuna', price: 15, isActive: true }
 const CRIB_TYPE = 'double' // tarjeta "Double"
@@ -137,6 +147,37 @@ async function waitForMail(
   )
 }
 
+// ─── candado de `booking_config` entre archivos ──────────────────────────────────────────────
+// Este spec y meal-plans-switch.spec.ts pisan la MISMA config del hotel (`showMealPlans` on acá,
+// off allá) y Playwright corre los archivos en workers paralelos (`fullyParallel`): sin candado,
+// uno enciende el switch mientras el otro asegura que está apagado. Directorio creado con
+// `mkdirSync` (atómico: EEXIST si ya está tomado) en e2e/.auth (gitignored, lo crea global-setup).
+// Un candado viejo (worker muerto) se descarta por antigüedad.
+const CONFIG_LOCK = 'e2e/.auth/booking-config.lock'
+const CONFIG_LOCK_STALE_MS = 15 * 60_000
+
+async function acquireConfigLock(owner: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      mkdirSync(CONFIG_LOCK)
+      writeFileSync(`${CONFIG_LOCK}/owner`, owner)
+      return
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+    }
+    let stale = false
+    try { stale = Date.now() - statSync(CONFIG_LOCK).mtimeMs > CONFIG_LOCK_STALE_MS } catch { /* lo soltaron entre medio */ }
+    if (stale) { rmSync(CONFIG_LOCK, { recursive: true, force: true }); continue }
+    if (Date.now() > deadline) throw new Error(`${owner}: el candado ${CONFIG_LOCK} sigue tomado después de ${Math.round(timeoutMs / 1000)}s`)
+    await new Promise((r) => setTimeout(r, 2_000))
+  }
+}
+
+function releaseConfigLock(): void {
+  rmSync(CONFIG_LOCK, { recursive: true, force: true })
+}
+
 // ─── seed / cleanup por API admin ────────────────────────────────────────────────────────────
 
 /** Cuerpo de `PUT /api/amenities/room/:id` tal como estaba ANTES de sembrar la cuna. */
@@ -152,6 +193,8 @@ interface Fixture {
   hotelId: string
   upsellId: string
   hotelEmail: string
+  /** Código real de la fila "desayuno" (#361): `breakfast` del seed o el slug de la fila creada. */
+  breakfastCode: string
   undo: Array<[name: string, run: (request: APIRequestContext) => Promise<unknown>]>
 }
 
@@ -206,26 +249,47 @@ async function seedFixture(request: APIRequestContext, fx: Fixture): Promise<voi
   const config = await adminGet(request, '/api/booking-engine/config')
   fx.hotelId = String(config?.hotelId ?? '')
   expect(fx.hotelId, 'booking_config.hotelId').toBeTruthy()
-  if (config.enabled !== true || config.language !== 'es' || config.instantConfirmation !== true) {
-    const prev = { enabled: !!config.enabled, language: String(config.language ?? 'es'), instantConfirmation: !!config.instantConfirmation }
+  // #361: `showMealPlans` encendido — apagado, `/meal-plans` público devuelve `[]` y el widget no
+  // muestra el régimen (ver meal-plans-switch.spec.ts).
+  if (config.enabled !== true || config.language !== 'es' || config.instantConfirmation !== true || config.showMealPlans !== true) {
+    const prev = {
+      enabled: !!config.enabled, language: String(config.language ?? 'es'),
+      instantConfirmation: !!config.instantConfirmation, showMealPlans: !!config.showMealPlans,
+    }
     fx.undo.push(['booking_config', (r) => r.put(`${BACKEND}/api/booking-engine/config`, { headers, data: prev })])
-    const res = await request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: { enabled: true, language: 'es', instantConfirmation: true } })
+    const res = await request.put(`${BACKEND}/api/booking-engine/config`, {
+      headers, data: { enabled: true, language: 'es', instantConfirmation: true, showMealPlans: true },
+    })
     expect(res.ok(), 'seed booking_config').toBeTruthy()
   }
 
   await seedCribFixture(request, fx)
 
-  // Régimen "desayuno" activo, por persona y noche (MR-03 #268).
+  // Régimen "desayuno" activo, por persona y noche (MR-03 #268). #361: catálogo abierto, CRUD por
+  // id — se busca la fila `breakfast` (el seed la trae; si el hotel la borró se crea con POST y el
+  // slug del nombre pasa a ser el código que persiste la reserva) y se pisa con el PUT por id.
   const plans = ((await adminGet(request, '/api/meal-plans')) ?? []) as any[]
-  const prevBreakfast = plans.find((p) => p.code === BREAKFAST.code)
-  fx.undo.push(['meal plan', (r) => r.put(`${BACKEND}/api/meal-plans/${BREAKFAST.code}`, {
-    headers,
-    data: prevBreakfast
-      ? { active: !!prevBreakfast.active, priceMode: prevBreakfast.priceMode, price: Number(prevBreakfast.price) || 0 }
-      : { active: false, priceMode: 'included', price: 0 },
-  })])
-  const mealRes = await request.put(`${BACKEND}/api/meal-plans/${BREAKFAST.code}`, {
-    headers, data: { active: true, priceMode: BREAKFAST.priceMode, price: BREAKFAST.price },
+  let breakfast = plans.find((p) => p.code === BREAKFAST.code)
+  if (!breakfast) {
+    fx.undo.push(['meal plan (alta)', async (r) => {
+      const rows = (unwrap(await (await r.get(`${BACKEND}/api/meal-plans`, { headers })).json()) ?? []) as any[]
+      for (const p of rows.filter((p) => p.name === BREAKFAST.name)) await r.delete(`${BACKEND}/api/meal-plans/${p.id}`, { headers })
+    }])
+    const created = await request.post(`${BACKEND}/api/meal-plans`, {
+      headers, data: { name: BREAKFAST.name, price: BREAKFAST.price, active: true },
+    })
+    expect(created.status(), 'seed meal plan breakfast (POST)').toBe(201)
+    breakfast = unwrap(await created.json())
+  }
+  expect(breakfast?.id, 'fila breakfast del catálogo').toBeTruthy()
+  fx.breakfastCode = String(breakfast.code)
+  const prevBreakfast = {
+    name: String(breakfast.name ?? BREAKFAST.name), active: !!breakfast.active,
+    priceMode: breakfast.priceMode ?? 'included', price: Number(breakfast.price) || 0,
+  }
+  fx.undo.push(['meal plan', (r) => r.put(`${BACKEND}/api/meal-plans/${breakfast.id}`, { headers, data: prevBreakfast })])
+  const mealRes = await request.put(`${BACKEND}/api/meal-plans/${breakfast.id}`, {
+    headers, data: { name: BREAKFAST.name, active: true, priceMode: BREAKFAST.priceMode, price: BREAKFAST.price },
   })
   expect(mealRes.ok(), 'seed meal plan breakfast').toBeTruthy()
 
@@ -322,10 +386,13 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
     'MAILBOX_PASS no está definida: sin buzón no se puede comprobar que el hotel y el huésped reciben sus correos',
   )
   let stub: StripeStub
-  const fixture: Fixture = { hotelId: '', upsellId: '', hotelEmail: '', undo: [] }
+  const fixture: Fixture = { hotelId: '', upsellId: '', hotelEmail: '', breakfastCode: BREAKFAST.code, undo: [] }
   let errors: string[] = []
 
   test.beforeAll(async ({ request }) => {
+    // El candado puede estar en manos de meal-plans-switch.spec.ts (menos de un minuto).
+    test.setTimeout(300_000)
+    await acquireConfigLock('public-booking-circuit', 240_000)
     stub = await startStripeStub({ port: STRIPE_STUB_PORT })
     // El backend pega a este mismo puerto (STRIPE_API_HOST/PORT): si no responde, nada de lo que
     // sigue tiene sentido.
@@ -334,9 +401,14 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
     await seedFixture(request, fixture)
   })
 
-  // Siempre: restaurar la config del hotel, soltar el :4242 y cerrar el IMAP aunque el test falle.
+  // Siempre: restaurar la config del hotel, soltar el candado y el :4242 y cerrar el IMAP aunque
+  // el test falle.
   test.afterAll(async ({ request }) => {
-    await cleanupFixture(request, fixture)
+    try {
+      await cleanupFixture(request, fixture)
+    } finally {
+      releaseConfigLock()
+    }
     stub?.stop()
     await closeMailbox()
   })
@@ -367,14 +439,17 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
       const card = roomCard(page, 'Double')
       await expect(card).toBeVisible({ timeout: 15_000 })
 
-      // 1 adulto + 1 niño de 0 años (bebé) → aparece "¿Necesita cuna?" (la Double publica custom:cuna).
+      // 1 adulto + 1 niño de 0 años (bebé). #341: la cuna es una amenidad más del checklist de la
+      // habitación (`custom:cuna` de la Double), ya no hay pregunta "¿Necesita cuna?" aparte.
       await card.getByRole('button', { name: '+ Double · Niños' }).click()
       await expect(card.getByTestId('baby-badge')).toHaveCount(1)
-      await card.getByTestId('crib-yes').click()
-      await expect(card.getByTestId('crib-yes')).toHaveClass(/bg-cyan/)
+      const crib = card.getByTestId('room-amenity-option').filter({ hasText: CRIB.name }).getByRole('checkbox')
+      await crib.check()
+      await expect(crib).toBeChecked()
+      await expect(card.getByTestId('room-amenities-total')).toContainText(/15[.,]00/)
 
       // Régimen: el desayuno activo del hotel, cotizado para la composición (1 persona × 2 noches).
-      const breakfast = card.getByTestId('meal-plan-option').filter({ hasText: 'Desayuno incluido' })
+      const breakfast = card.getByTestId('meal-plan-option').filter({ hasText: BREAKFAST.name })
       await expect(breakfast).toHaveCount(1)
       await breakfast.click()
       await expect(breakfast).toHaveClass(/bg-navy/)
@@ -432,7 +507,10 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
       // Desglose cobrado por el server: desayuno 12 × 1 persona × 2 noches, extra 30, cuna 15.
       // `mealPlan` viaja desde el carrito (useBooking.ts) por `BookingService.createBooking`: si acá
       // llega `room_only`, el widget mostró el desayuno pero no lo mandó al POST /api/public/booking.
-      expect(pending.mealPlan, 'el régimen elegido en el widget debe llegar a la reserva').toBe(BREAKFAST.code)
+      expect(pending.mealPlan, 'el régimen elegido en el widget debe llegar a la reserva').toBe(f.breakfastCode)
+      // #361: la reserva guarda también el NOMBRE del catálogo (snapshot: si el hotel lo renombra
+      // después, la reserva sigue diciendo lo que el huésped eligió).
+      expect(pending.mealPlanName).toBe(BREAKFAST.name)
       expect(Number(pending.mealPlanTotal)).toBe(BREAKFAST.price * NIGHTS)
       expect(breakdown.mealPlanTotal).toBe(BREAKFAST.price * NIGHTS)
       expect(breakdown.upsellsTotal).toBe(UPSELL.price)
@@ -497,7 +575,12 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
     })
 
     await test.step('6. Check-in → el folio incluye la noche y los extras pagados (desayuno, extra, cuna)', async () => {
-      const res = await request.post(`${BACKEND}/api/reservas/${reservationId}/checkin`, { headers: authHeaders(), data: {} })
+      // HAC-01/REQ-HAC-04 (#258/#259): la reserva web nace sin unidad y el check-in exige una;
+      // el body de POST /checkin la asigna en el mismo paso (una Double libre esas noches).
+      const assignable = ((await adminGet(request, `/api/reservas/${reservationId}/assignable-rooms`)) ?? []) as any[]
+      expect(assignable.length, 'debe haber una Double libre para asignar al check-in').toBeGreaterThan(0)
+      const roomId = String((assignable.find((r) => r.suggested) ?? assignable[0]).id)
+      const res = await request.post(`${BACKEND}/api/reservas/${reservationId}/checkin`, { headers: authHeaders(), data: { roomId } })
       expect(res.status(), await res.text()).toBe(200)
       const checkin = unwrap(await res.json())
       const folioId = String(checkin.folioId ?? '')
@@ -540,7 +623,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
           hotelId: f.hotelId, roomType: CRIB_TYPE,
           guestName: `E2E Cancela ${RUN}`, guestEmail: secondEmail, guestPhone: uniquePhone(),
           checkIn: stay2.checkIn, checkOut: stay2.checkOut, adults: 2,
-          mealPlan: BREAKFAST.code,
+          mealPlan: f.breakfastCode,
           upsells: [{ id: f.upsellId, quantity: 1 }],
           successUrl: `${FRONTEND}/h/${SLUG}/confirm?booking=:id&` + 'token=:token',
           cancelUrl: `${FRONTEND}/book/${SLUG}`,
