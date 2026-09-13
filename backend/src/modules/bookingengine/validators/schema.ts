@@ -32,6 +32,8 @@ export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   approvalDeadlineHours: { type: 'integer' as const, min: 1, max: 168, message: 'approvalDeadlineHours debe ser un entero entre 1 y 168' },
   // #262 REQ-HAC-07 — Horas antes de la llegada para auto-asignar habitación (0–168; 0 = apagado).
   autoAssignBeforeArrivalHours: { type: 'integer' as const, min: 0, max: 168, message: 'autoAssignBeforeArrivalHours debe ser un entero entre 0 y 168' },
+  // #360 — ¿El motor de reservas ofrece los regímenes del hotel? (default true).
+  showMealPlans: { type: 'boolean' as const },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────
@@ -187,15 +189,34 @@ export const UpdateUpsellSchema: Record<string, BodyRule> = {
   sortOrder: { type: 'number' as const },
 }
 
-/** PUT /api/meal-plans/:code — config de un régimen (tasks.md 2.2/2.4). Todo opcional
- *  (partial): `code` es un enum cerrado de 3 elementos, validado en el usecase, no acá. */
-export const UpsertMealPlanSchema: Record<string, BodyRule> = {
-  active: { type: 'boolean' as const },
+// ─── Regímenes de alimentación (#360 — catálogo abierto) ───────────────────
+// `priceMode` es un enum cerrado validado en el usecase (el validador no soporta enums), igual
+// que `kind` de upsells. `price` con `min: 0` acá → 400 en el borde (el usecase lo vuelve a
+// chequear, pero un precio negativo no tiene por qué llegar hasta él). `code` NO viene del body:
+// lo genera el usecase a partir de `name` y no se edita.
+
+/** POST /api/meal-plans — alta de régimen. */
+export const CreateMealPlanSchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, required: true, max: 80 },
+  description: { type: 'text' as const, max: 500 },
   priceMode: { type: 'string' as const },
-  // `min: 0` acá → 400 en el borde (el usecase lo vuelve a chequear, pero un precio negativo no
-  // tiene por qué llegar hasta él).
   price: { type: 'number' as const, min: 0 },
+  active: { type: 'boolean' as const },
+  sortOrder: { type: 'number' as const },
 }
+
+/** PUT /api/meal-plans/:id — edición (partial). */
+export const UpdateMealPlanSchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, max: 80 },
+  description: { type: 'text' as const, max: 500 },
+  priceMode: { type: 'string' as const },
+  price: { type: 'number' as const, min: 0 },
+  active: { type: 'boolean' as const },
+  sortOrder: { type: 'number' as const },
+}
+
+/** @deprecated (#360) — alias del viejo PUT /api/meal-plans/:code; mismo shape que Update. */
+export const UpsertMealPlanSchema: Record<string, BodyRule> = UpdateMealPlanSchema
 
 // ─── Calendario público de tarifas ─────────────────────────────────────────
 // `GET /api/public/hotels/:slug/calendar?from&to&guests&currency`.
