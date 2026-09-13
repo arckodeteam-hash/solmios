@@ -162,6 +162,7 @@ async function acquireConfigLock(owner: string, timeoutMs: number): Promise<void
     try {
       mkdirSync(CONFIG_LOCK)
       writeFileSync(`${CONFIG_LOCK}/owner`, owner)
+      configLockHeld = true
       return
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
@@ -174,7 +175,14 @@ async function acquireConfigLock(owner: string, timeoutMs: number): Promise<void
   }
 }
 
+// Sólo suelta el candado que ESTE proceso tomó: si `acquireConfigLock` falló por timeout,
+// Playwright igual corre `afterAll` y sin esta guarda se borraría el candado del otro spec en
+// plena sección crítica — justo la carrera que el candado evita.
+let configLockHeld = false
+
 function releaseConfigLock(): void {
+  if (!configLockHeld) return
+  configLockHeld = false
   rmSync(CONFIG_LOCK, { recursive: true, force: true })
 }
 
