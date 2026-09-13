@@ -69,7 +69,7 @@ import type { Tier } from '../../cancellation/types'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { buildOccupancyMatrix } from './occupancy-matrix'
-import { buildPublicMealPlans } from './public-meal-plan-lines'
+import { activeMealPlanCatalog, buildPublicMealPlans, visibleMealPlanCatalog } from './public-meal-plan-lines'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
@@ -335,14 +335,23 @@ export async function getPublicRates(
       // sepa para qué ocupación se calculó. SIN convertir a displayCurrency: igual que upsells
       // (D10 en RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency),
       // que es exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
+      // #361 — sólo el catálogo VISIBLE (`booking_config.showMealPlans` + `active`, con `name`/
+      // `description`): switch apagado → `[]`. Compat: sin repo `bookingConfig` cableado no hay
+      // switch que leer y se lista el catálogo activo, como antes de #361.
       mealPlans: deps.mealPlans
-        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, mealPlanPersons, nights)
+        ? buildPublicMealPlans(await visibleMealPlansOf(deps, bookingConfig, hotel.id), hotel.id, mealPlanPersons, nights)
         : [],
     },
   }
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
+
+/** #361 — filas de `meal_plans` que el motor público puede ofrecer (ver `visibleMealPlanCatalog`). */
+async function visibleMealPlansOf(deps: PublicRatesDeps, bookingConfig: any, hotelId: string): Promise<any[]> {
+  const rows = ((await deps.mealPlans!.findMany({ hotelId })) as any[]) ?? []
+  return deps.bookingConfig ? visibleMealPlanCatalog(bookingConfig, rows) : activeMealPlanCatalog(rows)
+}
 
 /**
  * Lee las temporadas del hotel y sus tarifas base. Mismas dos tablas y mismo filtro por hotel

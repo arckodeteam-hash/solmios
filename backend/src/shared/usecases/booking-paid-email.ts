@@ -36,7 +36,7 @@ import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-sche
 import { DEFAULT_PLATFORM_IDENTITY, resolvePlatformIdentity } from '../utils/platform-identity'
 import { confirmationFragments } from './confirmation-email-variables'
 import { reservationGroupRows } from './reservation-group-rows'
-import { ROOM_ONLY, hasMealPlan, mealPlanLabel } from './meal-plan-labels'
+import { ROOM_ONLY, hasMealPlan, reservationMealPlanLabel } from './meal-plan-labels'
 
 export interface BookingPaidEmailDeps {
   emailSender: EmailSender
@@ -142,7 +142,7 @@ function mealPlanLine(row: any, currency: string, language: NotificationLanguage
   if (!hasMealPlan(row?.mealPlan)) return ''
   const words = MEAL_PLAN_WORD[language]
   const units = UPSELL_UNITS[language]
-  const label = escapeHtml(mealPlanLabel(row.mealPlan, language))
+  const label = escapeHtml(reservationMealPlanLabel(row, language))
   const total = Number(row.mealPlanTotal ?? 0) || 0
   if (total <= 0) return `${words.regime}: ${label} (${words.included})`
   const persons = Math.max(1, Number(row.mealPlanPersons ?? 1) || 1)
@@ -304,7 +304,7 @@ export async function sendBookingPaidEmail(
     // distintas (o "sólo alojamiento" si ninguna fila lo trae).
     const mealPlanRows: any[] = siblings.length ? siblings : [reservation]
     const mealPlanLines = mealPlanRows.map(r => mealPlanLine(r, currency, language)).filter(Boolean)
-    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => mealPlanLabel(r.mealPlan, language)))]
+    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => reservationMealPlanLabel(r, language)))]
 
     await emailSender.enqueueNotification({
       to,

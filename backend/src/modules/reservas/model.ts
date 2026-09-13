@@ -94,6 +94,11 @@ export const ReservasModel: ModelDefinition = {
     // feature (el panel muestra "—"). El flujo público escribe también `regime` (más abajo) con
     // el mismo código para que el modal/listado existentes lo muestren.
     mealPlan: { type: 'string' },
+    // #361 — Nombre del régimen tal como estaba en el catálogo `meal_plans` al reservar. El
+    // catálogo es abierto (el hotel renombra/borra filas): panel, correo y recibo muestran este
+    // snapshot y no la fila actual (`shared/usecases/meal-plan-labels.ts:reservationMealPlanLabel`).
+    // `null` en reservas anteriores o sin régimen → cae a la etiqueta por código.
+    mealPlanName: { type: 'string' },
     mealPlanPriceMode: { type: 'string' },
     mealPlanUnitPrice: { type: 'number', default: 0 },
     mealPlanTotal: { type: 'number', default: 0 },

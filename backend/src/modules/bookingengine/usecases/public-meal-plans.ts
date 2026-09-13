@@ -1,27 +1,30 @@
 // bookingengine/usecases/public-meal-plans.ts — GET /api/public/hotels/:slug/meal-plans
-// (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes).
+// (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes → #361 catálogo abierto + switch).
 //
-// Lista los regímenes ACTIVOS del hotel, sub-dominio de bookingengine. Público, sin auth,
-// rate-limited. El widget lo consume en el paso de habitaciones (reemplaza el placeholder
-// estático "Sólo alojamiento / Desayuno / Media pensión / Pensión completa").
+// Lista los regímenes VISIBLES del hotel, sub-dominio de bookingengine. Público, sin auth,
+// rate-limited. El widget lo consume en el paso de habitaciones: opciones con `name` y
+// `description` del catálogo (ya no hay etiquetas fijas por código).
 //
-// A diferencia de public-upsells.ts: "Solo alojamiento" NO tiene fila en `meal_plans` (es la
-// base implícita, siempre disponible, sin costo) — se antepone acá a mano, no viene de la DB.
+// #361 — visibilidad = `booking_config.showMealPlans` (Página pública → Motor de reservas) +
+// `active` por fila, en `LEGACY_ORDER` + `createdAt` (`visibleMealPlanCatalog`, el MISMO filtro
+// que `/rates` y los POST). Switch apagado o hotel sin fila de config → `[]` (200): el widget
+// no muestra la sección. "Solo alojamiento" es una fila `room_only` como cualquier otra: va si
+// el hotel la tiene activa — ya no se antepone acá a mano.
 //
 // Anti-enumeración: mismo 404 para "no existe" y "no activo" (igual que public-upsells.ts).
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { MealPlanDTO, PublicMealPlan } from '../types'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
+import { activeMealPlanCatalog, toPublicMealPlan, visibleMealPlanCatalog } from './public-meal-plan-lines'
 
 export interface PublicMealPlansDeps {
   hotels: RepositoryAdapter<any>
   mealPlans: RepositoryAdapter<MealPlanDTO>
-  /** #276 (MR-11) — toggle Activo/Inactivo del hotel (`booking_config.enabled`). Opcional (compat). */
+  /** #276 (MR-11) — toggle Activo/Inactivo del hotel (`booking_config.enabled`) y #361 —
+   *  switch `showMealPlans`. Opcional (compat callers/tests viejos): sin repo cableado no hay
+   *  switch que leer y se lista el catálogo activo, como antes de #361. */
   bookingConfig?: RepositoryAdapter<any>
 }
-
-/** Orden fijo de presentación — el mismo en admin y widget. */
-const CODE_ORDER: Record<string, number> = { breakfast: 0, half_board: 1, all_inclusive: 2 }
 
 export async function getPublicMealPlans(
   deps: PublicMealPlansDeps,
@@ -35,11 +38,9 @@ export async function getPublicMealPlans(
   const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
   if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
-  const all = await deps.mealPlans.findMany({ hotelId: hotel.id })
-  const items: PublicMealPlan[] = all
-    .filter((m) => Boolean((m as any).active) === true)
-    .sort((a, b) => (CODE_ORDER[a.code] ?? 99) - (CODE_ORDER[b.code] ?? 99))
-    .map((m) => ({ code: m.code, priceMode: m.priceMode, price: Number(m.price ?? 0) }))
+  const rows = (await deps.mealPlans.findMany({ hotelId: hotel.id })) as any[]
+  const visible = deps.bookingConfig ? visibleMealPlanCatalog(bookingConfig, rows) : activeMealPlanCatalog(rows)
+  const items: PublicMealPlan[] = visible.map(toPublicMealPlan)
 
   return { status: 200, body: items }
 }

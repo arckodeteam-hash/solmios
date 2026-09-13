@@ -520,33 +520,53 @@ aparece destildada MUST NOT quedar en el total.
 - WHEN el widget desmonta y vuelve a montar `RoomsStep` (otra instancia de `useGuestComposer()`)
 - THEN la tarjeta muestra la misma composición y las otras tarjetas conservan la suya
 
-### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268)
+### Requirement: Régimen reservable y cobrado por persona y noche desde la web (MR-03, #268; catálogo abierto y switch #361)
 
-El hotel configura sus regímenes en `meal_plans` (`code` breakfast|half_board|all_inclusive,
-`active`, `priceMode` included|per_person_per_night, `price`). "Solo alojamiento" (`room_only`)
-NO tiene fila: es la base implícita, siempre disponible y sin costo. El motor público MUST
+El hotel administra su catálogo de regímenes en Configuración Base (`meal_plans`, #361): un
+catálogo ABIERTO por hotel con `name` (obligatorio), `description`, `price`, `priceMode`
+included|per_person_per_night y `active`; `code` es un slug generado del nombre al crear,
+único por hotel e INMUTABLE (es la identidad que las reservas persisten), y el CRUD es por
+`id`. Cada hotel recibe UNA vez los seeds `DEFAULT_MEAL_PLANS` (`room_only` "Solo
+alojamiento", `breakfast`, `half_board`, `all_inclusive`), todos editables y eliminables:
+"Solo alojamiento" ya NO es una base implícita sin fila sino la fila `room_only` como
+cualquier otra (puede tener precio o estar inactiva/borrada). El switch
+`booking_config.showMealPlans` (Página pública → Motor de reservas, default `false`) decide si
+el motor público ve el catálogo: apagado (o hotel sin fila de config) → `GET /meal-plans`
+devuelve `[]`, `GET /rates` devuelve `mealPlans: []` y `POST /booking` / `/booking-group`
+rechazan cualquier `mealPlan` que no sea vacío/`room_only` con 400 `meal_plan_unavailable`;
+encendido → sólo las filas `active`, ordenadas por `LEGACY_ORDER` (room_only, breakfast,
+half_board, all_inclusive) y después `createdAt`, con `name` y `description`
+(`visibleMealPlanCatalog`, un solo filtro para los tres endpoints). El motor público MUST
 aceptar `mealPlan` por habitación (`mealPlan` en el body single y en cada `rooms[i]` del grupo)
-y resolverlo SIEMPRE contra el catálogo del hotel (`public-meal-plan-lines.ts`): precio y modo
-se releen de `meal_plans`, nunca del body. Un código inexistente, inactivo o de otro hotel
-MUST rechazar con 400 `meal_plan_unavailable` ANTES de escribir nada (a diferencia de las
-amenidades, que se ignoran con warn: el régimen cambia el precio que el huésped vio y eligió).
+y resolverlo SIEMPRE contra el catálogo visible del hotel (`public-meal-plan-lines.ts`): la
+fila manda siempre que exista y esté visible, INCLUIDA `room_only`; precio y modo se releen
+de `meal_plans`, nunca del body. Sin `mealPlan` en el body no se cobra nada (nadie eligió);
+`room_only` explícito sin fila visible es la base implícita sin costo (`line: null`,
+compat con reservas del panel y widgets viejos). Un código inexistente, inactivo, de otro
+hotel o con el switch apagado MUST rechazar con 400 `meal_plan_unavailable` ANTES de escribir
+nada (a diferencia de las amenidades, que se ignoran con warn: el régimen cambia el precio que
+el huésped vio y eligió).
 El importe es `price × persons × nights` con `persons = adultos efectivos + niños con plaza`
 (`childComposition.effectiveAdults + payingChildren`; bebés y niños libres no pagan) y
 `included` → 0. Entra en `subtotal` ANTES de promo e impuestos, se desglosa en
-`priceBreakdown.mealPlanTotal` y se resume en `notes` ("Régimen: Media pensión (2 pers × 3
-noches = 90.00)"). Cada fila `reservations` persiste el snapshot congelado `mealPlan`,
+`priceBreakdown.mealPlanTotal` y se resume en `notes` con el NOMBRE del catálogo ("Régimen:
+Desayuno y cena (2 pers × 3 noches = 90.00)"). Cada fila `reservations` persiste el snapshot
+congelado `mealPlan` (code), `mealPlanName` (nombre del catálogo al reservar, #361),
 `mealPlanPriceMode`, `mealPlanUnitPrice`, `mealPlanTotal` (unitario por habitación física;
 en un grupo `priceBreakdown.mealPlanTotal` = Σ líneas × quantity) y escribe `regime` con el
-mismo código para el panel. Cambiar `meal_plans` después NO altera reservas existentes.
-Reservas anteriores o creadas desde el panel quedan `mealPlan = null` (el panel muestra "—" o
-el `regime` manual). `GET /rates` MUST devolver `mealPlans[]` activos con `perNight`,
-`totalForStay`, `persons` y `nights` ya resueltos para `guests + children` (misma fórmula,
-en `chargeCurrency`, sin conversión) y la confirmación pública (`public-reservation.ts`)
-expone el snapshot. El widget y la landing ofrecen el régimen como radio por habitación
-("Solo alojamiento" + los activos; los no ofrecidos visibles y deshabilitados, sin
-"Próximamente"), muestran el importe antes de agregar al carrito y la fila "Régimen: … · N
-pers × M noches" en el desglose; el panel lo muestra en el modal, filtra por él en el listado
-y lo ve recepción en las llegadas del día.
+mismo código para el panel. Cambiar, renombrar o borrar filas de `meal_plans` después NO
+altera reservas existentes: panel, correo de confirmación y recibo muestran `mealPlanName`
+(`reservationMealPlanLabel`) y sólo caen a la etiqueta fija por código en reservas sin
+nombre. Reservas anteriores o creadas desde el panel quedan `mealPlan = null` (el panel
+muestra "—" o el `regime` manual). `GET /rates` MUST devolver `mealPlans[]` visibles con
+`name`, `description`, `perNight`, `totalForStay`, `persons` y `nights` ya resueltos para
+`guests + children` (misma fórmula, en `chargeCurrency`, sin conversión) y la confirmación
+pública (`public-reservation.ts`) expone el snapshot (incluido `mealPlanName`). El widget y
+la landing ofrecen el régimen como radio por habitación SÓLO con lo que devuelve el catálogo
+público (con su nombre; sección oculta si viene vacío), muestran el importe antes de agregar
+al carrito y la fila "Régimen: … · N pers × M noches" en el desglose; el panel muestra el
+nombre persistido en el modal, filtra por él en el listado y lo ve recepción en las llegadas
+del día.
 
 #### Scenario: Desayuno por persona y noche con niño con plaza y bebé
 
@@ -558,9 +578,31 @@ y lo ve recepción en las llegadas del día.
 
 #### Scenario: Régimen inactivo en ese hotel
 
-- GIVEN `half_board` inactivo (o inexistente) para el hotel
+- GIVEN `showMealPlans = true` y la fila `half_board` inactiva (o borrada, o de otro hotel)
+  en el catálogo del hotel
 - WHEN se reserva con `mealPlan: 'half_board'`
 - THEN 400 `meal_plan_unavailable` y ninguna reserva ni huésped creados
+
+#### Scenario: Switch de regímenes apagado
+
+- GIVEN `booking_config.showMealPlans = false` (o hotel sin fila de config) y `breakfast`
+  activo en el catálogo
+- WHEN `GET /api/public/hotels/:slug/meal-plans`
+- THEN 200 `[]` (y `GET /rates` devuelve `mealPlans: []`)
+- AND WHEN `POST /booking` con `mealPlan: 'breakfast'`
+- THEN 400 `meal_plan_unavailable` y nada creado
+- AND `POST /booking` con `mealPlan: 'room_only'` (o sin `mealPlan`) → 201 sin régimen
+  (`mealPlan = 'room_only'`, `mealPlanName = null`, `mealPlanTotal = 0`)
+
+#### Scenario: Snapshot del nombre y fila room_only con precio
+
+- GIVEN `showMealPlans = true`, `breakfast` renombrado a "Desayuno buffet" y la fila
+  `room_only` activa con `price 5` por persona y noche
+- WHEN se reserva con `mealPlan: 'breakfast'`
+- THEN `Reservations.mealPlanName = 'Desayuno buffet'` y `notes` contiene "Régimen: Desayuno
+  buffet"; renombrar o borrar la fila después no cambia lo persistido
+- AND WHEN se reserva con `mealPlan: 'room_only'` (2 adultos + 1 niño con plaza, 3 noches)
+- THEN `mealPlanTotal = 45`, `mealPlan = 'room_only'`, `mealPlanName = 'Solo alojamiento'`
 
 #### Scenario: Régimen incluido y snapshot congelado
 

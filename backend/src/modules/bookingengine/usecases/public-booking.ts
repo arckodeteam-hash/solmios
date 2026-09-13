@@ -91,23 +91,32 @@ import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shar
 import { CRIB_AMENITY_KEY, customRoomAmenities, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
 import { round2 } from '../../../shared/utils/money'
-import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
-import { MEAL_PLAN_LABELS } from '../../../shared/usecases/meal-plan-labels'
+import { activeMealPlanCatalog, resolveMealPlanLine, visibleMealPlanCatalog, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
+import { MEAL_PLAN_LABELS, mealPlanLabel } from '../../../shared/usecases/meal-plan-labels'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput, type BookingEngineMealPlanInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
 const MS_PER_DAY = 86_400_000
 
-/** MR-03 (#268) — etiqueta ES del régimen para `notes` (vistazo rápido del recepcionista). Se
- *  reusa desde public-booking-group.ts. Un código desconocido cae al código crudo. */
+/** MR-03 (#268) — etiqueta ES fija por código histórico. Desde #361 es sólo el fallback de
+ *  `mealPlanLineName` (vía `mealPlanLabel`) para filas sin `name`. */
 export const MEAL_PLAN_LABEL: Record<string, string> = MEAL_PLAN_LABELS.es
+
+/** #361 — nombre del régimen que se persiste (`Reservations.mealPlanName`), va a `notes` y a la
+ *  fila `reservation_addons`: el `name` del catálogo al reservar; si la fila no lo tiene
+ *  (anterior al backfill), la etiqueta ES por código (`MEAL_PLAN_LABEL[code]`, `room_only` →
+ *  "Sólo alojamiento", desconocido → el código crudo). */
+export function mealPlanLineName(line: MealPlanLine): string {
+  const name = typeof line.name === 'string' ? line.name.trim() : ''
+  return name || mealPlanLabel(line.code, 'es')
+}
 
 /** MR-03 (#268) — la línea de régimen resuelta como input de `buildBookingEngineAddons` (fila
  *  `reservation_addons` kind `meal_plan`, #269). `units` = unidades físicas con ese régimen
  *  (1 en el flujo individual; `quantity` de la línea en el grupo). */
 export function mealPlanAddonInput(line: MealPlanLine, units = 1): BookingEngineMealPlanInput {
   return {
-    label: MEAL_PLAN_LABEL[line.code] ?? line.code,
+    label: mealPlanLineName(line),
     unitPrice: line.unitPrice,
     persons: line.persons,
     nights: line.nights,
@@ -115,10 +124,27 @@ export function mealPlanAddonInput(line: MealPlanLine, units = 1): BookingEngine
   }
 }
 
-/** MR-03 (#268) — texto de `notes` para una línea de régimen resuelta (nunca `room_only`). */
+/** MR-03 (#268) — texto de `notes` para una línea de régimen resuelta (con el nombre del catálogo, #361). */
 export function mealPlanNote(line: MealPlanLine): string {
-  const label = MEAL_PLAN_LABEL[line.code] ?? line.code
+  const label = mealPlanLineName(line)
   return `Régimen: ${label}${line.total > 0 ? ` (${line.persons} pers × ${line.nights} noches = ${line.total.toFixed(2)})` : ' (incluido)'}`
+}
+
+/**
+ * #361 — Catálogo de regímenes que el motor público puede ofrecer/cobrar: las filas del hotel
+ * pasadas por `visibleMealPlanCatalog` (`booking_config.showMealPlans` + `active`). Compat:
+ * sin repo `bookingConfig` cableado (callers/tests viejos) no hay switch que leer y se usa el
+ * catálogo activo, como antes de #361 — mismo criterio que el gate `hotels` de más abajo.
+ * Se reusa desde public-booking-group.ts.
+ */
+export async function loadVisibleMealPlans(
+  extraDeps: PublicBookingExtraDeps | undefined,
+  bookingConfig: any,
+  hotelId: string,
+): Promise<any[]> {
+  if (!extraDeps?.mealPlans) return []
+  const rows = ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? []
+  return extraDeps.bookingConfig ? visibleMealPlanCatalog(bookingConfig, rows) : activeMealPlanCatalog(rows)
 }
 
 export interface UpsellItem {
@@ -475,16 +501,20 @@ export async function createPublicBookingDirect(
   // criterio que el precio de la habitación. Va ANTES de la promo (su subtotal lo incluye) y
   // ANTES de tocar la DB. Sin repo cableado no se puede validar → se rechaza (no se ignora en
   // silencio como las amenidades: el huésped eligió el régimen y vio su precio).
+  // #361 — el catálogo es el VISIBLE (`booking_config.showMealPlans` + `active`): con el switch
+  // apagado cualquier código distinto de vacío/`room_only` cae en `meal_plan_unavailable`. La
+  // fila `room_only` (ahora real, puede tener precio) MANDA si está visible; sin fila visible,
+  // vacío/`room_only` sigue siendo la base implícita sin cargo (`line: null`).
   const mealPlanCode = typeof rawMealPlan === 'string' ? rawMealPlan.trim().slice(0, 40) : ''
   const mealPlanPersons = childComposition.effectiveAdults + childComposition.payingChildren
   let mealPlanLine: MealPlanLine | null = null
-  if (mealPlanCode && mealPlanCode !== ROOM_ONLY_CODE) {
-    if (!extraDeps?.mealPlans) {
-      logger?.warn('createPublicBookingDirect: mealPlan en el body sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId, mealPlan: mealPlanCode })
-      return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: mealPlanCode } }
-    }
+  if (mealPlanCode && mealPlanCode !== ROOM_ONLY_CODE && !extraDeps?.mealPlans) {
+    logger?.warn('createPublicBookingDirect: mealPlan en el body sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId, mealPlan: mealPlanCode })
+    return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: mealPlanCode } }
+  }
+  if (mealPlanCode && extraDeps?.mealPlans) {
     const resolved = resolveMealPlanLine(
-      ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? [], mealPlanCode, hotelId, mealPlanPersons, nights,
+      await loadVisibleMealPlans(extraDeps, bookingConfig, hotelId), mealPlanCode, hotelId, mealPlanPersons, nights,
     )
     if (!resolved.ok) return { status: 400, body: { error: 'meal_plan_unavailable', mealPlan: mealPlanCode } }
     mealPlanLine = resolved.line
@@ -906,7 +936,10 @@ export async function createPublicBookingDirect(
         // MR-03 (#268) — snapshot congelado del régimen (precio releído del catálogo arriba) +
         // su total, ya dentro de `totalAmount`. `regime` lleva el mismo código para que el
         // modal/listado del panel (campo manual preexistente) lo muestren sin cambios.
+        // #361 — `mealPlanName`: el nombre del catálogo al reservar (el catálogo es editable y
+        // borrable; el panel, el correo y el recibo muestran este snapshot, no la fila actual).
         mealPlan: mealPlanLine?.code ?? ROOM_ONLY_CODE,
+        mealPlanName: mealPlanLine ? mealPlanLineName(mealPlanLine) : null,
         mealPlanPriceMode: mealPlanLine?.priceMode ?? null,
         mealPlanUnitPrice: mealPlanLine?.unitPrice ?? 0,
         mealPlanTotal: round2(mealPlanTotal),

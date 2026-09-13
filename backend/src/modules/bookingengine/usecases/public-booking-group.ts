@@ -61,7 +61,7 @@ import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
-import { mealPlanNote, mealPlanAddonInput, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation, roomTypeProfile, unionRoomAmenities, CRIB_UNAVAILABLE_NOTE } from './public-booking'
+import { mealPlanNote, mealPlanAddonInput, mealPlanLineName, loadVisibleMealPlans, normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation, roomTypeProfile, unionRoomAmenities, CRIB_UNAVAILABLE_NOTE } from './public-booking'
 import { resolveMealPlanLine, ROOM_ONLY_CODE, type MealPlanLine } from './public-meal-plan-lines'
 import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
 import { round2 } from '../../../shared/utils/money'
@@ -326,18 +326,18 @@ export async function createPublicBookingGroup(
     ? (((await extraDeps.upsells.findMany({ hotelId })) as any[]) ?? [])
     : null
 
-  // MR-03 (#268) — catálogo de regímenes del hotel, UNA lectura para todo el grupo. Solo si alguna
-  // línea pidió uno distinto de `room_only`; sin repo cableado no se puede validar → se rechaza
+  // MR-03 (#268) — catálogo de regímenes del hotel, UNA lectura para todo el grupo. Sin repo
+  // cableado no se puede validar → una línea que pida uno distinto de `room_only` se rechaza
   // (a diferencia de las amenidades: el régimen cambia el precio que el huésped vio).
+  // #361 — es el catálogo VISIBLE (`booking_config.showMealPlans` + `active`, ver
+  // `loadVisibleMealPlans`); se lee siempre que haya repo porque la fila `room_only` (ahora real)
+  // puede tener precio y una línea con `room_only` explícito la tiene que cobrar.
   const anyLineHasMealPlan = lines.some((l) => !!l.mealPlan && l.mealPlan !== ROOM_ONLY_CODE)
-  let mealPlansCatalog: any[] = []
-  if (anyLineHasMealPlan) {
-    if (!extraDeps?.mealPlans) {
-      logger?.warn('createPublicBookingGroup: mealPlan en rooms[] sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId })
-      return { status: 400, body: { error: 'meal_plan_unavailable' } }
-    }
-    mealPlansCatalog = ((await extraDeps.mealPlans.findMany({ hotelId })) as any[]) ?? []
+  if (anyLineHasMealPlan && !extraDeps?.mealPlans) {
+    logger?.warn('createPublicBookingGroup: mealPlan en rooms[] sin extraDeps.mealPlans cableado — se rechaza (no se puede validar ni cotizar)', { hotelId })
+    return { status: 400, body: { error: 'meal_plan_unavailable' } }
   }
+  const mealPlansCatalog: any[] = await loadVisibleMealPlans(extraDeps, bookingConfig, hotelId)
 
   for (const [lineIndex, line] of lines.entries()) {
     // MR-10 (#275, Opción A): edades de ESTA línea — las declaradas, o sintetizadas a
@@ -385,7 +385,7 @@ export async function createPublicBookingGroup(
     // no pagan), mismo criterio que public-booking.ts. Cualquier línea inválida corta ANTES de
     // la tx (todo o nada, igual que el resto del grupo).
     let lineMealPlan: MealPlanLine | null = null
-    if (line.mealPlan && line.mealPlan !== ROOM_ONLY_CODE) {
+    if (line.mealPlan) {
       const resolved = resolveMealPlanLine(
         mealPlansCatalog, line.mealPlan, hotelId, composition.effectiveAdults + composition.payingChildren, nights,
       )
@@ -766,6 +766,8 @@ export async function createPublicBookingGroup(
             // MR-03 (#268) — snapshot UNITARIO del régimen de la línea (persons de ESTA línea,
             // quantity 1) + `regime` con el mismo código para el modal/listado del panel.
             mealPlan: line.mealPlan?.code ?? ROOM_ONLY_CODE,
+            // #361 — nombre del catálogo al reservar (snapshot: el catálogo es editable/borrable).
+            mealPlanName: line.mealPlan ? mealPlanLineName(line.mealPlan) : null,
             mealPlanPriceMode: line.mealPlan?.priceMode ?? null,
             mealPlanUnitPrice: line.mealPlan?.unitPrice ?? 0,
             mealPlanTotal: line.mealPlan?.total ?? 0,

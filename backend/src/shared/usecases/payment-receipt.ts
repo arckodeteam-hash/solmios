@@ -15,7 +15,7 @@
 
 import { escapeHtml } from '../../services/notification-renderer'
 import { round2 } from '../utils/money'
-import { hasMealPlan, mealPlanLabel } from './meal-plan-labels'
+import { hasMealPlan, reservationMealPlanLabel } from './meal-plan-labels'
 
 export type ReceiptLineKind = 'room' | 'meal_plan' | 'upsell' | 'child_amenity' | 'room_amenity' | 'discount' | 'tax' | 'total'
 
@@ -100,6 +100,8 @@ export interface ReceiptReservationLike {
   roomAmenities?: Array<{ id?: string; key?: string; name?: string; price?: number; quantity?: number; total?: number }> | null
   /** MR-03 (#268) — snapshot del régimen de ESTA fila (código, precio por persona y noche, personas, total). */
   mealPlan?: string | null
+  /** #361 — nombre del catálogo al reservar (snapshot); manda sobre la etiqueta por código. */
+  mealPlanName?: string | null
   mealPlanUnitPrice?: number | null
   mealPlanTotal?: number | null
   mealPlanPersons?: number | null
@@ -172,7 +174,7 @@ function nightsOf(row: ReceiptReservationLike): number {
  */
 function mealPlanLineOf(row: ReceiptReservationLike): ReceiptLine[] {
   if (!hasMealPlan(row.mealPlan)) return []
-  const label = mealPlanLabel(row.mealPlan, 'es')
+  const label = reservationMealPlanLabel(row, 'es')
   const amount = round2(num(row.mealPlanTotal))
   if (amount <= 0) return [{ kind: 'meal_plan', description: `Régimen · ${label} (incluido)`, amount: 0 }]
   const persons = Math.max(1, Math.floor(num(row.mealPlanPersons) || 1))
