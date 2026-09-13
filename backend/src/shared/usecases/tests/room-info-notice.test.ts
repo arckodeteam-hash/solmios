@@ -167,6 +167,12 @@ describe('roomInfoSendState', () => {
     expect(roomInfoSendState([{ response: KEY, channel: 'email', status: 'queued' }], KEY, 'email')).toBe('sent')
   })
 
+  it('delivered o read (webhook de Meta) con la misma key+canal → sent (#327)', () => {
+    expect(roomInfoSendState([{ response: KEY, channel: 'whatsapp_api', status: 'delivered' }], KEY, 'whatsapp_api')).toBe('sent')
+    expect(roomInfoSendState([{ response: KEY, channel: 'whatsapp_api', status: 'read' }], KEY, 'whatsapp_api')).toBe('sent')
+    expect(roomInfoSendState([failed('whatsapp_api'), { response: KEY, channel: 'whatsapp_api', status: 'read' }], KEY, 'whatsapp_api')).toBe('sent')
+  })
+
   it('3 failed → exhausted; 2 failed → pending (se reintenta)', () => {
     expect(ROOM_INFO_MAX_ATTEMPTS).toBe(3)
     expect(roomInfoSendState([failed(), failed(), failed()], KEY, 'email')).toBe('exhausted')
