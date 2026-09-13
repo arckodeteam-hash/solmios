@@ -61,7 +61,12 @@ function makeOrm(opts: { rooms?: any[]; configs?: any[] } = {}) {
       if (model === 'Rooms') return rooms.filter((r) => !q.type || r.type === q.type)
       return []
     },
-    create: async (_model: string, payload: any) => { created.push(payload); return payload },
+    create: async (model: string, payload: any) => {
+      // #306: la ingesta ahora también crea la ficha Guests; sólo acumulamos Reservations.
+      if (model !== 'Reservations') return payload
+      created.push(payload)
+      return payload
+    },
     update: async () => {},
   }
   return { orm, created }

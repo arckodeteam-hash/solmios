@@ -72,6 +72,12 @@
       **Aceptación**: `bun test src/modules/canales/tests/booking-ingestion-by-type.test.ts` — 2 OTA
       del mismo tipo y fechas → 2 filas sin unidad; tipo desconocido → nota TIPO SIN MAPEAR;
       `rg AUTO-ASSIGNED backend/src` → 0.
+- [x] 3.8 (#306, REQ-RWP-03) La ingesta crea o reutiliza la ficha `guests` del huésped que trajo la
+      OTA (`find-or-create-guest`, dedupe por email/teléfono) y enlaza `guestId` en la reserva; sin
+      datos de cliente no hay ficha; si enlazar falla la reserva se ingesta igual sin `guestId`.
+      **Aceptación**: `bun test src/modules/canales/tests/booking-ingestion-guest.test.ts` — fila
+      con `guestId` y ficha "John Doe"; mismo mail → una ficha; `Guests.create` falla → reserva
+      igual; sin customer → sin ficha.
 
 ## 4. Pantalla admin (REQ-CAN-08)
 
