@@ -20,6 +20,10 @@ export const BookingConfigModel: ModelDefinition = {
     maxNights: { type: 'number', default: 30 },
     cancellationPolicy: { type: 'string', default: 'flexible' },
     showComparison: { type: 'boolean', default: true },
+    // #361 — Si es false, el motor público NO muestra regímenes (ni en /meal-plans ni en /rates,
+    // y POST /booking rechaza uno). El catálogo (`meal_plans`) se administra aparte en
+    // Configuración Base; este switch sólo decide si el huésped lo ve. Default off.
+    showMealPlans: { type: 'boolean', default: false },
     googleAdsEnabled: { type: 'boolean', default: false },
     whatsappConfirmation: { type: 'boolean', default: false },
     instantConfirmation: { type: 'boolean', default: true },
@@ -118,10 +122,11 @@ export const UpsellModel: ModelDefinition = {
   },
 }
 
-// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación: catálogo FIJO
-// de 3 códigos configurables por hotel (no es un catálogo abierto como `upsells` — el hotel no
-// inventa nombres, solo activa/desactiva y fija precio de cada uno de los 3). "Solo alojamiento"
-// es la base implícita (siempre disponible, sin costo) — no tiene fila acá.
+// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) → #361 — Regímenes de alimentación: catálogo
+// ABIERTO por hotel (antes: enum fijo de 3 códigos). El hotel crea/edita/borra regímenes con
+// nombre y descripción propios desde Configuración Base; `usecases/meal-plans-crud.ts` siembra
+// 4 ejemplos (room_only/breakfast/half_board/all_inclusive) una sola vez por hotel (marcador
+// `configuration.meal_plans_seeded`). "Solo alojamiento" pasa a ser una fila más (`room_only`).
 //
 // Separado de `Upsells` a propósito (decisión de producto 2026-08-22, ver
 // specs/booking-content-policies/spec.md): el régimen es una elección ÚNICA por habitación
@@ -134,9 +139,17 @@ export const MealPlanModel: ModelDefinition = {
   fields: {
     id: { type: 'string', required: true },
     hotelId: { type: 'string', required: true, indexed: true },
-    // 'breakfast' | 'half_board' | 'all_inclusive' — enum cerrado, validado en el usecase.
+    // #361 — Slug del nombre (minúsculas, sin acentos, `[a-z0-9]+` unidos por `_`, máx 40),
+    // único por hotel (`_2`, `_3`… si choca). Se genera al crear y NUNCA cambia al editar: es la
+    // identidad que las reservas persisten en `mealPlan`/`regime`.
     code: { type: 'string', required: true },
-    // Toggle: ¿el hotel ofrece este régimen? Default false (el hotel lo activa a propósito).
+    // #361 — Nombre visible ("Desayuno incluido"). Obligatorio al crear (1..80); las filas
+    // anteriores a #361 lo reciben por backfill (migrate-db / ensureSeeded).
+    name: { type: 'string' },
+    // #361 — Descripción corta opcional (≤300) para el widget.
+    description: { type: 'string' },
+    // Toggle: ¿el hotel ofrece este régimen? Default false en el modelo; el usecase crea con true
+    // y los seeds lo fijan explícito.
     active: { type: 'boolean', default: false },
     // 'included' (ya está en la tarifa, sin cargo aparte) | 'per_person_per_night' (con costo).
     priceMode: { type: 'string', default: 'included' },

@@ -17,9 +17,9 @@ import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { registerBookingengineModels, UpsellModel, MealPlanModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
 export { BookingengineService } from './service'
-export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan } from './types'
+export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, CreateMealPlanDTO, UpdateMealPlanDTO, UpsertMealPlanDTO, PublicMealPlan } from './types'
 export type { BookingengineSockets } from './sockets'
-export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema } from './validators/schema'
+export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, CreateMealPlanSchema, UpdateMealPlanSchema, UpsertMealPlanSchema } from './validators/schema'
 // Calendario público de tarifas (`GET /api/public/hotels/:slug/calendar`).
 export { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from './validators/schema'
 export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './usecases/public-calendar'
@@ -186,14 +186,16 @@ export function BookingengineModule(opts?: {
         router.delete('/api/upsells/:id', upsellGuard('delete'), (req: any) => controller.destroyUpsell(req))
         // GET /api/booking-engine lo sirve el módulo `reservas`, que se registra antes y gana por orden de ruta.
 
-        // tasks.md 2.2/2.4 — Regímenes de alimentación admin. Catálogo fijo: solo view/edit
-        // (sin create/delete, mismo motivo que ACTIONS['mealplans'] en shared/permissions.ts).
-        const mealPlanGuard = (action: 'view' | 'edit') => [
+        // tasks.md 2.2/2.4 → #361 — Regímenes de alimentación admin. Catálogo ABIERTO por hotel:
+        // CRUD completo por id (`mealplans:*` en shared/permissions.ts), mismo guard que upsells.
+        const mealPlanGuard = (action: 'view' | 'create' | 'edit' | 'delete') => [
           ...guard('mealplans', action),
           requireUserType('merchant'),
         ]
         router.get('/api/meal-plans', mealPlanGuard('view'), (req: any) => controller.listMealPlans(req))
-        router.put('/api/meal-plans/:code', mealPlanGuard('edit'), (req: any) => controller.upsertMealPlan(req))
+        router.post('/api/meal-plans', mealPlanGuard('create'), (req: any) => controller.createMealPlan(req))
+        router.put('/api/meal-plans/:id', mealPlanGuard('edit'), (req: any) => controller.updateMealPlan(req))
+        router.delete('/api/meal-plans/:id', mealPlanGuard('delete'), (req: any) => controller.destroyMealPlan(req))
       }
 
       // Público (sin auth) — TODOS con rate-limit por IP (F0 0.5). Límites y claves por

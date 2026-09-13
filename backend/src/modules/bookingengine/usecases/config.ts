@@ -31,6 +31,7 @@ export class ConfigUseCase {
         maxNights: 30,
         cancellationPolicy: 'flexible',
         showComparison: true,
+        showMealPlans: false,
         googleAdsEnabled: false,
         whatsappConfirmation: false,
         instantConfirmation: true,
@@ -53,6 +54,10 @@ export class ConfigUseCase {
     // #262 REQ-HAC-07 — mismo criterio para filas anteriores a `autoAssignBeforeArrivalHours`.
     if (config.autoAssignBeforeArrivalHours === null || config.autoAssignBeforeArrivalHours === undefined) {
       config = { ...config, autoAssignBeforeArrivalHours: DEFAULT_AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS }
+    }
+    // #361 — filas anteriores al switch de regímenes: off por defecto (el motor no los muestra).
+    if (config.showMealPlans === null || config.showMealPlans === undefined) {
+      config = { ...config, showMealPlans: false }
     }
     return config
   }

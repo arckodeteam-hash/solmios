@@ -24,6 +24,7 @@ import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
 import { RESTAURANT_ORDER_PAYMENTS_SEQ_INDEX_SQL, RESTAURANT_ORDERS_BACKFILL_AMOUNTS_SQL } from './src/modules/restaurant/model'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
+import { DEFAULT_MEAL_PLANS, MEAL_PLANS_SEEDED_KEY } from './src/modules/bookingengine/usecases/meal-plans-crud'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
 // ─── Adapter condicional (mismo criterio que composition-root.ts) ──────────
@@ -1286,6 +1287,54 @@ async function seedCurrencyConfig(): Promise<void> {
   } catch { /* hotels/configuration puede no existir en runs tempranos — seguro */ }
 }
 
+// ─── #361: regímenes de alimentación — catálogo abierto + seeds por hotel ─────────────────
+// `meal_plans` deja de ser un enum fijo de 3 códigos: gana `name`/`description` y cada hotel
+// recibe 4 ejemplos (`DEFAULT_MEAL_PLANS`, la misma lista que usa `ensureSeeded` del usecase para
+// los hoteles creados después del deploy) UNA sola vez, con marcador `configuration.meal_plans_seeded`.
+// Con marcador no se toca nada: si el hotel borró un ejemplo, no reaparece. `booking_config` gana el
+// switch `showMealPlans` (0 = el motor público no muestra regímenes). Las tablas las crea el ORM
+// (RUN_MIGRATE): si todavía no existen, se avisa y se aplica en la próxima corrida.
+async function ensureMealPlanSeeds(): Promise<void> {
+  try {
+    await addColumnIfMissing('meal_plans', 'name', 'TEXT')
+    await addColumnIfMissing('meal_plans', 'description', 'TEXT')
+    await addColumnIfMissing('booking_config', 'showMealPlans', 'INTEGER DEFAULT 0')
+
+    const hotels = (await db.query("SELECT id FROM hotels")) as Array<{ id: string }>
+    let seededHotels = 0
+    let backfilled = 0
+    let inserted = 0
+    for (const h of hotels) {
+      const marked = await countRows("SELECT COUNT(*) as c FROM configuration WHERE hotelId=? AND key=?", [h.id, MEAL_PLANS_SEEDED_KEY])
+      if (marked > 0) continue
+      const existing = (await db.query("SELECT id, code, name FROM meal_plans WHERE hotelId=?", [h.id])) as Array<{ id: string; code: string; name: string | null }>
+      for (const def of DEFAULT_MEAL_PLANS) {
+        const row = existing.find((r) => r.code === def.code)
+        if (row) {
+          if (!(row.name ?? '').trim()) {
+            await run("UPDATE meal_plans SET name=?, description=?, updatedAt=? WHERE id=?", [def.name, def.description ?? null, now(), row.id])
+            backfilled++
+          }
+          continue
+        }
+        await run(
+          "INSERT INTO meal_plans (id, hotelId, code, name, description, active, priceMode, price, createdAt, updatedAt) VALUES (?,?,?,?,?,1,'included',0,?,?)",
+          [uuid(), h.id, def.code, def.name, def.description ?? null, now(), now()],
+        )
+        inserted++
+      }
+      await run(
+        "INSERT INTO configuration (id, hotelId, key, value, updatedAt) VALUES (?,?,?,?,?) ON CONFLICT(hotelId, key) DO NOTHING",
+        [uuid(), h.id, MEAL_PLANS_SEEDED_KEY, JSON.stringify({ seeded: true }), now()],
+      )
+      seededHotels++
+    }
+    console.log(`meal_plans (#361): ${seededHotels} hotel(es) sembrado(s) — ${inserted} fila(s) creada(s), ${backfilled} nombre(s) rellenado(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'meal_plans seeds (#361)', missingTable: 'meal_plans/booking_config/configuration', consequence: 'Sin esto los regímenes existentes quedan sin nombre (invisibles en el motor) y los hoteles no reciben los 4 ejemplos hasta que abran el catálogo desde el panel.' })
+  }
+}
+
 // ─── Seed: contactos de emergencia (default GLOBAL) ──────────────────────
 // Se guarda en hotelId='platform': la lectura de configuración cae a 'platform'
 // cuando el hotel no tiene la key propia, así que esto es el punto de partida
@@ -1472,6 +1521,10 @@ async function main(): Promise<void> {
 
   // contactos de emergencia — default global en hotelId='platform' (idempotente)
   await seedEmergencyContacts()
+
+  // #361 — regímenes: columnas name/description + booking_config.showMealPlans + 4 ejemplos por
+  // hotel una sola vez (marcador configuration.meal_plans_seeded). Idempotente.
+  await ensureMealPlanSeeds()
 
   // Tablas para app móvil housekeeping
   await createHousekeepingMobileTables()

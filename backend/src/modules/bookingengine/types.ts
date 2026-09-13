@@ -14,6 +14,8 @@ export interface BookingConfigDTO {
   maxNights: number
   cancellationPolicy: string
   showComparison: boolean
+  /** #361 — Si es false el motor público no muestra regímenes (default false). */
+  showMealPlans: boolean
   googleAdsEnabled: boolean
   whatsappConfirmation: boolean
   instantConfirmation: boolean
@@ -39,6 +41,7 @@ export interface UpdateBookingConfigDTO {
   maxNights?: number
   cancellationPolicy?: string
   showComparison?: boolean
+  showMealPlans?: boolean
   googleAdsEnabled?: boolean
   whatsappConfirmation?: boolean
   instantConfirmation?: boolean
@@ -364,10 +367,11 @@ export interface UpsellCurrentUser {
   userType?: string
 }
 
-// ─── Regímenes de alimentación (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes) ────────────
-// Catálogo FIJO de 3 códigos (no abierto como upsells) — "Solo alojamiento" es la base
-// implícita, sin fila propia. Ver el comentario de `MealPlanModel` en model.ts.
-export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+// ─── Regímenes de alimentación (tasks.md 2.2/2.4 → #361 catálogo abierto) ─────────────────
+// #361: el catálogo dejó de ser un enum fijo de 3 códigos. `code` es un slug generado del nombre
+// al crear (único por hotel, inmutable) — el alias `MealPlanCode` se conserva como `string` para
+// no romper imports existentes (public-meal-plan-lines, reservas).
+export type MealPlanCode = string
 export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 
 /** DTO de lectura. Espeja los campos persistidos en `meal_plans` (model.ts). */
@@ -375,6 +379,9 @@ export interface MealPlanDTO {
   id: string
   hotelId: string
   code: MealPlanCode
+  /** #361 — Nombre visible. Filas anteriores a #361 pueden traerlo vacío hasta el backfill. */
+  name: string
+  description?: string | null
   active: boolean
   priceMode: MealPlanPriceMode
   price: number
@@ -382,16 +389,30 @@ export interface MealPlanDTO {
   updatedAt: string
 }
 
-/** Body del PUT /api/meal-plans/:code. */
-export interface UpsertMealPlanDTO {
-  active?: boolean
-  priceMode?: MealPlanPriceMode
+/** Body del POST /api/meal-plans (#361). `code` NO se manda: se deriva del nombre. */
+export interface CreateMealPlanDTO {
+  name: string
+  description?: string | null
   price?: number
+  /** Si no viene se deriva: price > 0 → 'per_person_per_night', si no 'included'. */
+  priceMode?: MealPlanPriceMode
+  /** Default true al crear. */
+  active?: boolean
 }
+
+/** Body del PUT /api/meal-plans/:id (#361). Todo opcional (partial); `code` nunca cambia. */
+export type UpdateMealPlanDTO = Partial<CreateMealPlanDTO>
+
+/** @deprecated #361 — alias de compat del PUT por código; usar `UpdateMealPlanDTO`. */
+export type UpsertMealPlanDTO = UpdateMealPlanDTO
 
 /** Fila pública (lo que el widget necesita) — sin hotelId/timestamps. */
 export interface PublicMealPlan {
   code: MealPlanCode
+  /** #361 — Nombre visible del régimen. Lo llena el catálogo público (subtarea 2); opcional
+   *  en el tipo sólo por compat con los builders anteriores a #361. */
+  name?: string
+  description?: string | null
   priceMode: MealPlanPriceMode
   price: number
 }

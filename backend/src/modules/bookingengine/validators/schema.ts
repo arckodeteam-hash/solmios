@@ -22,6 +22,8 @@ export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   maxNights: { type: 'number' as const, min: 1 },
   cancellationPolicy: { type: 'string' as const },
   showComparison: { type: 'boolean' as const },
+  // #361 — mostrar regímenes en el motor público (default false en el usecase).
+  showMealPlans: { type: 'boolean' as const },
   googleAdsEnabled: { type: 'boolean' as const },
   whatsappConfirmation: { type: 'boolean' as const },
   instantConfirmation: { type: 'boolean' as const },
@@ -187,15 +189,32 @@ export const UpdateUpsellSchema: Record<string, BodyRule> = {
   sortOrder: { type: 'number' as const },
 }
 
-/** PUT /api/meal-plans/:code — config de un régimen (tasks.md 2.2/2.4). Todo opcional
- *  (partial): `code` es un enum cerrado de 3 elementos, validado en el usecase, no acá. */
-export const UpsertMealPlanSchema: Record<string, BodyRule> = {
-  active: { type: 'boolean' as const },
-  priceMode: { type: 'string' as const },
+// ─── Regímenes de alimentación (#361, catálogo abierto) ────────────────────
+// `code` NO va en el body: lo deriva el usecase del nombre (slug único por hotel) y no cambia
+// al editar. `priceMode` (enum) y la derivación por precio se validan en el usecase.
+
+/** POST /api/meal-plans — alta de régimen. */
+export const CreateMealPlanSchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, required: true, max: 80 },
+  description: { type: 'string' as const, max: 300 },
   // `min: 0` acá → 400 en el borde (el usecase lo vuelve a chequear, pero un precio negativo no
   // tiene por qué llegar hasta él).
   price: { type: 'number' as const, min: 0 },
+  priceMode: { type: 'string' as const },
+  active: { type: 'boolean' as const },
 }
+
+/** PUT /api/meal-plans/:id — edición (partial). */
+export const UpdateMealPlanSchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, max: 80 },
+  description: { type: 'string' as const, max: 300 },
+  price: { type: 'number' as const, min: 0 },
+  priceMode: { type: 'string' as const },
+  active: { type: 'boolean' as const },
+}
+
+/** @deprecated #361 — alias de compat del PUT por código; usar `UpdateMealPlanSchema`. */
+export const UpsertMealPlanSchema = UpdateMealPlanSchema
 
 // ─── Calendario público de tarifas ─────────────────────────────────────────
 // `GET /api/public/hotels/:slug/calendar?from&to&guests&currency`.

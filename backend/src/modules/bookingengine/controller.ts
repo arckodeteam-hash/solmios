@@ -17,15 +17,16 @@ import {
   TrackEventSchema,
   CreateUpsellSchema,
   UpdateUpsellSchema,
-  UpsertMealPlanSchema,
+  CreateMealPlanSchema,
+  UpdateMealPlanSchema,
 } from './validators/schema'
 // F2 2.3 — Upsells: el controller invoca los usecases directamente (sin pasar por service)
 // porque no hay lógica de orquestación entre el HTTP y el usecase. Mantener el service <
 // 200 líneas deja fuera los métodos passthrough. Mismo patrón que hotel-media/controller.ts
 // cuando un sub-dominio no amerita agrandar el facade principal.
 import * as upsellsCrud from './usecases/upsells-crud'
-// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación, mismo patrón
-// que upsells arriba (sub-dominio, sin service, catálogo fijo de 3 códigos).
+// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) → #361 — Regímenes de alimentación, mismo
+// patrón que upsells arriba (sub-dominio, sin service, catálogo abierto por hotel).
 import * as mealPlansCrud from './usecases/meal-plans-crud'
 import { getPublicMealPlans } from './usecases/public-meal-plans'
 // #292 — el catálogo global de amenidades para niños/bebés (REQ-01 #233) se dio de baja: una
@@ -148,12 +149,13 @@ export class BookingengineController {
     return { upsells: this.upsellRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
   }
 
-  /** Deps para los usecases de regímenes de alimentación. Mismo criterio que upsells arriba. */
+  /** Deps para los usecases de regímenes de alimentación. Mismo criterio que upsells arriba.
+   *  #361 — `configRepo` (la `Configuration` KV, pese al nombre) guarda el marcador de seeds. */
   private assertMealPlansDeps(): mealPlansCrud.MealPlansCrudDeps {
-    if (!this.mealPlanRepo || !this.userRepoForUpsells || !this.authImpl) {
+    if (!this.mealPlanRepo || !this.userRepoForUpsells || !this.authImpl || !this.configRepo) {
       throw new Error('bookingengine: meal-plans deps no cableadas en el controller')
     }
-    return { mealPlans: this.mealPlanRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
+    return { mealPlans: this.mealPlanRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl, configuration: this.configRepo }
   }
 
   // ─── Admin (protegido con auth) ──────────────────────
@@ -734,22 +736,38 @@ export class BookingengineController {
     return { status: 200, body: result }
   }
 
-  // ─── Regímenes de alimentación admin (tasks.md 2.2/2.4) ─────────────────────
-  // Catálogo FIJO de 3 códigos — sin create/delete, solo list + upsert por código.
+  // ─── Regímenes de alimentación admin (tasks.md 2.2/2.4 → #361) ─────────────
+  // Catálogo ABIERTO por hotel: list + create + update/delete por id (mismo shape que upsells).
+  // `code` lo genera el usecase (slug del nombre) y no se edita.
 
-  /** GET /api/meal-plans — los 3 regímenes del hotel del admin (con defaults). */
+  /** GET /api/meal-plans — regímenes del hotel del admin (siembra los ejemplos la primera vez). */
   async listMealPlans(req: HttpRequest) {
     this.logger.info('GET /api/meal-plans', { hotelId: (req as any).hotelId })
     const result = await mealPlansCrud.list(this.assertMealPlansDeps(), req.user as UpsellCurrentUser)
     return { status: 200, body: result }
   }
 
-  /** PUT /api/meal-plans/:code — activar/desactivar + precio de un régimen. */
-  async upsertMealPlan(req: HttpRequest) {
-    this.logger.info('PUT /api/meal-plans/:code', { code: req.params.code })
-    const data = validateBodySchema(UpsertMealPlanSchema, req.body)
-    const updated = await mealPlansCrud.upsert(this.assertMealPlansDeps(), req.params.code, data as any, req.user as UpsellCurrentUser)
+  /** POST /api/meal-plans — alta de régimen. */
+  async createMealPlan(req: HttpRequest) {
+    this.logger.info('POST /api/meal-plans', { hotelId: (req as any).hotelId })
+    const data = validateBodySchema(CreateMealPlanSchema, req.body)
+    const created = await mealPlansCrud.create(this.assertMealPlansDeps(), data as any, req.user as UpsellCurrentUser)
+    return { status: 201, body: created }
+  }
+
+  /** PUT /api/meal-plans/:id — edición (partial): nombre/descripción/precio/activo. */
+  async updateMealPlan(req: HttpRequest) {
+    this.logger.info('PUT /api/meal-plans/:id', { id: req.params.id })
+    const data = validateBodySchema(UpdateMealPlanSchema, req.body)
+    const updated = await mealPlansCrud.update(this.assertMealPlansDeps(), req.params.id, data as any, req.user as UpsellCurrentUser)
     return { status: 200, body: updated }
+  }
+
+  /** DELETE /api/meal-plans/:id — borrado físico. */
+  async destroyMealPlan(req: HttpRequest) {
+    this.logger.info('DELETE /api/meal-plans/:id', { id: req.params.id })
+    const result = await mealPlansCrud.remove(this.assertMealPlansDeps(), req.params.id, req.user as UpsellCurrentUser)
+    return { status: 200, body: result }
   }
 }
 
