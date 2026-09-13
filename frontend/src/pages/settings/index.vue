@@ -485,6 +485,13 @@
          "dónde conecto X" había que adivinarlo. "Políticas para factura" NO se fue con ellas: no
          es una conexión con nadie, es texto al pie de la factura — vive en Condiciones. -->
 
+    <!-- ========== REGÍMENES (#361) ========== -->
+    <div v-if="activeTab === 'mealplans'" class="space-y-6">
+      <SectionCard title="Regímenes" subtitle="Solo alojamiento, desayuno, media pensión… Los que estén activos se ofrecen en el motor de reservas cuando Página pública → Motor de reservas tiene encendido “Mostrar regímenes”.">
+        <MealPlansEditor :currency="form.currency || 'USD'" />
+      </SectionCard>
+    </div>
+
     <!-- EMERGENCIAS -->
     <div v-if="(activeTab as string) === 'emergency'" class="space-y-6">
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
@@ -560,6 +567,8 @@ import WhatsappUsageCard from '@/components/features/WhatsappUsageCard.vue'
 // Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
 // reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
+// #361: CRUD de regímenes de alimentación (antes en Página pública → Motor de reservas).
+import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
@@ -891,6 +900,10 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       { value: 'hotel', label: 'Hotel' },
       { value: 'conditions', label: 'Condiciones' },
+      // #361: catálogo abierto de regímenes (solo alojamiento, desayuno, media pensión…). El
+      // editor vivía en Página pública → Motor de reservas; allá queda sólo el switch que decide
+      // si el motor los muestra ("Mostrar regímenes en el motor de reservas").
+      { value: 'mealplans', label: 'Regímenes' },
       // "Tipos de habitación" se mudó a Habitaciones (pestaña "Tipos y capacidad"): definir el
       // inventario estaba partido entre dos entradas distintas del mismo menú.
       { value: 'emergency', label: 'Emergencias' },

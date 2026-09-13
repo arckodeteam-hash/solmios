@@ -21,6 +21,10 @@ export interface BookingConfig {
   autoAssignBeforeArrivalHours: number
   cancellationPolicy: string
   showComparison: boolean
+  /** #361 — si el motor público ofrece los regímenes ACTIVOS del catálogo (Configuración Base →
+   *  Regímenes). Apagado (default) el widget no muestra la sección y el backend devuelve [] en
+   *  `/public/hotels/:slug/meal-plans`. */
+  showMealPlans: boolean
   googleAdsEnabled: boolean
   whatsappConfirmation: boolean
   instantConfirmation: boolean

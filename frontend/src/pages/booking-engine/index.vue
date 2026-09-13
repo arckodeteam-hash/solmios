@@ -326,17 +326,9 @@
                 </div>
               </div>
 
-              <!-- tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación:
-                   catálogo fijo de 3 códigos (antes era un placeholder decorativo en el widget,
-                   ver RoomsStep.vue/BookingModal.vue). Mismo lugar de embed que la política de
-                   cancelación de arriba: ambas son "condiciones de la reserva" que configura el
-                   dueño del motor de reservas. -->
-              <div class="mt-4">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes de alimentación</label>
-                <div class="rounded-xl border border-border p-4">
-                  <MealPlansEditor />
-                </div>
-              </div>
+              <!-- #361: el editor de regímenes (catálogo) se mudó a Configuración Base →
+                   Regímenes. Acá queda sólo el switch "Mostrar regímenes en el motor de
+                   reservas" (Opciones de Reserva, más abajo). -->
 
               <!-- Texto display opcional (fallback). Colapsado por defecto; si ya tenía contenido
                    se muestra expandido para no esconder data existente del merchant. -->
@@ -504,6 +496,15 @@
                     <div class="text-[10px] text-text-muted">Mostrar ahorro vs Booking/Expedia</div>
                   </div>
                 </label>
+                <!-- #361: el catálogo se administra en Configuración Base → Regímenes; este
+                     switch sólo decide si el motor público los ofrece (apagado por default). -->
+                <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
+                  <input id="booking-engine-mostrar-regimenes" name="showMealPlans" type="checkbox" v-model="form.showMealPlans" class="w-4 h-4 text-cyan rounded" />
+                  <div>
+                    <div class="text-sm font-bold text-navy">Mostrar regímenes en el motor de reservas</div>
+                    <div class="text-[10px] text-text-muted">Ofrece al huésped los regímenes activos de Configuración Base → Regímenes</div>
+                  </div>
+                </label>
               </div>
             </div>
           </div>
@@ -564,7 +565,6 @@ import { useToast } from '@/composables/useToast'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
-import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()
@@ -640,6 +640,7 @@ function defaultConfig(): BookingConfig {
     autoAssignBeforeArrivalHours: AUTO_ASSIGN_BEFORE_ARRIVAL_HOURS_DEFAULT,
     cancellationPolicy: '',
     showComparison: false,
+    showMealPlans: false,
     googleAdsEnabled: false,
     whatsappConfirmation: false,
     instantConfirmation: false,

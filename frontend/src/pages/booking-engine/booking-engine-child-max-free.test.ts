@@ -41,7 +41,6 @@ const MOUNT_OPTS = {
     stubs: {
       RouterLink: true,
       CancellationPolicyEditor: true,
-      MealPlansEditor: true,
     },
   },
 }
