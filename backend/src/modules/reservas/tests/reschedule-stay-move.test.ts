@@ -4,13 +4,15 @@
 // Con la reserva `checked_in`, `updateReservation` rechaza el `roomId` (409 `use_assign_endpoint`):
 // mover una estadía también mueve el folio abierto y los estados de las habitaciones. El commit
 // del reagendado delega en `assignRoom` ANTES del update, y el update lleva sólo fechas/total.
+// #314: las dos escrituras van en UNA tx (`transactionWithRepos`) con los efectos (sockets,
+// auditoría, ceilingGuard) diferidos al commit — si el update falla, la habitación no queda movida.
 // Repos in-memory: molde de `assign-room.test.ts` (folios/rooms/transaction) y de
 // `reschedule-pricing.test.ts` (deps de reschedule). Auth REAL, como en assign-room.test.ts.
 import { describe, it, expect } from 'bun:test'
 import { Auth, ConflictError } from 'arckode-framework'
 import { commitReschedule, type RescheduleDeps } from '../usecases/reschedule'
 import type { RoomAssignmentDeps } from '../usecases/assign-room'
-import type { FolioRoomWriter } from '../usecases/reservas-queries'
+import type { FolioRoomWriter, TxRepos } from '../usecases/reservas-queries'
 import type { AuditEntry } from '../../../shared/usecases/audit'
 import { paidSourceFrom } from '../../../shared/usecases/reservation-paid'
 
@@ -53,7 +55,43 @@ function fakeQueries(folios: any[], rooms: any[], repo: any) {
     updateRoom: async (roomId, patch) => { Object.assign(rooms.find((r) => r.id === roomId), patch) },
     updateReservation: async (id, patch) => { await repo.update(id, patch) },
   }
-  const q = { txCalls: 0, transaction: async (fn: (w: FolioRoomWriter) => Promise<any>) => { q.txCalls++; return fn(writer) } }
+  const q = { txCalls: 0, writer, transaction: async (fn: (w: FolioRoomWriter) => Promise<any>) => { q.txCalls++; return fn(writer) } }
+  return q as any
+}
+
+/**
+ * `transactionWithRepos` (#314) sobre los mismos arrays: entrega repos "atados a la tx" y, si el
+ * callback lanza, restaura el snapshot de reservas/folios/habitaciones (lo que en el ORM real hace
+ * el ROLLBACK). `failUpdateWhen` hace fallar `tx.repo.update` para un patch dado (el 2º update).
+ * `inTx` deja ver desde afuera si un efecto se emitió ANTES del commit.
+ */
+function fakeTxQueries(folios: any[], rooms: any[], repo: any, roomRepo: any, opts: { failUpdateWhen?: (patch: any) => boolean } = {}) {
+  const txRepo = {
+    ...repo,
+    update: async (id: string, patch: any) => {
+      if (opts.failUpdateWhen?.(patch)) throw new Error('db down en el 2º update')
+      return repo.update(id, patch)
+    },
+  }
+  const base = fakeQueries(folios, rooms, txRepo)
+  const q = {
+    ...base, txCalls: 0, txWithReposCalls: 0, inTx: false,
+    transactionWithRepos: async (fn: (tx: TxRepos) => Promise<any>) => {
+      q.txWithReposCalls++
+      const snapshot = { rows: repo.rows.map((r: any) => ({ ...r })), folios: folios.map((f) => ({ ...f })), rooms: rooms.map((r) => ({ ...r })) }
+      q.inTx = true
+      try {
+        return await fn({ repo: txRepo, roomRepo, writer: base.writer })
+      } catch (e) {
+        repo.rows.splice(0, repo.rows.length, ...snapshot.rows)
+        folios.splice(0, folios.length, ...snapshot.folios)
+        rooms.splice(0, rooms.length, ...snapshot.rooms)
+        throw e
+      } finally {
+        q.inTx = false
+      }
+    },
+  }
   return q as any
 }
 
@@ -70,10 +108,20 @@ const reserva = (over: Record<string, any> = {}) => ({
 
 type Harness = {
   deps: RescheduleDeps; rooms: any[]; folios: any[]; updates: any[]; audits: AuditEntry[]; emitted: any[]
-  queries: { txCalls: number }
+  queries: { txCalls: number; txWithReposCalls?: number; inTx?: boolean }
+  effectsInTx: boolean[]
 }
 
-function harness(res: any, opts: { withAssignment?: boolean; otherReservations?: any[] } = {}): Harness {
+type HarnessOpts = {
+  withAssignment?: boolean
+  otherReservations?: any[]
+  /** #314: queries con `transactionWithRepos` (rollback por snapshot); `failUpdateWhen` tumba el update que matchee. */
+  tx?: { failUpdateWhen?: (patch: any) => boolean }
+  /** `auditPort.record` lanza (audit log caído): la auditoría nunca debe tumbar la operación. */
+  failAudit?: boolean
+}
+
+function harness(res: any, opts: HarnessOpts = {}): Harness {
   const updates: any[] = []
   const audits: AuditEntry[] = []
   const emitted: any[] = []
@@ -81,17 +129,22 @@ function harness(res: any, opts: { withAssignment?: boolean; otherReservations?:
   const folios = [{ id: 'f1', reservationId: 'r1', hotelId: HOTEL, roomId: 'room-1', status: 'open' }]
   const repo = memRepo([res, ...(opts.otherReservations ?? [])], updates)
   const roomRepo = memRepo(rooms)
-  const sockets = { onRoomAssigned: async (d: any) => { emitted.push(d) } }
-  const queries = fakeQueries(folios, rooms, repo)
+  const queries = opts.tx ? fakeTxQueries(folios, rooms, repo, roomRepo, opts.tx) : fakeQueries(folios, rooms, repo)
+  // Cada efecto (socket, auditoría, ceilingGuard) anota si corrió con la tx todavía abierta
+  // (#314: los efectos van DESPUÉS del commit). Sin tx fake, `inTx` es siempre false.
+  const effectsInTx: boolean[] = []
+  const sockets = { onRoomAssigned: async (d: any) => { effectsInTx.push(Boolean(queries.inTx)); emitted.push(d) } }
   const roomAssignment: RoomAssignmentDeps = {
     repo, roomRepo, blockRepo: memRepo([]), queries, sockets,
-    auditPort: { record: async (e) => { audits.push(e) } }, logger: noopLogger, cache: noopCache, auth: realAuth,
+    auditPort: { record: async (e) => { effectsInTx.push(Boolean(queries.inTx)); if (opts.failAudit) throw new Error('audit log caído'); audits.push(e) } },
+    logger: noopLogger, cache: noopCache, auth: realAuth,
   }
   const deps: RescheduleDeps = {
     repo, roomRepo, logger: noopLogger, cache: noopCache, sockets, paidOf, addonsOf: async () => [],
+    ceilingGuard: async () => { effectsInTx.push(Boolean(queries.inTx)) },
     ...(opts.withAssignment === false ? {} : { roomAssignment }),
   }
-  return { deps, rooms, folios, updates, audits, emitted, queries }
+  return { deps, rooms, folios, updates, audits, emitted, queries, effectsInTx }
 }
 
 describe('commitReschedule — estadía en curso a otra habitación (REQ-HAC-03)', () => {
@@ -171,5 +224,72 @@ describe('commitReschedule — estadía en curso a otra habitación (REQ-HAC-03)
     expect(h.folios[0].roomId).toBe('room-1')
     expect(h.emitted).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-2', previousRoomId: 'room-1' }])
     expect(h.audits.map((a) => a.action)).toEqual(['reservation.room_assigned', 'reservation.room_type_changed'])
+  })
+
+  // ─── #314: assignRoom + update de fechas/total en UNA tx, efectos después del commit ────────
+  it('si falla el update de fechas/total, la habitación NO queda movida', async () => {
+    // El 2º update (fechas/total) es el que lleva `checkOut`; el de assignRoom sólo trae `roomId`.
+    const h = harness(reserva(), { tx: { failUpdateWhen: (patch) => patch.checkOut !== undefined } })
+    const call = commitReschedule(h.deps, 'r1', { roomId: 'room-2', checkOut: '2030-01-13' }, user)
+    await expect(call).rejects.toThrow('db down en el 2º update')
+
+    // Una sola tx real (transactionWithRepos) y ninguna anidada: assignRoom corrió adentro con el shim.
+    expect(h.queries.txWithReposCalls).toBe(1)
+    expect(h.queries.txCalls).toBe(0)
+    // assignRoom SÍ llegó a escribir el roomId dentro de la tx (el fallo es posterior)...
+    expect(h.updates.some((u) => u.roomId === 'room-2')).toBe(true)
+    // ...pero el rollback lo deshizo todo: reserva, folio y estados quedan como estaban.
+    const persisted = h.deps.repo.rows[0]
+    expect(persisted.roomId).toBe('room-1')
+    expect(persisted.roomType).toBe('standard')
+    expect(persisted.checkOut).toBe('2030-01-12')
+    expect(persisted.totalAmount).toBe(200)
+    expect(h.folios[0].roomId).toBe('room-1')
+    expect(h.rooms.find((r) => r.id === 'room-1').status).toBe('occupied')
+    expect(h.rooms.find((r) => r.id === 'room-2').status).toBe('available')
+    // Y no se publicó nada de un estado que se revirtió: ni socket, ni auditoría, ni ceilingGuard.
+    expect(h.emitted).toEqual([])
+    expect(h.audits).toEqual([])
+    expect(h.effectsInTx).toEqual([])
+  })
+
+  it('con la tx real, assignRoom y el update van adentro y los efectos (socket, auditoría, ceilingGuard) salen recién tras el commit', async () => {
+    const h = harness(reserva(), { tx: {} })
+    const result = await commitReschedule(h.deps, 'r1', { roomId: 'room-2', checkOut: '2030-01-13' }, user)
+
+    expect(h.queries.txWithReposCalls).toBe(1)
+    expect(h.queries.txCalls).toBe(0)
+    // Mismo resultado que sin tx: folio, estados, reserva y total.
+    expect(h.folios[0].roomId).toBe('room-2')
+    expect(h.rooms.find((r) => r.id === 'room-1').status).toBe('cleaning')
+    expect(h.rooms.find((r) => r.id === 'room-2').status).toBe('occupied')
+    expect(result.reservation.roomId).toBe('room-2')
+    expect(result.reservation.checkOut).toBe('2030-01-13')
+    expect(result.reservation.totalAmount).toBe(400)
+    // Los mismos efectos que antes, en el mismo orden, y NINGUNO con la tx abierta.
+    expect(h.emitted).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-2', previousRoomId: 'room-1' }])
+    expect(h.audits.map((a) => a.action)).toEqual(['reservation.room_assigned', 'reservation.room_type_changed'])
+    expect(h.effectsInTx.length).toBe(4) // 2 auditorías + onRoomAssigned + ceilingGuard
+    expect(h.effectsInTx.every((inTx) => inTx === false)).toBe(true)
+  })
+
+  it('si falla la auditoría diferida, commitReschedule NO rechaza y la habitación queda movida', async () => {
+    // Antes de #314 el audit de assignRoom corría en línea vía `auditSafely` ("nunca rompe la operación").
+    // Diferido al commit tiene que seguir siendo así: la reserva ya está movida, un audit log caído no puede
+    // hacer que el caller reciba un error por algo que sí se aplicó.
+    const h = harness(reserva(), { tx: {}, failAudit: true })
+    const result = await commitReschedule(h.deps, 'r1', { roomId: 'room-2', checkOut: '2030-01-13' }, user)
+
+    expect(result.reservation.roomId).toBe('room-2')
+    expect(result.reservation.checkOut).toBe('2030-01-13')
+    expect(result.reservation.totalAmount).toBe(400)
+    expect(h.deps.repo.rows[0].roomId).toBe('room-2')
+    expect(h.folios[0].roomId).toBe('room-2')
+    expect(h.rooms.find((r) => r.id === 'room-1').status).toBe('cleaning')
+    expect(h.rooms.find((r) => r.id === 'room-2').status).toBe('occupied')
+    // Se intentó auditar (2 veces) y el resto de los efectos corrió igual: el fallo no corta la cola.
+    expect(h.audits).toEqual([])
+    expect(h.effectsInTx.length).toBe(4) // 2 auditorías (fallidas) + onRoomAssigned + ceilingGuard
+    expect(h.emitted).toEqual([{ reservationId: 'r1', hotelId: HOTEL, roomId: 'room-2', previousRoomId: 'room-1' }])
   })
 })

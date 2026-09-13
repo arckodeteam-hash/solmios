@@ -963,8 +963,12 @@ nueva y la anterior (best-effort).
 ya no valida solape por su cuenta: sólo cuando cambian fechas sin cambiar habitación re-chequea la
 unidad actual con `assertNoRoomConflict`. `POST /:id/reschedule` con cambio de habitación manda
 `allowTypeChange: true` (el quote ya decidió tipo y precio) y, si la reserva está `checked_in`,
-pre-valida el rango nuevo y delega en `assignRoom` antes de persistir fechas/total (deuda #314: las
-dos escrituras no comparten transacción).
+pre-valida el rango nuevo y corre `assignRoom` y el update de fechas/total en UNA transacción real
+del ORM (#314, `moveStayAndUpdate` con `ReservasQueries.transactionWithRepos`, patrón
+checkin/checkout): repos atados al tx, `assignRoom` recibe un `queries.transaction` que no anida
+BEGIN, y sockets, auditoría, `ceilingGuard` e invalidación de caché se encolan y salen recién
+después del commit. Si el segundo update falla, el rollback deja reserva, folio y estados de
+ambas habitaciones como estaban y no se publica ningún efecto.
 
 **Código de puerta al asignar (`connectors/reservas-ttlock.ts`, `payment-requests-ttlock.ts`).**
 `onRoomAssigned` genera el código TTLock sólo si la reserva está confirmada/pagada (`confirmed`,
@@ -978,6 +982,11 @@ best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
 - **GIVEN** una reserva `checked_in` en la 101 con folio abierto
 - **WHEN** `POST /assign-room {roomId: 102}`
 - **THEN** 200; `folios.roomId = 102`; la 101 queda `cleaning` y la 102 `occupied`; audit `reservation.room_assigned {from: 101, to: 102}`; `onRoomAssigned` con `previousRoomId: 101` y TTLock reemplaza el código
+
+#### Scenario: reagendar una estadía a otra habitación es atómico (#314)
+- **GIVEN** una reserva `checked_in` en la 101 con folio abierto
+- **WHEN** `POST /:id/reschedule {roomId: 102, checkOut: +1 noche}` y el update de fechas/total falla tras mover la habitación
+- **THEN** el error se propaga y NADA queda a medias: `reservations.roomId = 101`, fechas y total viejos, `folios.roomId = 101`, la 101 sigue `occupied` y la 102 `available`; ni `onRoomAssigned`, ni auditoría, ni `ceilingGuard` se emitieron. En el caso feliz el resultado y los efectos son los mismos de siempre, pero todos salen después del commit
 
 #### Scenario: la ocupada no aparece y el tipo distinto exige el flag
 - **GIVEN** la 101 ocupada esas noches por otra reserva y la 201 de tipo `suite` para una reserva `double`
