@@ -10,6 +10,10 @@
 //  - `priceMode` se DERIVA del precio si no viene explícito (price > 0 → 'per_person_per_night').
 //  - `ensureSeeded` siembra 4 ejemplos (`DEFAULT_MEAL_PLANS`) UNA sola vez por hotel, con
 //    marcador en `configuration` (key `meal_plans_seeded`): si el hotel borra uno, no reaparece.
+//  - Concurrencia: dos índices UNIQUE son los árbitros — `configuration(hotelId, key)` decide
+//    quién siembra (el que crea el marcador) y `meal_plans(hotelId, code)` (migrate-db
+//    `idx_meal_plans_hotel_code`) decide el slug al crear. El chequeo en JS sólo elige el
+//    candidato; el perdedor de la carrera (`isUniqueViolation`) ignora o reintenta.
 //
 // Reglas de negocio (mismas que upsells-crud.ts):
 //  - Ownership IDOR: `assertOwnershipOf` re-lee el hotelId del usuario vía userRepo, no confía
@@ -20,6 +24,7 @@
 // Anti-patrón ORM (mem 1805): TODO campo persistido está declarado en model.ts.
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
+import { isUniqueViolation } from '../../../shared/utils/db-errors'
 import type {
   MealPlanDTO, MealPlanPriceMode, CreateMealPlanDTO, UpdateMealPlanDTO, UpsellCurrentUser,
 } from '../types'
@@ -30,6 +35,8 @@ export const MEAL_PLAN_NAME_MAX = 80
 export const MEAL_PLAN_DESCRIPTION_MAX = 300
 /** Longitud máxima del slug (`code`), sufijo `_N` incluido. */
 export const MEAL_PLAN_CODE_MAX = 40
+/** Reintentos de `create` cuando el slug candidato pierde la carrera contra el UNIQUE (hotelId, code). */
+export const MEAL_PLAN_CODE_MAX_ATTEMPTS = 5
 
 /** Marcador en `configuration` que indica que el hotel ya recibió los seeds (#361). */
 export const MEAL_PLANS_SEEDED_KEY = 'meal_plans_seeded'
@@ -158,9 +165,15 @@ function sortForList(rows: MealPlanDTO[]): MealPlanDTO[] {
 /**
  * Siembra `DEFAULT_MEAL_PLANS` en el hotel UNA sola vez (#361). Idempotente por marcador en
  * `configuration` (`meal_plans_seeded`): sin marcador → completa name/description de las filas
- * viejas que coincidan por code y sin name, crea las que falten, y deja el marcador. Con marcador
- * no toca nada — si el hotel borró un ejemplo, no reaparece. Espeja `ensureMealPlanSeeds()` de
- * `migrate-db.ts` (el deploy) para los hoteles creados después del deploy.
+ * viejas que coincidan por code y sin name, crea las que falten. Con marcador no toca nada — si
+ * el hotel borró un ejemplo, no reaparece. Espeja `ensureMealPlanSeeds()` de `migrate-db.ts` (el
+ * deploy) para los hoteles creados después del deploy.
+ *
+ * Orden anti-carrera (dos `list()` simultáneos del mismo hotel sin filas): el marcador se crea
+ * PRIMERO y el UNIQUE (hotelId, key) de `configuration` elige un ganador; el perdedor recibe la
+ * violación y sale sin insertar nada. Sólo quien ganó el marcador siembra/backfillea, y cada
+ * insert va envuelto por si igual choca con `idx_meal_plans_hotel_code` (una fila creada a mano
+ * entre medio): se ignora, ya existe.
  */
 export async function ensureSeeded(
   deps: Pick<MealPlansCrudDeps, 'mealPlans' | 'configuration'>,
@@ -168,6 +181,13 @@ export async function ensureSeeded(
 ): Promise<void> {
   const marker = await deps.configuration.findOne({ hotelId, key: MEAL_PLANS_SEEDED_KEY })
   if (marker) return
+
+  try {
+    await deps.configuration.create({ hotelId, key: MEAL_PLANS_SEEDED_KEY, value: { seeded: true } } as any)
+  } catch (e: unknown) {
+    if (isUniqueViolation(e)) return // otro request ganó el marcador y está sembrando
+    throw e
+  }
 
   const existing = await deps.mealPlans.findMany({ hotelId })
   for (const def of DEFAULT_MEAL_PLANS) {
@@ -178,17 +198,20 @@ export async function ensureSeeded(
       }
       continue
     }
-    await deps.mealPlans.create({
-      hotelId,
-      code: def.code,
-      name: def.name,
-      description: def.description ?? null,
-      active: true,
-      priceMode: 'included',
-      price: 0,
-    } as any)
+    try {
+      await deps.mealPlans.create({
+        hotelId,
+        code: def.code,
+        name: def.name,
+        description: def.description ?? null,
+        active: true,
+        priceMode: 'included',
+        price: 0,
+      } as any)
+    } catch (e: unknown) {
+      if (!isUniqueViolation(e)) throw e // ya existe (creada entre medio): no es un error
+    }
   }
-  await deps.configuration.create({ hotelId, key: MEAL_PLANS_SEEDED_KEY, value: { seeded: true } } as any)
 }
 
 // ─── list ──────────────────────────────────────────────────────────────────
@@ -220,19 +243,28 @@ export async function create(
   const price = dto.price !== undefined && dto.price !== null ? assertPrice(dto.price) : 0
   const priceMode = derivePriceMode(dto.priceMode, price)
 
-  const taken = new Set((await deps.mealPlans.findMany({ hotelId })).map((r) => r.code))
-  const code = uniqueCodeFor(name, taken)
-
-  const record: Omit<MealPlanDTO, 'id' | 'createdAt' | 'updatedAt'> = {
+  const record: Omit<MealPlanDTO, 'id' | 'createdAt' | 'updatedAt' | 'code'> = {
     hotelId,
-    code,
     name,
     description,
     active: typeof dto.active === 'boolean' ? dto.active : true,
     priceMode,
     price,
   }
-  return await deps.mealPlans.create(record as any) as MealPlanDTO
+
+  // El slug se elige leyendo los códigos existentes, pero el árbitro es el UNIQUE (hotelId, code)
+  // (`idx_meal_plans_hotel_code`): si dos "Media pensión" simultáneos piden `media_pension`, el
+  // perdedor recibe la violación, relee los códigos y reintenta con el siguiente sufijo.
+  for (let attempt = 0; attempt < MEAL_PLAN_CODE_MAX_ATTEMPTS; attempt++) {
+    const taken = new Set((await deps.mealPlans.findMany({ hotelId })).map((r) => r.code))
+    const code = uniqueCodeFor(name, taken)
+    try {
+      return await deps.mealPlans.create({ ...record, code } as any) as MealPlanDTO
+    } catch (e: unknown) {
+      if (!isUniqueViolation(e)) throw e
+    }
+  }
+  throw new ValidationError('No se pudo generar un código único para el régimen')
 }
 
 // ─── update ────────────────────────────────────────────────────────────────

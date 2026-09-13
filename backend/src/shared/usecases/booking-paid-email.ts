@@ -36,7 +36,7 @@ import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-sche
 import { DEFAULT_PLATFORM_IDENTITY, resolvePlatformIdentity } from '../utils/platform-identity'
 import { confirmationFragments } from './confirmation-email-variables'
 import { reservationGroupRows } from './reservation-group-rows'
-import { ROOM_ONLY, hasMealPlan, reservationMealPlanLabel } from './meal-plan-labels'
+import { ROOM_ONLY, hasMealPlanCharge, reservationMealPlanLabel } from './meal-plan-labels'
 
 export interface BookingPaidEmailDeps {
   emailSender: EmailSender
@@ -136,10 +136,11 @@ const MEAL_PLAN_WORD: Record<NotificationLanguage, { regime: string; included: s
 /**
  * MR-03 (#268) — régimen de UNA fila (`mealPlan*`, snapshot congelado al reservar), como línea
  * de `extras_lines`: "Régimen: Desayuno × 2 personas × 3 noches = 60.00 USD" (por persona y
- * noche) o "Régimen: Desayuno (incluido)" (`included`, sin cargo aparte). '' sin régimen.
+ * noche) o "Régimen: Desayuno (incluido)" (`included`, sin cargo aparte). '' sin régimen — pero
+ * `room_only` CON cargo (#361: fila del catálogo con precio) sí sale: el huésped lo pagó.
  */
 function mealPlanLine(row: any, currency: string, language: NotificationLanguage): string {
-  if (!hasMealPlan(row?.mealPlan)) return ''
+  if (!hasMealPlanCharge(row)) return ''
   const words = MEAL_PLAN_WORD[language]
   const units = UPSELL_UNITS[language]
   const label = escapeHtml(reservationMealPlanLabel(row, language))
@@ -304,7 +305,7 @@ export async function sendBookingPaidEmail(
     // distintas (o "sólo alojamiento" si ninguna fila lo trae).
     const mealPlanRows: any[] = siblings.length ? siblings : [reservation]
     const mealPlanLines = mealPlanRows.map(r => mealPlanLine(r, currency, language)).filter(Boolean)
-    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlan(r.mealPlan)).map(r => reservationMealPlanLabel(r, language)))]
+    const mealPlanLabels = [...new Set(mealPlanRows.filter(r => hasMealPlanCharge(r)).map(r => reservationMealPlanLabel(r, language)))]
 
     await emailSender.enqueueNotification({
       to,

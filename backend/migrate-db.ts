@@ -1287,6 +1287,44 @@ async function seedCurrencyConfig(): Promise<void> {
   } catch { /* hotels/configuration puede no existir en runs tempranos — seguro */ }
 }
 
+// ─── #361 — UNIQUE index (hotelId, code) para meal_plans ─────────────────────────────────
+// El ORM no crea UNIQUE compuesto: hay que hacerlo a mano con `CREATE UNIQUE INDEX` (mismo molde
+// que `createPromoCodesUniqueIndex`). Es el ÁRBITRO de dos carreras del usecase
+// (`meal-plans-crud.ts`): dos `list()` simultáneos sembrando el mismo hotel y dos `create()` con el
+// mismo nombre pidiendo el mismo slug — el perdedor recibe la violación (`isUniqueViolation`) y la
+// trata como no-op / reintenta con el siguiente sufijo. Sin el índice, el chequeo en JS es TOCTOU.
+//
+// Dedupe previo: si la tabla ya tiene filas repetidas con el mismo (hotelId, code) — data sucia
+// anterior al UNIQUE — el CREATE fallaría. A diferencia de promo_codes (donde un código repetido es
+// ambiguo y hay que reconciliar a mano), acá las repetidas son el mismo régimen sembrado dos veces:
+// se conserva la fila MÁS VIEJA (createdAt, id como desempate — la que las reservas ya vieron) y las
+// demás se borran. Las reservas referencian el `code`, no el id, así que no queda nada huérfano.
+// La tabla la crea el ORM (RUN_MIGRATE) — si no existe aún, aviso y se aplica en la próxima corrida.
+async function createMealPlansUniqueIndex(): Promise<void> {
+  try {
+    const dupes = (await db.query(
+      `SELECT hotelId, code, COUNT(*) c FROM meal_plans GROUP BY hotelId, code HAVING COUNT(*) > 1`,
+    )) as Array<{ hotelId: string; code: string; c: number }>
+    let removed = 0
+    for (const d of dupes) {
+      const rows = (await db.query(
+        `SELECT id FROM meal_plans WHERE hotelId=? AND code=? ORDER BY createdAt ASC, id ASC`,
+        [d.hotelId, d.code],
+      )) as Array<{ id: string }>
+      for (const r of rows.slice(1)) {
+        await run(`DELETE FROM meal_plans WHERE id=?`, [r.id])
+        removed++
+      }
+    }
+    if (dupes.length > 0) {
+      console.warn(`⚠ meal_plans: ${dupes.length} (hotelId, code) duplicado(s) — ${removed} fila(s) borrada(s), se conserva la más vieja por grupo.`)
+    }
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plans_hotel_code ON meal_plans(hotelId, code)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'idx_meal_plans_hotel_code', missingTable: 'meal_plans', consequence: 'Sin este UNIQUE, dos requests simultáneos pueden sembrar el catálogo de regímenes dos veces o crear dos regímenes con el mismo código en un hotel.' })
+  }
+}
+
 // ─── #361: regímenes de alimentación — catálogo abierto + seeds por hotel ─────────────────
 // `meal_plans` deja de ser un enum fijo de 3 códigos: gana `name`/`description` y cada hotel
 // recibe 4 ejemplos (`DEFAULT_MEAL_PLANS`, la misma lista que usa `ensureSeeded` del usecase para
@@ -1521,6 +1559,10 @@ async function main(): Promise<void> {
 
   // contactos de emergencia — default global en hotelId='platform' (idempotente)
   await seedEmergencyContacts()
+
+  // #361 — UNIQUE (hotelId, code) para meal_plans (dedupe previo conservando la más vieja). Va
+  // ANTES de los seeds: el índice es el árbitro de las carreras del usecase.
+  await createMealPlansUniqueIndex()
 
   // #361 — regímenes: columnas name/description + booking_config.showMealPlans + 4 ejemplos por
   // hotel una sola vez (marcador configuration.meal_plans_seeded). Idempotente.

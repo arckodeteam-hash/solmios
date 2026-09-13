@@ -369,6 +369,19 @@ describe('recibo completo (#270)', () => {
     expect(none.sent[0].variables.meal_plan).toBe('Sólo alojamiento')
     expect(none.sent[0].variables.extras_lines).not.toContain('Régimen')
 
+    // #361 — `room_only` puede ser una fila del catálogo CON precio: si tiene cargo, la línea sale
+    // (el huésped lo pagó) y el resumen lleva el nombre persistido en vez de "sólo alojamiento".
+    const paidRoomOnly = harness({ reserva: {
+      ...reserva, totalAmount: 345, deposit: 345,
+      mealPlan: 'room_only', mealPlanName: 'Solo alojamiento', mealPlanPriceMode: 'per_person_per_night',
+      mealPlanUnitPrice: 22.5, mealPlanPersons: 2, mealPlanTotal: 45,
+      priceBreakdown: { ...RESERVA_270.priceBreakdown, subtotal: 345, mealPlanTotal: 45, total: 345 },
+    } })
+    await paidRoomOnly.run()
+    expect(paidRoomOnly.sent[0].variables.meal_plan).toBe('Solo alojamiento')
+    expect(paidRoomOnly.sent[0].variables.extras_lines).toContain('<li>Régimen: Solo alojamiento × 2 personas × 1 noches = 45.00 USD</li>')
+    expect(paidRoomOnly.sent[0].variables.total_amount).toBe('345.00 USD')
+
     // Idioma del huésped: etiqueta y unidades en inglés.
     const en = harness({ reserva, guest: { ...GUEST, language: 'en' } })
     await en.run()

@@ -28,6 +28,17 @@ export function hasMealPlan(code: unknown): boolean {
   return c !== '' && c !== ROOM_ONLY_CODE
 }
 
+/**
+ * #361 — `true` si la fila de reserva lleva una línea de régimen que mostrar (recibo/correo): un
+ * código real (`hasMealPlan`) O un cargo (`mealPlanTotal > 0`). Desde #361 `room_only` puede ser
+ * una fila del catálogo con precio: sin esto el cargo se cobraba pero no aparecía en el desglose.
+ */
+export function hasMealPlanCharge(
+  row: { mealPlan?: unknown; mealPlanTotal?: unknown } | null | undefined,
+): boolean {
+  return hasMealPlan(row?.mealPlan) || (Number(row?.mealPlanTotal ?? 0) || 0) > 0
+}
+
 /** Etiqueta del régimen en el idioma pedido; sin régimen → "sólo alojamiento". */
 export function mealPlanLabel(code: unknown, language: NotificationLanguage = 'es'): string {
   const c = String(code ?? '').trim()
@@ -38,14 +49,13 @@ export function mealPlanLabel(code: unknown, language: NotificationLanguage = 'e
 /**
  * #361 — Etiqueta del régimen de UNA fila de reserva: el snapshot `mealPlanName` (nombre del
  * catálogo al reservar, trim no vacío) y, si no lo hay, `mealPlanLabel(mealPlan, language)`.
- * Sin régimen (`hasMealPlan` false) → "sólo alojamiento" en el idioma, como antes.
+ * Sin código (`hasMealPlan` false) y sin nombre → "sólo alojamiento" en el idioma, como antes.
+ * Un `room_only` del catálogo con nombre propio ("Solo alojamiento") sale con ese nombre.
  */
 export function reservationMealPlanLabel(
   row: { mealPlan?: unknown; mealPlanName?: unknown } | null | undefined,
   language: NotificationLanguage = 'es',
 ): string {
-  const code = String(row?.mealPlan ?? '').trim()
-  if (!hasMealPlan(code)) return mealPlanLabel(code, language)
   const name = typeof row?.mealPlanName === 'string' ? row.mealPlanName.trim() : ''
-  return name || mealPlanLabel(code, language)
+  return name || mealPlanLabel(row?.mealPlan, language)
 }

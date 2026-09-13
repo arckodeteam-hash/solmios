@@ -11,6 +11,9 @@
 //  (7) create valida name obligatorio / demasiado largo y price negativo / priceMode inválido
 //  (8) update no cambia code aunque cambie el nombre; permite activar/desactivar
 //  (9) remove borra la fila; ownership de otro hotel rechaza
+// (10) carreras: el repo en memoria simula los UNIQUE (hotelId, code) de meal_plans y (hotelId, key)
+//      de configuration — dos list() simultáneos siembran UNA vez; dos create() del mismo nombre
+//      salen con `media_pension` y `media_pension_2`, sin excepción
 import { describe, it, expect } from 'bun:test'
 import { ValidationError, NotFoundError } from 'arckode-framework'
 import {
@@ -21,7 +24,12 @@ import type { MealPlanDTO, UpsellCurrentUser } from '../types'
 
 const adminUser: UpsellCurrentUser = { id: 'u1', hotelId: 'h1', role: 'hotel_admin', userType: 'merchant' }
 
-function makeRepo<T extends { id: string }>(rows: T[] = [], prefix = 'row') {
+/**
+ * Repo en memoria. `unique` simula un UNIQUE INDEX compuesto: `create` lanza el mismo error que
+ * SQLite ("UNIQUE constraint failed: …", el que reconoce `isUniqueViolation`) si ya hay una fila
+ * con esos valores — es el árbitro de las carreras que prueban los casos de concurrencia.
+ */
+function makeRepo<T extends { id: string }>(rows: T[] = [], prefix = 'row', unique: string[] = []) {
   let seq = rows.length
   return {
     rows,
@@ -30,6 +38,9 @@ function makeRepo<T extends { id: string }>(rows: T[] = [], prefix = 'row') {
     findOne: async (filter: any) =>
       rows.find((r) => Object.entries(filter).every(([k, v]) => (r as any)[k] === v)) ?? null,
     create: async (data: any) => {
+      if (unique.length && rows.some((r) => unique.every((k) => (r as any)[k] === data[k]))) {
+        throw new Error(`UNIQUE constraint failed: ${unique.map((k) => `${prefix}.${k}`).join(', ')}`)
+      }
       seq++
       const ts = `2026-01-01T00:00:${String(seq).padStart(2, '0')}Z`
       const row = { id: `${prefix}_${seq}`, createdAt: ts, updatedAt: ts, ...data } as T
@@ -52,10 +63,11 @@ function makeRepo<T extends { id: string }>(rows: T[] = [], prefix = 'row') {
 }
 
 function makeDeps(rows: MealPlanDTO[] = [], opts: { ownershipOk?: boolean; seeded?: boolean } = {}) {
-  const mealPlans = makeRepo<MealPlanDTO>(rows, 'mp')
+  const mealPlans = makeRepo<MealPlanDTO>(rows, 'mp', ['hotelId', 'code'])
   const configuration = makeRepo<any>(
     opts.seeded ? [{ id: 'cfg_1', hotelId: 'h1', key: MEAL_PLANS_SEEDED_KEY, value: { seeded: true } }] : [],
     'cfg',
+    ['hotelId', 'key'],
   )
   return {
     deps: {
@@ -139,6 +151,76 @@ describe('meal-plans-crud (#361) — seeds', () => {
     const { deps, mealPlans } = makeDeps([named])
     await ensureSeeded(deps, 'h1')
     expect(mealPlans.rows.find((m) => m.code === 'breakfast')!.name).toBe('Desayuno buffet')
+  })
+})
+
+describe('meal-plans-crud (#361) — carreras (UNIQUE como árbitro)', () => {
+  it('dos list() simultáneos sobre un hotel sin filas → exactamente 4 filas y 1 marcador, sin excepción', async () => {
+    const { deps, mealPlans, configuration } = makeDeps()
+    const [a, b] = await Promise.all([list(deps, adminUser), list(deps, adminUser)])
+    expect(mealPlans.rows).toHaveLength(4)
+    expect(configuration.rows).toHaveLength(1)
+    expect(configuration.rows[0]).toMatchObject({ hotelId: 'h1', key: MEAL_PLANS_SEEDED_KEY })
+    // El ganador del marcador siembra y devuelve las 4; el perdedor sale sin insertar y puede ver
+    // el catálogo a medio sembrar (transitorio) — lo que NO puede pasar es duplicar ni fallar.
+    expect(a.total).toBe(4)
+    expect(b.total).toBeLessThanOrEqual(4)
+    expect(new Set(mealPlans.rows.map((m) => m.code)).size).toBe(4)
+  })
+
+  it('el perdedor del marcador NO inserta filas (sólo quien lo creó siembra)', async () => {
+    const { deps, mealPlans, configuration } = makeDeps()
+    // Marcador creado "entre medio" por otro request: el findOne no lo vio, el create choca.
+    const origFindOne = configuration.findOne
+    configuration.findOne = async (filter: any) => {
+      const r = await origFindOne(filter)
+      if (!r) await configuration.create({ hotelId: 'h1', key: MEAL_PLANS_SEEDED_KEY, value: { seeded: true } })
+      return r
+    }
+    await ensureSeeded(deps, 'h1')
+    expect(mealPlans.rows).toHaveLength(0)
+    expect(configuration.rows).toHaveLength(1)
+  })
+
+  it('ensureSeeded ignora la violación de UNIQUE de una fila creada entre medio', async () => {
+    const { deps, mealPlans } = makeDeps()
+    const origFindMany = mealPlans.findMany
+    mealPlans.findMany = async (filter: any) => {
+      const r = await origFindMany(filter)
+      // Alguien crea `breakfast` después de que el sembrador leyó el catálogo vacío.
+      if (r.length === 0) await mealPlans.create({ hotelId: 'h1', code: 'breakfast', name: 'Mío', active: true, priceMode: 'included', price: 0 })
+      return r
+    }
+    await ensureSeeded(deps, 'h1')
+    expect(mealPlans.rows).toHaveLength(4)
+    expect(mealPlans.rows.find((m) => m.code === 'breakfast')!.name).toBe('Mío')
+  })
+
+  it('dos create({ name: "Media pensión" }) simultáneos → media_pension y media_pension_2, sin excepción', async () => {
+    const { deps, mealPlans } = makeDeps([], { seeded: true })
+    const [a, b] = await Promise.all([
+      create(deps, { name: 'Media pensión' }, adminUser),
+      create(deps, { name: 'Media pensión' }, adminUser),
+    ])
+    expect([a.code, b.code].sort()).toEqual(['media_pension', 'media_pension_2'])
+    expect(mealPlans.rows).toHaveLength(2)
+  })
+
+  it('si el slug sigue chocando tras 5 intentos → ValidationError', async () => {
+    const { deps, mealPlans } = makeDeps([], { seeded: true })
+    let attempts = 0
+    mealPlans.create = async () => { attempts++; throw new Error('UNIQUE constraint failed: meal_plans.hotelId, meal_plans.code') }
+    await expect(create(deps, { name: 'Cena' }, adminUser)).rejects.toThrow(/No se pudo generar un código único/)
+    expect(attempts).toBe(5)
+  })
+
+  it('un error que NO es de unicidad se propaga tal cual (create y ensureSeeded)', async () => {
+    const { deps, mealPlans } = makeDeps([], { seeded: true })
+    mealPlans.create = async () => { throw new Error('disk I/O error') }
+    await expect(create(deps, { name: 'Cena' }, adminUser)).rejects.toThrow(/disk I\/O error/)
+    const fresh = makeDeps()
+    fresh.mealPlans.create = async () => { throw new Error('disk I/O error') }
+    await expect(ensureSeeded(fresh.deps, 'h1')).rejects.toThrow(/disk I\/O error/)
   })
 })
 

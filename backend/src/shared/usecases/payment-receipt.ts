@@ -15,7 +15,7 @@
 
 import { escapeHtml } from '../../services/notification-renderer'
 import { round2 } from '../utils/money'
-import { hasMealPlan, reservationMealPlanLabel } from './meal-plan-labels'
+import { hasMealPlanCharge, reservationMealPlanLabel } from './meal-plan-labels'
 
 export type ReceiptLineKind = 'room' | 'meal_plan' | 'upsell' | 'child_amenity' | 'room_amenity' | 'discount' | 'tax' | 'total'
 
@@ -170,10 +170,11 @@ function nightsOf(row: ReceiptReservationLike): number {
 /**
  * MR-03 (#268) — línea del régimen de UNA fila: "Régimen · Desayuno · 2 personas × 3 noches",
  * cantidad = personas × noches (cuadra con el unitario, mismo criterio que los upsells) e importe
- * `mealPlanTotal`. `included` (total 0) sale como "(incluido)" sin importe. Sin régimen, nada.
+ * `mealPlanTotal`. `included` (total 0) sale como "(incluido)" sin importe. Sin régimen, nada —
+ * pero `room_only` CON cargo (#361: fila del catálogo con precio) sí lleva línea: el huésped lo pagó.
  */
 function mealPlanLineOf(row: ReceiptReservationLike): ReceiptLine[] {
-  if (!hasMealPlan(row.mealPlan)) return []
+  if (!hasMealPlanCharge(row)) return []
   const label = reservationMealPlanLabel(row, 'es')
   const amount = round2(num(row.mealPlanTotal))
   if (amount <= 0) return [{ kind: 'meal_plan', description: `Régimen · ${label} (incluido)`, amount: 0 }]
