@@ -62,11 +62,18 @@ function ratesResponse(ids: string[]): PublicRatesResponse {
   }
 }
 
-/** Monta el step con los tipos `ids` y el catálogo de amenidades por tipo ya cargado en el store. */
-async function render(ids: string[], roomAmenities: Record<string, Array<{ key: string; name: string; price: number }>>): Promise<VueWrapper> {
+/**
+ * Monta el step con los tipos `ids` y el catálogo de amenidades por tipo ya cargado en el store.
+ * `currency` (displayCurrency) es opcional: por defecto coincide con chargeCurrency ('USD').
+ */
+async function render(
+  ids: string[],
+  roomAmenities: Record<string, Array<{ key: string; name: string; price: number }>>,
+  currency = 'USD',
+): Promise<VueWrapper> {
   const store = useBookingStore()
   store.init('hotel-demo')
-  store.ratesResponse = ratesResponse(ids)
+  store.ratesResponse = { ...ratesResponse(ids), currency }
   store.roomAmenities = roomAmenities
   useBookingI18nStore().setLocale('es')
   const w = mount(RoomsStep)
@@ -194,6 +201,29 @@ describe('RoomsStep — #341 el checklist de amenidades renderiza TODO el catál
     expect(store.cart[1]!.needsCrib).toBeFalsy()
     expect(store.cart[1]!.cribCount ?? 0).toBe(0)
     expect(store.cart[1]!.roomAmenities).toEqual([CAMA])
+    w.unmount()
+  })
+
+  // #355 — los precios de amenidades vienen de /room-amenities SIN conversión server-side
+  // (hotels.currency = chargeCurrency): con display EUR / cobro USD se etiquetan en US$, NUNCA en €
+  // (D10, mismo criterio que el régimen y los upsells).
+  it('(e) #355 precio y "+ $X" de amenidades usan chargeCurrency, NUNCA displayCurrency (D10)', async () => {
+    const w = await render(['familiar'], { familiar: [CAMA, CUNA] }, 'EUR')
+    const store = useBookingStore()
+    expect(store.displayCurrency).toBe('EUR')
+    expect(store.chargeCurrency).toBe('USD')
+
+    const prices = w.findAll('[data-testid="room-amenity-price"]').map((p) => p.text())
+    expect(prices).toHaveLength(2)
+    expect(prices[0]).toContain('US$')
+    expect(prices[0]).toContain('200')
+    expect(prices[0]).not.toContain('€')
+
+    await w.get(`input[value="${CAMA.key}"]`).setValue(true)
+    const total = w.get('[data-testid="room-amenities-total"]').text()
+    expect(total).toContain('US$')
+    expect(total).toContain('200')
+    expect(total).not.toContain('€')
     w.unmount()
   })
 })
