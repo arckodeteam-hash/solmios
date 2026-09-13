@@ -10,7 +10,8 @@ import { Router } from 'arckode-framework'
 import { makeAuth, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { SalesLeadsModule } from '../index'
 
-const NOW = new Date('2026-09-10T12:00:00.000Z')
+// Reloj real: el servicio no recibe `now` inyectado, así que las fechas de la fixture son relativas a hoy.
+const NOW = new Date()
 const DAY = 24 * 60 * 60 * 1000
 const iso = (offsetDays: number) => new Date(NOW.getTime() + offsetDays * DAY).toISOString()
 
