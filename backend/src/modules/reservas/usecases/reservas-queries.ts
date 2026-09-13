@@ -1,3 +1,6 @@
+import { OrmRepository } from 'arckode-framework'
+import type { RepositoryAdapter } from 'arckode-framework'
+import type { ReservasDTO } from '../types'
 import { checkinHashFromId } from '../../../shared/utils/checkin-hash'
 import type { ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
 import { isRefundInFlight } from '../../../shared/usecases/web-booking-refund'
@@ -13,6 +16,14 @@ export interface FolioRoomWriter {
   updateRoom(roomId: string, patch: any): Promise<void>
   /** La fila de la reserva se escribe DENTRO de la misma tx que folio y habitaciones (revisión #258). */
   updateReservation(reservationId: string, patch: any): Promise<void>
+}
+
+/** Repos y writer atados a UNA transacción (#314): lo que `commitReschedule` necesita para mover
+ *  la estadía y escribir fechas/total en la misma tx. */
+export interface TxRepos {
+  repo: RepositoryAdapter<ReservasDTO>   // 'Reservations'
+  roomRepo: RepositoryAdapter<any>       // 'Rooms'
+  writer: FolioRoomWriter
 }
 
 function folioRoomWriter(db: any): FolioRoomWriter {
@@ -46,6 +57,19 @@ export class ReservasQueries implements FolioRoomWriter {
   async transaction<T>(fn: (q: FolioRoomWriter) => Promise<T>): Promise<T> {
     if (typeof this.orm.transaction === 'function') return this.orm.transaction((tx: any) => fn(folioRoomWriter(tx)))
     return fn(folioRoomWriter(this.orm))
+  }
+
+  /**
+   * #314 — `assignRoom` + `updateReservation` de `commitReschedule` corren bajo UNA tx. Los repos
+   * se construyen sobre el `tx` porque en postgres una escritura con otro handle queda FUERA de la
+   * transacción (y se bloquea contra el row lock). Dentro de esta tx NO se puede volver a llamar
+   * `transaction` (sqlite no anida BEGIN): por eso el caller le pasa a `assignRoom` un
+   * `queries.transaction` que corre `fn(tx.writer)` directo. Sin `orm.transaction`, secuencial.
+   */
+  async transactionWithRepos<T>(fn: (tx: TxRepos) => Promise<T>): Promise<T> {
+    const build = (db: any): TxRepos => ({ repo: new OrmRepository<ReservasDTO>(db, 'Reservations'), roomRepo: new OrmRepository<any>(db, 'Rooms'), writer: folioRoomWriter(db) })
+    if (typeof this.orm.transaction === 'function') return this.orm.transaction((tx: any) => fn(build(tx)))
+    return fn(build(this.orm))
   }
 
   async findReservationByHash(hash: string): Promise<any> {

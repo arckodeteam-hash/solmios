@@ -34,8 +34,14 @@ export interface RoomAssignmentDeps {
   roomRepo: RepositoryAdapter<any>
   /** RoomBlocks. Opcional como en crud.ts: sin repo no hay bloqueos que chequear. */
   blockRepo?: RepositoryAdapter<any>
-  /** Folio abierto + habitaciones + transacción (reasignación en estadía). */
-  queries: Pick<ReservasQueries, 'transaction'>
+  /**
+   * Folio abierto + habitaciones + transacción (reasignación en estadía). Acá entra tanto el
+   * `ReservasQueries` del service como, dentro de `transactionWithRepos` (#314), un shim atado al
+   * `tx` (`{ transaction: (fn) => fn(tx.writer) }` junto a `tx.repo`/`tx.roomRepo`), para que
+   * `assignRoom` corra en la MISMA tx que el update de fechas/total del reschedule sin anidar
+   * `BEGIN`. `transactionWithRepos` es opcional: sólo el `ReservasQueries` real lo trae.
+   */
+  queries: Pick<ReservasQueries, 'transaction'> & Partial<Pick<ReservasQueries, 'transactionWithRepos'>>
   sockets: ReservasSockets
   auditPort: AuditPort | null
   logger: Logger
