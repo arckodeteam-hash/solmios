@@ -5,7 +5,7 @@ import type { LlmConfig, LlmMessage } from './llm-provider'
 import { llmChat, buildSystemPrompt, RECEPTIONIST_TOOLS } from './llm-provider'
 import { hotelCheckInTime, hotelCheckOutTime } from '../../../shared/utils/hotel-schedule'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
-import { availableOfType, countAvailableOfType, roomTypeProfileOf } from '../../../shared/usecases/type-availability'
+import { availableOfType, countAvailableOfType, roomTypeProfileOf, unoccupiedSellableRooms } from '../../../shared/usecases/type-availability'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
 
 /**
@@ -345,8 +345,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       //    fila nace con `roomId: null`; recepción asigna la unidad al check-in (assign-room.ts).
       //  - `roomId` (compat: el LLM lo saca de `search_availability`) → sólo deriva `roomType` de
       //    esa unidad; la reserva IGUAL nace sin unidad.
-      // Capacidad y precio salen del perfil del tipo (`roomTypeProfileOf`: capacidad MÁXIMA y
-      // precio MÍNIMO entre las unidades vendibles), mismo criterio que el panel y el motor público.
+      // El precio sale del perfil del tipo (`roomTypeProfileOf`: precio MÍNIMO entre las unidades
+      // vendibles); la capacidad se decide por unidad LIBRE (revisión #260, ver abajo) — mismo
+      // criterio que el panel y el motor público.
       const requestedRoomId = args.roomId as string | undefined
       let roomType = (args.roomType as string | undefined) || ''
       const checkIn = args.checkIn as string
@@ -383,6 +384,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
         hotelId, roomType, checkIn, checkOut,
       )
       if (avail.available < 1) return { error: `No hay disponibilidad de ${roomType} para esas fechas` }
+      // Revisión #260 — la reserva se asignará después a una unidad físicamente LIBRE en las fechas
+      // (`unoccupiedSellableRooms`: sin reserva asignada que solape ni bloqueo). Si ninguna queda
+      // libre TODAS las noches no hay asignación posible aunque `available ≥ 1` noche a noche.
+      const freeUnits = unoccupiedSellableRooms(avail)
+      if (freeUnits.length === 0) return { error: `No hay disponibilidad de ${roomType} para esas fechas: ninguna unidad del tipo queda libre todas las noches` }
 
       const hotel = await repos.hotelRepo.findById(hotelId)
 
@@ -390,8 +396,12 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       // `reservationRepo.create`, sin ningún chequeo de capacidad. Mismo criterio que el panel y el
       // motor público, reutilizado sin copiar reglas: sin edad por niño acá (la tool no las pide),
       // el conservador de `resolveAdminCapacityComposition` decide — un niño sin edad conocida
-      // SIEMPRE consume plaza. Sin unidad, la "habitación" es el perfil del tipo.
-      await assertReservationFitsCapacity(repos.configRepo, typeProfile, { hotelId, adults, children: 0, childrenAges: [] })
+      // SIEMPRE consume plaza. Sin unidad, la composición entra si ALGUNA unidad libre del tipo la
+      // admite (`units` → `someUnitFits`), no si entra en el perfil agregado del tipo (ése queda
+      // sólo para el precio y el mensaje).
+      await assertReservationFitsCapacity(repos.configRepo, roomTypeProfileOf(roomType, freeUnits), {
+        hotelId, adults, children: 0, childrenAges: [], units: freeUnits,
+      })
 
       const totalNights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86400000)
       const pricePerNight = typeProfile.minBasePrice

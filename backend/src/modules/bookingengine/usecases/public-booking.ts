@@ -76,7 +76,7 @@
 
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
-import { availableOfType, typeAvailabilityPortFromOrm, unoccupiedSellableRooms } from '../../../shared/usecases/type-availability'
+import { availableOfType, typeAvailabilityPortFromOrm, unoccupiedSellableRooms, someUnitFits, noUnitFitsCompositionMessage } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
@@ -86,7 +86,7 @@ import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import { DEFAULT_PENDING_TTL_MINUTES } from './config'
-import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
+import { resolveChildPolicy, resolveChildComposition, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { CRIB_AMENITY_KEY, customRoomAmenities, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { isCribAmenityKey } from '../../../shared/usecases/crib-amenity'
@@ -557,12 +557,17 @@ export async function createPublicBookingDirect(
   const typeProfile = roomTypeProfile(roomType, typeAvail.sellableRooms, totalGuests)
   // Revisión #260 — la CAPACIDAD, en cambio, se valida contra las unidades del tipo que están
   // físicamente LIBRES para estas fechas (`unoccupiedSellableRooms`: sin reserva bloqueante
-  // ASIGNADA que solape ni bloqueo): capacidad = la MAYOR entre ellas (la reserva entra si entra
-  // en alguna; recepción elige cuál al asignar), `maxAdults`/`maxChildren` ídem. Calcularla sobre
-  // TODAS las vendibles vendía capacidad de una unidad ya ocupada (unidad de 2 libre + unidad de
-  // 6 con reserva asignada → 5 adultos pasaban con 201 y nadie los podía alojar). Las reservas
-  // SIN asignar no pinean unidad y no descuentan de acá: ya las contó `available`. La política
-  // `room_type_capacity` del hotel, si existe, pisa los tres campos (`effectiveRoomCapacity`).
+  // ASIGNADA que solape ni bloqueo). Calcularla sobre TODAS las vendibles vendía capacidad de una
+  // unidad ya ocupada (unidad de 2 libre + unidad de 6 con reserva asignada → 5 adultos pasaban
+  // con 201 y nadie los podía alojar). Las reservas SIN asignar no pinean unidad y no descuentan
+  // de acá: ya las contó `available`.
+  //
+  // Revisión #260 (3ª pasada) — la composición entra si ALGUNA unidad libre la admite con sus
+  // TRES límites a la vez (`someUnitFits`, misma evaluación por unidad que el alta de grupo; la
+  // política `room_type_capacity` pisa los campos de la unidad vía `effectiveRoomCapacity`). El
+  // perfil agregado (`Math.max` independiente por campo) dejaba pasar composiciones que ninguna
+  // unidad real admitía: "adultos-solo" {6,6,0} + "familiar chica" {2,1,1} → {6,6,1} → 5 adultos
+  // + 1 niño con 201. El agregado queda sólo para el mensaje de error.
   //
   // Revisión #260 (2ª pasada) — `available ≥ 1` cuenta noche a noche, así que puede haber
   // inventario en cada noche y aun así NINGUNA unidad libre en TODA la ventana (r1 tomada sólo la
@@ -581,10 +586,13 @@ export async function createPublicBookingDirect(
       },
     }
   }
-  const capacityProfile = roomTypeProfile(roomType, freeUnits, totalGuests)
-  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, capacityProfile)
-  if (!fitsRoomCapacity(roomCapacity, childComposition)) {
-    return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }
+  if (!someUnitFits(freeUnits, childComposition, roomTypeCapacityMap, totalGuests)) {
+    const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, roomTypeProfile(roomType, freeUnits, totalGuests))
+    // Si la SUMA entra en el agregado, el problema es el reparto adultos/niños, no el total.
+    const error = childComposition.chargeableOccupancy > roomCapacity.capacity
+      ? `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}`
+      : noUnitFitsCompositionMessage(roomType, childComposition)
+    return { status: 409, body: { error } }
   }
 
   // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra la UNIÓN del tipo ──────

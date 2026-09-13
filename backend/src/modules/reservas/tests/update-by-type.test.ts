@@ -120,6 +120,24 @@ describe('updateReservation — reserva por TIPO (roomId null): la capacidad se 
     expect(ok.adults).toBe(2)
   })
 
+  it('la composición entra sólo si ALGUNA unidad libre la admite: "adultos-solo" {6,6,0} + "familiar chica" {2,1,1} → PUT adults:5+children:1 → 409; adults:1+children:1 → 200', async () => {
+    const mixedLimits = [
+      { id: 'f-adultos', hotelId: HOTEL, type: 'familiar', status: 'available', capacity: 6, maxAdults: 6, maxChildren: 0, basePrice: 100 },
+      { id: 'f-chica', hotelId: HOTEL, type: 'familiar', status: 'available', capacity: 2, maxAdults: 1, maxChildren: 1, basePrice: 80 },
+    ]
+    const fam = () => ({ ...byType(), roomType: 'familiar', adults: 1, children: 0 })
+    const repo = resRepo(fam())
+    let err: any = null
+    try { await put(repo, roomRepo(mixedLimits), { adults: 5, children: 1, childrenAges: [8] } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.httpStatus).toBe(409)
+    expect(err.message).toMatch(/Ninguna habitación de tipo "familiar"/)
+    expect(repo.updates).toHaveLength(0)
+    const ok = await put(resRepo(fam()), roomRepo(mixedLimits), { adults: 1, children: 1, childrenAges: [8] } as any)
+    expect(ok.adults).toBe(1)
+    expect(ok.children).toBe(1)
+  })
+
   it('ninguna unidad del tipo libre toda la ventana (unidades distintas tomadas en noches distintas) → 409 type_sold_out available 0', async () => {
     const other = { id: 'r2', hotelId: HOTEL, roomId: 'd-1', roomType: 'double', status: 'confirmed', checkIn: '2026-07-20', checkOut: '2026-07-21' }
     const blockRepo = { findMany: async () => [{ id: 'b1', hotelId: HOTEL, roomId: 'd-2', startDate: '2026-07-21', endDate: '2026-07-21' }] } as any
@@ -132,5 +150,70 @@ describe('updateReservation — reserva por TIPO (roomId null): la capacidad se 
     expect(err.details?.available).toBe(0)
     expect(err.message).not.toContain('hasta 0')
     expect(repo.updates).toHaveLength(0)
+  })
+})
+
+describe('updateReservation — reserva por TIPO (roomId null): cambiar SÓLO las fechas re-valida disponibilidad por tipo', () => {
+  // Revisión #260 (3ª pasada): `touchesOccupancy` no miraba checkIn/checkOut y validate-update.ts
+  // sólo re-chequea solape con `existing.roomId` → un PUT de sólo fechas sobre una reserva por
+  // tipo pasaba sin mirar nada y dejaba dos confirmadas del tipo en la misma ventana con UNA unidad.
+  const one = [{ id: 'd-1', hotelId: HOTEL, type: 'double', status: 'available', capacity: 2, basePrice: 120, number: '101' }]
+  const r1 = () => ({ ...byType(), checkIn: '2026-07-01', checkOut: '2026-07-03' })
+  const r2 = { id: 'r2', hotelId: HOTEL, roomId: 'd-1', roomType: 'double', status: 'confirmed', checkIn: '2026-08-01', checkOut: '2026-08-03' }
+
+  it('mover r1 (sin unidad) a la ventana de r2 (asignada a la única unidad) → 409 type_sold_out, la fila queda igual', async () => {
+    const repo = resRepo(r1(), [r2])
+    let err: any = null
+    try { await put(repo, roomRepo(one), { checkIn: '2026-08-01', checkOut: '2026-08-03' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.httpStatus).toBe(409)
+    expect(err.details?.reason).toBe('type_sold_out')
+    expect(err.details?.available).toBe(0)
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('la otra reserva del tipo también SIN unidad consume inventario: mover r1 encima → 409 type_sold_out', async () => {
+    const repo = resRepo(r1(), [{ ...r2, roomId: null }])
+    let err: any = null
+    try { await put(repo, roomRepo(one), { checkIn: '2026-08-01', checkOut: '2026-08-03' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.details?.reason).toBe('type_sold_out')
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('mover a fechas libres → 200 (la propia reserva no se cuenta); sólo checkOut también re-valida', async () => {
+    const ok = await put(resRepo(r1(), [r2]), roomRepo(one), { checkIn: '2026-07-10', checkOut: '2026-07-12' } as any)
+    expect(ok.checkIn).toBe('2026-07-10')
+    expect(ok.roomId).toBeNull()
+    // Extender r1 hasta solapar con r2 (sólo checkOut): 409.
+    const repo = resRepo({ ...r1(), checkIn: '2026-07-30', checkOut: '2026-08-01' }, [r2])
+    let err: any = null
+    try { await put(repo, roomRepo(one), { checkOut: '2026-08-02' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.details?.reason).toBe('type_sold_out')
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('capacidad sobre las unidades libres en las NUEVAS fechas: la grande ocupada ahí → adults:5 no entra al mover; en la ventana original sí', async () => {
+    const mixed = [...one, { id: 'd-6', hotelId: HOTEL, type: 'double', status: 'available', capacity: 6, basePrice: 90 }]
+    const big = { ...r1(), adults: 5 }
+    const other = { ...r2, roomId: 'd-6' }
+    const repo = resRepo(big, [other])
+    let err: any = null
+    try { await put(repo, roomRepo(mixed), { checkIn: '2026-08-01', checkOut: '2026-08-03' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.message).toMatch(/admite hasta 2/)
+    expect(repo.updates).toHaveLength(0)
+    const ok = await put(resRepo(big, [other]), roomRepo(mixed), { checkIn: '2026-07-10', checkOut: '2026-07-12' } as any)
+    expect(ok.checkIn).toBe('2026-07-10')
+  })
+
+  it('con unidad asignada el PUT de fechas sigue por validate-update.ts (solape por unidad), no por el tipo', async () => {
+    const assigned = { ...r1(), roomId: 'd-1' }
+    const repo = resRepo(assigned, [r2])
+    let err: any = null
+    try { await put(repo, roomRepo(one), { checkIn: '2026-08-01', checkOut: '2026-08-03' } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.details?.reason).toBe('room_overlap')
   })
 })

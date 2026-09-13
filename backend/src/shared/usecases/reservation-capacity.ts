@@ -19,6 +19,7 @@ import { ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { resolveChildPolicy, resolveAdminCapacityComposition, fitsRoomCapacity, freeChildrenLimitError } from './child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from './room-type-capacity'
+import { someUnitFits, noUnitFitsCompositionMessage } from './type-availability'
 
 export interface ReservationCapacityParams {
   hotelId: string
@@ -27,6 +28,14 @@ export interface ReservationCapacityParams {
   /** Presente y no vacío → composición real (`resolveChildComposition`). Ausente/vacío → cada
    *  niño declarado consume plaza, conservador (ver `resolveAdminCapacityComposition`). */
   childrenAges?: readonly unknown[] | null
+  /**
+   * Revisión #260 (3ª pasada) — alta/edición por TIPO (sin unidad): las unidades del tipo
+   * físicamente LIBRES en las fechas (`unoccupiedSellableRooms`). Presente → la composición entra
+   * sólo si ALGUNA de ellas la admite con sus tres límites a la vez (`someUnitFits`); `room` (el
+   * perfil agregado del tipo) queda sólo para el mensaje de error. Ausente → `room` es una unidad
+   * concreta y se valida contra ella, como siempre.
+   */
+  units?: readonly any[] | null
 }
 
 /**
@@ -59,7 +68,15 @@ export async function assertReservationFitsCapacity(
     type: room.type, capacity: Number(room.capacity) || composition.chargeableOccupancy,
     maxAdults: room.maxAdults, maxChildren: room.maxChildren,
   })
-  if (!fitsRoomCapacity(capacity, composition)) {
+  const fits = params.units
+    ? someUnitFits(params.units, composition, roomTypeCapacityMap, composition.chargeableOccupancy)
+    : fitsRoomCapacity(capacity, composition)
+  if (!fits) {
+    // Por tipo, si la SUMA entra en el perfil agregado el problema es el reparto adultos/niños:
+    // "admite hasta 6; la reserva tiene 6" no le diría nada a nadie.
+    if (params.units && composition.chargeableOccupancy <= capacity.capacity) {
+      throw new ConflictError(noUnitFitsCompositionMessage(String(room.type ?? ''), composition))
+    }
     throw new ConflictError(`Esta habitación admite hasta ${capacity.capacity} huésped(es); la reserva tiene ${composition.chargeableOccupancy}`)
   }
 }

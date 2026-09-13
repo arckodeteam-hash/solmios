@@ -173,6 +173,30 @@ describe('createReservation — alta por TIPO sin unidad (REQ-HAC-05)', () => {
     expect(repo.created).toHaveLength(0)
   })
 
+  it('la composición entra sólo si ALGUNA unidad libre la admite con sus tres límites: "adultos-solo" {6,6,0} + "familiar chica" {2,1,1} → adults:5+children:1 → 409; adults:1+children:1 → se crea', async () => {
+    // El perfil agregado (Math.max por campo) daba {6,6,1} y dejaba pasar 5 adultos + 1 niño, que
+    // NINGUNA unidad real admite.
+    const mixedLimits = [
+      { id: 'f-adultos', hotelId: HOTEL, type: 'familiar', status: 'available', capacity: 6, maxAdults: 6, maxChildren: 0, basePrice: 100 },
+      { id: 'f-chica', hotelId: HOTEL, type: 'familiar', status: 'available', capacity: 2, maxAdults: 1, maxChildren: 1, basePrice: 80 },
+    ]
+    const repo = resRepo([])
+    const err = await rejects409(create(repo, roomRepo(mixedLimits), dtoByType({ roomType: 'familiar', adults: 5, children: 1, childrenAges: [8] })), undefined, /Ninguna habitación de tipo "familiar"/)
+    expect(err.message).toContain('5 adulto(s) y 1 niño(s)')
+    expect(repo.created).toHaveLength(0)
+    // Entra en la familiar chica.
+    const fam = await create(resRepo([]), roomRepo(mixedLimits), dtoByType({ roomType: 'familiar', adults: 1, children: 1, childrenAges: [8] }))
+    expect(fam.roomId).toBeNull()
+    expect(fam.adults).toBe(1)
+    // Entra en la de adultos.
+    const adultsOnly = await create(resRepo([]), roomRepo(mixedLimits), dtoByType({ roomType: 'familiar', adults: 6, children: 0 }))
+    expect(adultsOnly.roomId).toBeNull()
+    // Total por encima de todas: mensaje clásico "admite hasta N".
+    await rejects409(create(resRepo([]), roomRepo(mixedLimits), dtoByType({ roomType: 'familiar', adults: 7, children: 0 })), undefined, /admite hasta 6/)
+    // Sin childrenAges el contador plano también consume plaza (conservador): 5 + 1 → 409 igual.
+    await rejects409(create(resRepo([]), roomRepo(mixedLimits), dtoByType({ roomType: 'familiar', adults: 5, children: 1 })), undefined, /Ninguna habitación de tipo "familiar"/)
+  })
+
   it('priceFrom:"rates" sin unidad: cadena por tipo con fallback = MÍNIMO basePrice de las unidades vendibles', async () => {
     const pricing = { seasonAssignmentRepo: { findMany: async () => [] }, roomRateRepo: { findMany: async () => [] } }
     // Sin temporadas: 2 noches × min(120, 100) = 200 (+ taxes 10).

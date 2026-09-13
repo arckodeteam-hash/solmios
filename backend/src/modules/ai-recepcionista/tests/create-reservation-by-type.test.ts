@@ -142,6 +142,67 @@ describe('create_reservation (Recepción IA) — por tipo sin unidad (REQ-HAC-05
     await expect(executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 4 }, HOTEL, r)).rejects.toThrow(/admite hasta 3/)
   })
 
+  // Revisión #260 (3ª pasada) — la composición entra si ALGUNA unidad LIBRE la admite con sus tres
+  // límites a la vez (`someUnitFits`), no si entra en el perfil agregado del tipo. La tool no
+  // recibe `children` (siempre 0), así que el repro es por adultos y por unidad ocupada.
+  const mixedLimits = [
+    // "familiar": 2 adultos + 4 niños. Sola, aporta capacity 6 al agregado; con 3 adultos no sirve.
+    { id: 'room-fam', hotelId: HOTEL, type: 'double', capacity: 6, maxAdults: 2, maxChildren: 4, basePrice: 100 },
+    // "triple": sin maxAdults (sin límite configurado) — admite 3 adultos por `capacity`.
+    { id: 'room-3', hotelId: HOTEL, type: 'double', capacity: 3, basePrice: 100 },
+  ]
+
+  it('adults:3 entra en la "triple" (maxAdults null) aunque la "familiar" limite a 2 — el agregado {6, maxAdults 2} lo rechazaba', async () => {
+    const { r, created } = repos({ rooms: mixedLimits })
+    const ok: any = await executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 3 }, HOTEL, r)
+    expect(ok.error).toBeUndefined()
+    expect(created).toHaveLength(1)
+    expect(created[0].roomId).toBeNull()
+  })
+
+  it('adults:4: ninguna unidad lo admite (familiar por maxAdults, triple por capacity) → 409 con mensaje por composición', async () => {
+    const { r, created } = repos({ rooms: mixedLimits })
+    await expect(executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 4 }, HOTEL, r)).rejects.toThrow(/Ninguna habitación de tipo "double"/)
+    expect(created).toHaveLength(0)
+  })
+
+  it('capacidad sólo sobre unidades LIBRES: la grande ocupada por una reserva ASIGNADA que solapa → adults:5 → 409; libre → crea', async () => {
+    const rooms = [
+      { id: 'room-2', hotelId: HOTEL, type: 'double', capacity: 2, basePrice: 100 },
+      { id: 'room-6', hotelId: HOTEL, type: 'double', capacity: 6, basePrice: 100 },
+    ]
+    const busy = { id: 'res-1', hotelId: HOTEL, roomId: 'room-6', roomType: 'double', status: 'confirmed', checkIn: '2026-07-20', checkOut: '2026-07-22' }
+    const { r, created } = repos({ rooms, reservations: [busy] })
+    let err: any = null
+    try { await executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 5 }, HOTEL, r) } catch (e) { err = e }
+    expect(err?.httpStatus).toBe(409)
+    expect(err?.message).toMatch(/admite hasta 2/)
+    expect(created).toHaveLength(0)
+    // Bloqueada una noche: ídem.
+    const blocked = repos({ rooms, blocks: [{ roomId: 'room-6', startDate: '2026-07-21', endDate: '2026-07-21' }] })
+    await expect(executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 5 }, HOTEL, blocked.r)).rejects.toThrow(/admite hasta 2/)
+    // Ocupada en fechas que NO solapan → la grande está libre → crea.
+    const free = repos({ rooms, reservations: [{ ...busy, checkIn: '2026-07-22', checkOut: '2026-07-24' }] })
+    const ok: any = await executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 5 }, HOTEL, free.r)
+    expect(ok.error).toBeUndefined()
+    expect(free.created).toHaveLength(1)
+  })
+
+  it('available ≥ 1 noche a noche pero NINGUNA unidad libre toda la ventana → error claro, no crea', async () => {
+    const rooms = [
+      { id: 'room-1', hotelId: HOTEL, type: 'double', capacity: 2, basePrice: 100 },
+      { id: 'room-2', hotelId: HOTEL, type: 'double', capacity: 2, basePrice: 100 },
+    ]
+    const { r, created } = repos({
+      rooms,
+      reservations: [{ id: 'res-1', hotelId: HOTEL, roomId: 'room-1', roomType: 'double', status: 'confirmed', checkIn: '2026-07-20', checkOut: '2026-07-21' }],
+      blocks: [{ roomId: 'room-2', startDate: '2026-07-21', endDate: '2026-07-21' }],
+    })
+    const result: any = await executeTool('create_reservation', { roomType: 'double', ...STAY, adults: 1 }, HOTEL, r)
+    expect(result.error).toMatch(/ninguna unidad del tipo queda libre/)
+    expect(created).toHaveLength(0)
+  })
+
   it('el push a Channex va por TIPO (onReservationCreated(hotelId, roomType))', async () => {
     const { r, pushes } = repos()
     await executeTool('create_reservation', { roomType: 'double', ...STAY }, HOTEL, r)

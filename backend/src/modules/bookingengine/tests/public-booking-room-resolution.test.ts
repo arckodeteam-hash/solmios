@@ -329,6 +329,40 @@ describe('createPublicBookingDirect — alta por TIPO sin unidad (REQ-HAC-05 #26
     expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
   })
 
+  // Revisión #260 (3ª pasada) — la composición entra si ALGUNA unidad libre la admite con sus
+  // TRES límites a la vez, no si entra en el perfil agregado (Math.max independiente por campo).
+  const mixedLimits = [
+    { id: 'r-adultos', hotelId: 'h1', type: 'familiar', basePrice: 100, capacity: 6, maxAdults: 6, maxChildren: 0, status: 'available' },
+    { id: 'r-fam-chica', hotelId: 'h1', type: 'familiar', basePrice: 80, capacity: 2, maxAdults: 1, maxChildren: 1, status: 'available' },
+  ]
+  // Sin `config` rige DEFAULT_CHILD_POLICY (maxFreeAge 0): el niño consume plaza (`payingChildren`).
+
+  it('(f11) "adultos-solo" {6,6,0} + "familiar chica" {2,1,1} libres → adults:5 + children:1 → 409 (el agregado {6,6,1} lo dejaba pasar), no crea nada', async () => {
+    const { orm, created } = makeOrm({ rooms: mixedLimits })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 1, childrenAges: [8] })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('Ninguna habitación de tipo "familiar"')
+    expect(res.body.error).toContain('5 adulto(s) y 1 niño(s)')
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
+  })
+
+  it('(f12) espejo: adults:1 + children:1 → 201 (entra en la familiar chica); adults:6 → 201 (entra en la de adultos)', async () => {
+    const { orm } = makeOrm({ rooms: mixedLimits })
+    const fam = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 1, children: 1, childrenAges: [8] })
+    expect(fam.status).toBe(201)
+    expect(fam.body.reservation.roomId).toBeNull()
+    const { orm: orm2 } = makeOrm({ rooms: mixedLimits })
+    const adultsOnly = await createPublicBookingDirect(orm2, { ...baseBody, roomType: 'familiar', adults: 6, children: 0 })
+    expect(adultsOnly.status).toBe(201)
+  })
+
+  it('(f13) el total que supera a TODAS las unidades sigue con el mensaje "admite hasta N"', async () => {
+    const { orm } = makeOrm({ rooms: mixedLimits })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 7, children: 0 })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('admite hasta 6')
+  })
+
   // ─── Precio ────────────────────────────────────────────────────────────────────────────────
   it('(g) el fallback nightly es el MÍNIMO basePrice entre las unidades vendibles del tipo (lo que publica /rates)', async () => {
     const { orm, created } = makeOrm({

@@ -12,8 +12,11 @@ import {
   countAvailableOfType,
   availableOfType,
   typeAvailabilityPortFromOrm,
+  someUnitFits,
+  roomTypeProfileOf,
   type TypeAvailabilityPort,
 } from '../type-availability'
+import { fitsRoomCapacity, type ChildComposition } from '../child-composition'
 
 const CHECK_IN = '2026-10-10'
 const CHECK_OUT = '2026-10-13'
@@ -248,5 +251,40 @@ describe('countAvailableOfType — fechas con hora', () => {
       { roomId: 'a', startDate: `${CHECK_IN}T10:00:00.000Z`, endDate: `${CHECK_IN}T10:00:00.000Z` },
     ], CHECK_IN, CHECK_OUT)
     expect(out.perNight[0]!.available).toBe(0)
+  })
+})
+
+describe('someUnitFits — revisión #260 (3ª pasada): la composición entra si ALGUNA unidad la admite entera', () => {
+  const comp = (effectiveAdults: number, payingChildren: number): ChildComposition =>
+    ({ effectiveAdults, payingChildren, freeChildren: 0, babies: 0, chargeableOccupancy: effectiveAdults + payingChildren })
+  const adultsOnly = { id: 'a', type: 'familiar', capacity: 6, maxAdults: 6, maxChildren: 0 }
+  const famChica = { id: 'b', type: 'familiar', capacity: 2, maxAdults: 1, maxChildren: 1 }
+
+  it('el perfil agregado {6,6,1} deja pasar 5+1; ninguna unidad real lo admite → false', () => {
+    const profile = roomTypeProfileOf('familiar', [adultsOnly, famChica])
+    expect(profile).toMatchObject({ capacity: 6, maxAdults: 6, maxChildren: 1 })
+    expect(fitsRoomCapacity(profile, comp(5, 1))).toBe(true)
+    expect(someUnitFits([adultsOnly, famChica], comp(5, 1))).toBe(false)
+  })
+
+  it('1+1 entra en la familiar chica; 6+0 en la de adultos; 7+0 en ninguna; lista vacía → false', () => {
+    expect(someUnitFits([adultsOnly, famChica], comp(1, 1))).toBe(true)
+    expect(someUnitFits([adultsOnly, famChica], comp(6, 0))).toBe(true)
+    expect(someUnitFits([adultsOnly, famChica], comp(7, 0))).toBe(false)
+    expect(someUnitFits([], comp(1, 0))).toBe(false)
+    expect(someUnitFits(undefined, comp(1, 0))).toBe(false)
+  })
+
+  it('la política room_type_capacity del tipo pisa los límites de la unidad (effectiveRoomCapacity)', () => {
+    const map = new Map([['familiar', { capacity: 4, maxAdults: 4, maxChildren: 2 }]])
+    // Con política: 4 adultos entran (aunque la chica no los admita) y 6 ya no.
+    expect(someUnitFits([famChica], comp(4, 0), map)).toBe(true)
+    expect(someUnitFits([adultsOnly], comp(6, 0), map)).toBe(false)
+  })
+
+  it('sin `capacity` en la fila cuenta el fallback (dato incompleto no bloquea); maxAdults/maxChildren null = sin límite', () => {
+    expect(someUnitFits([{ id: 'x', type: 'double' }], comp(5, 0))).toBe(true)
+    expect(someUnitFits([{ id: 'x', type: 'double' }], comp(5, 0), undefined, 2)).toBe(false)
+    expect(someUnitFits([{ id: 'y', type: 'double', capacity: 3, maxAdults: null, maxChildren: null }], comp(2, 1))).toBe(true)
   })
 })

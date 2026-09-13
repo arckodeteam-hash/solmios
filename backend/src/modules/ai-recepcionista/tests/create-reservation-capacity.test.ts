@@ -68,7 +68,9 @@ describe('create_reservation (Recepción IA) — capacidad (auditoría de integr
       { roomId: 'room-1', checkIn: '2026-07-20', checkOut: '2026-07-22', adults: 2, guestName: 'Ana' },
       HOTEL, repos({ rooms }),
     )
-    await expect(call).rejects.toThrow(/admite hasta 4/)
+    // Revisión #260 (3ª pasada): el total (2) entra en la capacidad (4) — el problema es el
+    // reparto adultos/niños, y el mensaje lo dice en vez de un "admite hasta 4; la reserva tiene 2".
+    await expect(call).rejects.toThrow(/Ninguna habitación de tipo "double" .* admite 2 adulto\(s\)/)
   })
 
   it('sin configRepo cableado: sigue validando contra la capacidad de la habitación física (fallback)', async () => {

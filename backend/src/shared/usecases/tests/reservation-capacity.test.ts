@@ -100,3 +100,32 @@ describe('assertReservationFitsCapacity — REQ-03 (#235) máximo de niños que 
     })).resolves.toBeUndefined()
   })
 })
+
+describe('assertReservationFitsCapacity — revisión #260 (3ª pasada): `units` decide por unidad, `room` sólo es el mensaje', () => {
+  const units = [
+    { id: 'a', type: 'familiar', capacity: 6, maxAdults: 6, maxChildren: 0 },
+    { id: 'b', type: 'familiar', capacity: 2, maxAdults: 1, maxChildren: 1 },
+  ]
+  const profile = { type: 'familiar', capacity: 6, maxAdults: 6, maxChildren: 1 }
+
+  it('5 adultos + 1 niño: el perfil agregado lo admite pero ninguna unidad → 409 con mensaje por composición', async () => {
+    // Sin `units` (unidad concreta con esos límites) pasa; con `units` rebota.
+    await expect(assertReservationFitsCapacity(configRepo(), profile, { hotelId: HOTEL, adults: 5, children: 1 })).resolves.toBeUndefined()
+    let err: any = null
+    try { await assertReservationFitsCapacity(configRepo(), profile, { hotelId: HOTEL, adults: 5, children: 1, units }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.message).toContain('Ninguna habitación de tipo "familiar"')
+    expect(err.message).toContain('5 adulto(s) y 1 niño(s)')
+  })
+
+  it('1 adulto + 1 niño entra (familiar chica); 7 adultos supera el total → mensaje clásico "admite hasta 6"', async () => {
+    await expect(assertReservationFitsCapacity(configRepo(), profile, { hotelId: HOTEL, adults: 1, children: 1, units })).resolves.toBeUndefined()
+    await expect(assertReservationFitsCapacity(configRepo(), profile, { hotelId: HOTEL, adults: 7, children: 0, units })).rejects.toThrow(/admite hasta 6/)
+  })
+
+  it('con política room_type_capacity para el tipo, decide la política (uniforme para todas las unidades)', async () => {
+    const repo = configRepo({ roomTypeCapacity: { familiar: { capacity: 4, maxAdults: 3, maxChildren: 2 } } })
+    await expect(assertReservationFitsCapacity(repo, profile, { hotelId: HOTEL, adults: 2, children: 2, units })).resolves.toBeUndefined()
+    await expect(assertReservationFitsCapacity(repo, profile, { hotelId: HOTEL, adults: 4, children: 0, units })).rejects.toThrow(ConflictError)
+  })
+})

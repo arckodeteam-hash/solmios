@@ -28,6 +28,8 @@ import {
   type AvailabilityReservation,
 } from '../utils/daily-availability'
 import { isRoomSellable } from './room-status'
+import { fitsRoomCapacity, type ChildComposition } from './child-composition'
+import { effectiveRoomCapacity, type RoomTypeCapacity } from './room-type-capacity'
 
 /**
  * Estados de reserva que consumen inventario. Es la misma whitelist que aplicaba el motor
@@ -198,6 +200,46 @@ export function unoccupiedSellableRooms(result: Pick<TypeAvailabilityResult, 'se
     const id = String(r?.id)
     return !result.busyRoomIds.has(id) && !result.blockedRoomIds.has(id)
   })
+}
+
+/**
+ * Revisión #260 (3ª pasada) — ¿ALGUNA de estas unidades admite la composición con sus TRES límites
+ * a la vez (`capacity`, `maxAdults`, `maxChildren`)? Es la regla que decide si un alta/edición por
+ * TIPO entra: la reserva se asignará después a UNA unidad concreta, así que tiene que existir una
+ * que la aloje entera. El perfil agregado (`roomTypeProfileOf`: `Math.max` INDEPENDIENTE por
+ * campo) no sirve para esto — con una unidad "adultos-solo" {6, 6, 0} y una "familiar chica"
+ * {2, 1, 1} arma {6, 6, 1} y deja pasar 5 adultos + 1 niño, que NINGUNA unidad real admite. El
+ * perfil agregado queda para precio (`minBasePrice`) y para el mensaje de error.
+ *
+ * Misma evaluación por unidad que el alta de grupo (`public-booking-group.ts`):
+ * `fitsRoomCapacity(effectiveRoomCapacity(map, unidad), composition)` — la política
+ * `room_type_capacity` del hotel, si existe para el tipo, pisa los tres campos de la unidad.
+ * Sin `capacity` en una fila (dato viejo) cuenta `fallbackCapacity` (por defecto la ocupación
+ * pedida: un dato incompleto no bloquea, criterio de `availability.ts`). Lista vacía → false.
+ */
+export function someUnitFits(
+  rooms: readonly any[] | null | undefined,
+  composition: ChildComposition,
+  roomTypeCapacityMap?: Map<string, RoomTypeCapacity>,
+  fallbackCapacity: number = composition.chargeableOccupancy,
+): boolean {
+  return (rooms ?? []).some((r) => {
+    const capacity = effectiveRoomCapacity(roomTypeCapacityMap, {
+      type: r?.type,
+      capacity: Number(r?.capacity ?? fallbackCapacity) || 0,
+      maxAdults: r?.maxAdults,
+      maxChildren: r?.maxChildren,
+    })
+    return fitsRoomCapacity(capacity, composition)
+  })
+}
+
+/**
+ * Mensaje 409 cuando `someUnitFits` es false y el TOTAL sí entraría en el perfil agregado (el
+ * clásico "admite hasta N" no aplica: el problema es el reparto adultos/niños, no la suma).
+ */
+export function noUnitFitsCompositionMessage(roomType: string, composition: Pick<ChildComposition, 'effectiveAdults' | 'payingChildren'>): string {
+  return `Ninguna habitación de tipo "${roomType}" libre para esas fechas admite ${composition.effectiveAdults} adulto(s) y ${composition.payingChildren} niño(s) con plaza`
 }
 
 /** Unidades tomadas la noche `d` (misma regla que `computeDailyAvailability`, sin el clamp). */
