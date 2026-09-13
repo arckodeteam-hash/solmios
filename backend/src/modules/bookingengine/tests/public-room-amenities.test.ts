@@ -4,7 +4,11 @@
 // Cubre:
 //  (1) catálogo agrupa por tipo; solo custom activas con name (las keys fijas y las inactivas no).
 //  (2) ignora rooms no vendibles (maintenance) y con onlineBookingEnabled=false.
-//  (3) unión por key entre rooms del tipo con precio MÍNIMO; ordenado por name.
+//  (3) unión por key entre rooms del tipo con precio MÁXIMO (#365); ordenado por name.
+//  (3b) #365: Cuna 20 en una unidad y 0 en otra del mismo tipo → publica 20 (no "Gratis").
+//  (3c) precios exactos por amenidad (20 / 5 / 0) ordenados por name.
+//  (3d) cambiar el precio de la fila (10 → 25) se refleja en la siguiente llamada.
+//  (3e) unionRoomAmenities (cobro) usa el mismo agregado: misma key a 0 y 20 → la fila de 20.
 //  (4) slug desconocido / hotel pausado → 404.
 //  (5) normalizeRoomAmenityKeys descarta keys no custom, duplicados y vacíos.
 //  (6) resolveRoomAmenityLines ignora key no ofrecida (warn) y usa el precio del server.
@@ -13,6 +17,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   getPublicRoomAmenities, normalizeRoomAmenityKeys, resolveRoomAmenityLines, preferRoomsOffering, roomOffersAll,
 } from '../usecases/public-room-amenities'
+import { unionRoomAmenities } from '../usecases/public-booking'
 
 const HOTEL = { id: 'h1', slug: 'caribe', onlineBookingStatus: 'active' }
 
@@ -73,7 +78,7 @@ describe('getPublicRoomAmenities — catálogo por tipo (REQ-01 #290)', () => {
     expect(res.body.byRoomType).toEqual({ double: [{ key: 'custom:parking', name: 'Parking', price: 8 }] })
   })
 
-  it('(3) unión por key entre rooms del tipo con precio mínimo, ordenado por name', async () => {
+  it('(3) unión por key entre rooms del tipo con precio MÁXIMO (#365), ordenado por name', async () => {
     const deps = makeDeps(HOTEL, {
       Rooms: [
         { id: 'r1', hotelId: 'h1', type: 'double', status: 'available' },
@@ -91,10 +96,73 @@ describe('getPublicRoomAmenities — catálogo por tipo (REQ-01 #290)', () => {
     expect(res.body.byRoomType).toEqual({
       double: [
         { key: 'custom:cama_extra', name: 'Cama extra', price: 30 },
-        { key: 'custom:cuna', name: 'Cuna', price: 15 },
+        { key: 'custom:cuna', name: 'Cuna', price: 20 },
       ],
     })
     expect(res.body.byRoomType.single).toBeUndefined()
+  })
+
+  it('(3b) #365: Cuna a 20 en una unidad y a 0 en otra del mismo tipo → el catálogo publica 20 (no "Gratis")', async () => {
+    // Escenario del backfill de cuna: `custom:cuna` quedó a 0 en todas las habitaciones y el hotel
+    // configuró US$20 en una. Con el mínimo se publicaba 0; el máximo expone el precio configurado.
+    const deps = makeDeps(HOTEL, {
+      Rooms: [
+        { id: 'r1', hotelId: 'h1', type: 'double', status: 'available' },
+        { id: 'r2', hotelId: 'h1', type: 'double', status: 'available' },
+      ],
+      RoomAmenities: [
+        am('r1', 'custom:cuna', { name: 'Cuna', price: 0 }),
+        am('r2', 'custom:cuna', { name: 'Cuna', price: 20 }),
+      ],
+    })
+    const res = await getPublicRoomAmenities(deps as any, 'caribe')
+    expect(res.status).toBe(200)
+    expect(res.body.byRoomType).toEqual({ double: [{ key: 'custom:cuna', name: 'Cuna', price: 20 }] })
+  })
+
+  it('(3b2) #365: "Gratis" sólo si TODAS las unidades del tipo la tienen a 0', async () => {
+    const deps = makeDeps(HOTEL, {
+      Rooms: [
+        { id: 'r1', hotelId: 'h1', type: 'double', status: 'available' },
+        { id: 'r2', hotelId: 'h1', type: 'double', status: 'available' },
+      ],
+      RoomAmenities: [
+        am('r1', 'custom:cuna', { name: 'Cuna', price: 0 }),
+        am('r2', 'custom:cuna', { name: 'Cuna', price: 0 }),
+      ],
+    })
+    const res = await getPublicRoomAmenities(deps as any, 'caribe')
+    expect(res.body.byRoomType).toEqual({ double: [{ key: 'custom:cuna', name: 'Cuna', price: 0 }] })
+  })
+
+  it('(3c) una unidad con Cuna 20, Cama extra 5 y Vista al mar 0 → 20 / 5 / 0 exactos, ordenados por name', async () => {
+    const deps = makeDeps(HOTEL, {
+      Rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', status: 'available' }],
+      RoomAmenities: [
+        am('r1', 'custom:cuna', { name: 'Cuna', price: 20 }),
+        am('r1', 'custom:cama_extra', { name: 'Cama extra', price: 5 }),
+        am('r1', 'custom:vista_al_mar', { name: 'Vista al mar', price: 0 }),
+      ],
+    })
+    const res = await getPublicRoomAmenities(deps as any, 'caribe')
+    expect(res.body.byRoomType).toEqual({
+      double: [
+        { key: 'custom:cama_extra', name: 'Cama extra', price: 5 },
+        { key: 'custom:cuna', name: 'Cuna', price: 20 },
+        { key: 'custom:vista_al_mar', name: 'Vista al mar', price: 0 },
+      ],
+    })
+  })
+
+  it('(3d) cambiar el precio de la fila (10 → 25) se refleja en la siguiente llamada', async () => {
+    const row = am('r1', 'custom:cuna', { name: 'Cuna', price: 10 })
+    const deps = makeDeps(HOTEL, {
+      Rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', status: 'available' }],
+      RoomAmenities: [row],
+    })
+    expect((await getPublicRoomAmenities(deps as any, 'caribe')).body.byRoomType.double[0].price).toBe(10)
+    row.price = 25 // lo que hace el panel al editar la amenidad de la habitación
+    expect((await getPublicRoomAmenities(deps as any, 'caribe')).body.byRoomType.double[0].price).toBe(25)
   })
 
   it('(4) slug desconocido o hotel pausado → 404', async () => {
@@ -108,6 +176,27 @@ describe('getPublicRoomAmenities — catálogo por tipo (REQ-01 #290)', () => {
     const res = await getPublicRoomAmenities(deps as any, 'caribe')
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ byRoomType: {} })
+  })
+})
+
+describe('unionRoomAmenities — mismo agregado que el catálogo (#365)', () => {
+  it('(3e) misma key a 0 y a 20 en dos rooms del tipo → devuelve la fila de 20 (lo mostrado == lo cobrado)', () => {
+    const cheap = am('r1', 'custom:cuna', { name: 'Cuna', price: 0 })
+    const paid = am('r2', 'custom:cuna', { name: 'Cuna', price: 20 })
+    const byRoom = new Map<string, any[]>([
+      ['r1', [cheap, am('r1', 'wifi')]],
+      ['r2', [paid]],
+    ])
+    expect(unionRoomAmenities(byRoom)).toEqual([paid])
+    // Orden inverso de las rooms: sigue ganando la de 20.
+    expect(unionRoomAmenities(new Map([['r2', [paid]], ['r1', [cheap]]]))).toEqual([paid])
+  })
+
+  it('a igual precio queda la primera fila; keys distintas se acumulan', () => {
+    const first = am('r1', 'custom:cuna', { name: 'Cuna', price: 20 })
+    const second = am('r2', 'custom:cuna', { name: 'Cuna', price: 20 })
+    const other = am('r2', 'custom:cama_extra', { name: 'Cama extra', price: 5 })
+    expect(unionRoomAmenities(new Map([['r1', [first]], ['r2', [second, other]]]))).toEqual([first, other])
   })
 })
 

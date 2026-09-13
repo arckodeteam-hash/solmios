@@ -3,8 +3,9 @@
 //
 // REQ-HAC-05 (#260): la reserva individual nace por TIPO sin unidad (`roomId` null). El catálogo
 // contra el que se resuelven las keys es la UNIÓN de `RoomAmenities` de las unidades vendibles del
-// tipo (misma key en dos unidades → la más barata), y la habitación cotiza al MÍNIMO `basePrice`
-// del tipo. Ya no se "elige la unidad que la ofrece": eso lo decide recepción al asignar.
+// tipo (misma key en dos unidades → la de MAYOR precio, #365: ningún precio configurado queda
+// oculto por una unidad a 0; es el mismo agregado que publica `GET /room-amenities`), y la
+// habitación cotiza al MÍNIMO `basePrice` del tipo. Ya no se "elige la unidad que la ofrece": eso lo decide recepción al asignar.
 //
 // Cubre:
 //  (a) single por roomType con `roomAmenities:[{key:'custom:jacuzzi'}]` donde solo la room más cara la
@@ -15,7 +16,7 @@
 //  (c) el precio mandado en el body se IGNORA: manda el de `RoomAmenities`.
 //  (c2) `roomId` explícito → sólo deriva el tipo: resuelve contra la unión del tipo, sin unidad.
 //  (d) grupo de 2 líneas, solo una con roomAmenities → solo esas filas llevan snapshot; la línea
-//      resuelve contra la UNIÓN del tipo (la más barata) y cada fila persiste el mismo snapshot
+//      resuelve contra la UNIÓN del tipo (la de mayor precio) y cada fila persiste el mismo snapshot
 //      unitario, sin unidad (HAC-05: el grupo también nace por tipo).
 //  (e) sin roomAmenities → breakdown.roomAmenitiesTotal 0, snapshot [] y nada más cambia.
 //  (f) total = subtotal - promo + taxes sigue cuadrando con las amenidades dentro del subtotal.
@@ -129,14 +130,15 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
     expect(saved.notes).toContain('Amenidades habitación: Jacuzzi=15.00')
   })
 
-  it('(a2) las dos la ofrecen → se cobra el precio MÁS BARATO entre las unidades del tipo', async () => {
+  it('(a2) las dos la ofrecen → se cobra el precio MAYOR entre las unidades del tipo (#365: lo mismo que publica el catálogo)', async () => {
     const { orm, tables } = twoRoomsDb()
     const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomType: 'double', adults: 2, roomAmenities: [{ key: 'custom:cama_extra' }] })
     expect(res.status).toBe(201)
     expect(res.body.reservation.roomId).toBeNull()
-    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(25)
-    expect(res.body.totalBreakdown.subtotal).toBe(185)
-    expect(tables.Reservations[0].roomAmenities).toEqual([{ key: 'custom:cama_extra', name: 'Cama extra', price: 25, quantity: 1, total: 25 }])
+    // Cama extra: 25 en r-cheap y 30 en r-jac → 30. 2 noches × 80 + 30 = 190.
+    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(30)
+    expect(res.body.totalBreakdown.subtotal).toBe(190)
+    expect(tables.Reservations[0].roomAmenities).toEqual([{ key: 'custom:cama_extra', name: 'Cama extra', price: 30, quantity: 1, total: 30 }])
   })
 
   it('(b) key no ofrecida por ninguna room → se ignora con warn, total sin cambios', async () => {
@@ -176,16 +178,16 @@ describe('createPublicBookingDirect — amenidades de habitación (REQ-01 #290)'
   it('(c2) roomId explícito → sólo deriva el tipo (HAC-05): resuelve contra la UNIÓN del tipo y nace sin unidad', async () => {
     const { orm, tables } = twoRoomsDb()
     // r-cheap no ofrece el jacuzzi pero r-jac (mismo tipo) sí → se cobra a 15; la cama extra al
-    // precio más barato del tipo (25). La fila no queda atada a r-cheap.
+    // precio MAYOR del tipo (30, #365). La fila no queda atada a r-cheap.
     const res = await createPublicBookingDirect(orm, { ...BASE_BODY, roomId: 'r-cheap', adults: 2, roomAmenities: [{ key: 'custom:jacuzzi' }, { key: 'custom:cama_extra' }] })
     expect(res.status).toBe(201)
     expect(res.body.reservation.roomId).toBeNull()
     expect(res.body.reservation.roomType).toBe('double')
     expect(tables.Reservations[0].roomId).toBeNull()
-    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(40)
+    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(45)
     expect(tables.Reservations[0].roomAmenities).toEqual([
       { key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 },
-      { key: 'custom:cama_extra', name: 'Cama extra', price: 25, quantity: 1, total: 25 },
+      { key: 'custom:cama_extra', name: 'Cama extra', price: 30, quantity: 1, total: 30 },
     ])
   })
 
@@ -246,12 +248,12 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
         am('r-a', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15 }), // la línea double NO la pide
         am('r-f2', 'custom:jacuzzi', { name: 'Jacuzzi', price: 15 }),
         am('r-f3', 'custom:jacuzzi', { name: 'Jacuzzi', price: 20 }),
-        // r-f1 no ofrece el jacuzzi → la unión del tipo `family` la publica a 15 (la más barata).
+        // r-f1 no ofrece el jacuzzi → la unión del tipo `family` la publica a 20 (la de mayor precio, #365).
       ],
     })
   }
 
-  it('(d) 2 líneas, solo la segunda con roomAmenities y quantity 2 → unión del tipo (la más barata); mismo snapshot unitario en cada fila, sin unidad', async () => {
+  it('(d) 2 líneas, solo la segunda con roomAmenities y quantity 2 → unión del tipo (la de mayor precio, #365); mismo snapshot unitario en cada fila, sin unidad', async () => {
     const { orm, tables } = groupDb()
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -262,11 +264,11 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     })
     expect(res.status).toBe(201)
     const tb = res.body.totalBreakdown
-    // Habitaciones: 80×2 + 100×2×2 = 560; jacuzzi de la unión del tipo (15, la más barata) × 2 = 30.
-    expect(tb.roomAmenitiesTotal).toBe(30)
-    expect(tb.subtotal).toBe(590)
-    expect(tb.total).toBe(590)
-    expect(tables.Groups[0].totalAmount).toBe(590)
+    // Habitaciones: 80×2 + 100×2×2 = 560; jacuzzi de la unión del tipo (20, la de mayor precio) × 2 = 40.
+    expect(tb.roomAmenitiesTotal).toBe(40)
+    expect(tb.subtotal).toBe(600)
+    expect(tb.total).toBe(600)
+    expect(tables.Groups[0].totalAmount).toBe(600)
 
     expect(tables.Reservations).toHaveLength(3)
     // HAC-05: filas en el orden de las líneas, todas sin unidad y con el tipo de su línea.
@@ -278,13 +280,13 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     expect(lineDouble.roomAmenitiesTotal).toBe(0)
     // Línea 2: cada fila con el MISMO snapshot unitario (quantity 1) al precio de la unión.
     for (const r of [family1, family2]) {
-      expect(r.roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 }])
-      expect(r.roomAmenitiesTotal).toBe(15)
+      expect(r.roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 20, quantity: 1, total: 20 }])
+      expect(r.roomAmenitiesTotal).toBe(20)
     }
     // El desglose guardado en la líder es el del grupo, con las amenidades adentro.
-    expect(tables.Reservations[0].priceBreakdown.roomAmenitiesTotal).toBe(30)
-    expect(tables.Reservations[0].priceBreakdown.subtotal).toBe(590)
-    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: family: Jacuzzi=30.00')
+    expect(tables.Reservations[0].priceBreakdown.roomAmenitiesTotal).toBe(40)
+    expect(tables.Reservations[0].priceBreakdown.subtotal).toBe(600)
+    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: family: Jacuzzi=40.00')
   })
 
   it('línea que pide más unidades que rooms con la amenidad → HAC-05: la unión del tipo la ofrece, se cobra en TODAS las filas (recepción asigna las que la tienen)', async () => {
@@ -296,13 +298,13 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
       undefined, undefined, undefined, logger,
     )
     expect(res.status).toBe(201)
-    // 15 (unión, la más barata) × 3 filas — ninguna se ignora: sin unidad elegida no hay "la que no la ofrece".
-    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(45)
+    // 20 (unión, la de mayor precio) × 3 filas — ninguna se ignora: sin unidad elegida no hay "la que no la ofrece".
+    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(60)
     expect(tables.Reservations).toHaveLength(3)
     for (const r of tables.Reservations) {
       expect(r.roomId).toBeNull()
-      expect(r.roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 15, quantity: 1, total: 15 }])
-      expect(r.roomAmenitiesTotal).toBe(15)
+      expect(r.roomAmenities).toEqual([{ key: 'custom:jacuzzi', name: 'Jacuzzi', price: 20, quantity: 1, total: 20 }])
+      expect(r.roomAmenitiesTotal).toBe(20)
     }
     expect(warns.some((w) => w.includes('Amenidad de habitación ignorada'))).toBe(false)
   })
@@ -352,6 +354,7 @@ describe('createPublicBookingGroup — amenidades de habitación por línea (REQ
     )
     expect(res.status).toBe(201)
     expect(calls).toHaveLength(1)
-    expect(calls[0].amount).toBe(215)
+    // 2 noches × 100 + jacuzzi de la unión del tipo (20, la de mayor precio).
+    expect(calls[0].amount).toBe(220)
   })
 })

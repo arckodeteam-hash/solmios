@@ -67,7 +67,7 @@
 //     - Precio: la tarifa sale por tipo (`baseRates`/`pickRate`), con fallback al MÍNIMO
 //       `basePrice` entre las unidades vendibles — lo mismo que `/rates` publica como "desde".
 //     - Amenidades de habitación (#290) y cuna (#292): el catálogo es la UNIÓN de `RoomAmenities`
-//       de las unidades vendibles del tipo (misma key → la más barata). `cribUnavailable` = ninguna
+//       de las unidades vendibles del tipo (misma key → la de mayor precio, #365). `cribUnavailable` = ninguna
 //       unidad del tipo ofrece la cuna.
 //     - Concurrencia: dentro de la tx se lockean las unidades del tipo (UPDATE sobre
 //       `Rooms {hotelId, type}`) y se REPITE `availableOfType` con el lock tomado; si ya no entra
@@ -597,8 +597,8 @@ export async function createPublicBookingDirect(
 
   // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra la UNIÓN del tipo ──────
   // Sin unidad asignada no hay "sus filas": el catálogo es la unión de `RoomAmenities` de las
-  // unidades vendibles del tipo (misma key en dos unidades → la más barata, como publica el
-  // catálogo público). Key que ninguna ofrece o inactiva → se ignora con warn; el precio SIEMPRE
+  // unidades vendibles del tipo (misma key en dos unidades → la de mayor precio, como publica el
+  // catálogo público — #365). Key que ninguna ofrece o inactiva → se ignora con warn; el precio SIEMPRE
   // sale de `RoomAmenities`. Con `cribRequested`, `custom:cuna` ya está en las keys: su línea sale
   // de acá como cualquier otra. Sin keys, NADA de esto lee `RoomAmenities`.
   let roomAmenityLines: RoomAmenityLine[] = []
@@ -1161,16 +1161,17 @@ export function roomTypeProfile(
 }
 
 /** REQ-HAC-05 — unión de las filas `RoomAmenities` (custom vendibles) de las unidades de un tipo,
- *  una por `amenityKey`: si dos unidades ofrecen la misma, queda la más barata (a igual precio,
- *  la primera). Es el mismo agregado que publica `GET /room-amenities` por tipo, así lo que el
- *  huésped vio como "desde" es lo que se le cobra. */
+ *  una por `amenityKey`: si dos unidades ofrecen la misma, queda la de MAYOR precio (a igual
+ *  precio, la primera) — #365: ningún precio configurado queda oculto por una unidad a 0. Es el
+ *  mismo agregado que publica `GET /room-amenities` por tipo (`getPublicRoomAmenities`), así lo
+ *  que el huésped vio es exactamente lo que se le cobra. */
 export function unionRoomAmenities(amenitiesByRoom: Map<string, any[]>): any[] {
   const byKey = new Map<string, any>()
   for (const rows of amenitiesByRoom.values()) {
     for (const a of customRoomAmenities(rows)) {
       const price = Math.max(0, Number(a.price) || 0)
       const prev = byKey.get(a.amenityKey)
-      if (!prev || price < Math.max(0, Number(prev.price) || 0)) byKey.set(a.amenityKey, a)
+      if (!prev || price > Math.max(0, Number(prev.price) || 0)) byKey.set(a.amenityKey, a)
     }
   }
   return Array.from(byKey.values())
