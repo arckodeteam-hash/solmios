@@ -133,7 +133,7 @@
                   {{ log.errorMessage }}
                 </p>
                 <!-- Sólo el aviso de habitación fallido admite reintento (el cron lo retoma en el próximo tick). -->
-                <button v-if="isRoomInfoRetryable(log)" @click.stop="retry(log)" :disabled="retrying === log.id"
+                <button v-if="canRetry(log)" @click.stop="retry(log)" :disabled="retrying === log.id"
                   class="mt-1 rounded-full border border-navy/20 px-2.5 py-0.5 text-[10px] font-bold text-navy hover:bg-navy/10 transition-colors cursor-pointer disabled:opacity-50">
                   {{ retrying === log.id ? 'Pidiendo…' : 'Reintentar' }}
                 </button>
@@ -218,7 +218,7 @@
       <template #footer>
         <button @click="detailModal.show = false"
           class="rounded-full px-5 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cerrar</button>
-        <button v-if="isRoomInfoRetryable(detailModal.log)" @click="retry(detailModal.log)" :disabled="retrying === detailModal.log.id"
+        <button v-if="canRetry(detailModal.log)" @click="retry(detailModal.log)" :disabled="retrying === detailModal.log.id"
           class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-all cursor-pointer disabled:opacity-50">
           {{ retrying === detailModal.log.id ? 'Pidiendo…' : 'Reintentar envío' }}
         </button>
@@ -255,6 +255,18 @@ const filterStatus = ref('')
 const detailModal = ref<{ show: boolean; log: MessageLog | null }>({ show: false, log: null })
 /** id del log cuyo reintento está en vuelo (deshabilita su botón). */
 const retrying = ref<string | null>(null)
+
+/**
+ * Un fallo se puede reintentar si es de room-info y todavía no tiene un marcador
+ * `retry_requested` posterior (misma clave y canal): ese pedido ya está en manos del cron
+ * y volver a pedirlo sólo agregaría filas redundantes.
+ */
+function canRetry(log: MessageLog): boolean {
+  if (!isRoomInfoRetryable(log)) return false
+  const at = log.sentAt || log.createdAt || ''
+  return !logs.value.some(l => l.status === 'retry_requested' && l.response === log.response
+    && l.channel === log.channel && (l.sentAt || l.createdAt || '') > at)
+}
 
 const stats = computed(() => ({
   total: logs.value.length,
