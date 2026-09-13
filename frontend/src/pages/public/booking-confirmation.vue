@@ -51,9 +51,7 @@
     (tel: / wa.me / mailto:, solo lo configurado) y "Cancelar reserva" como enlace discreto con
     confirmación. Helpers puros en `utils/booking-confirmation-format.ts`.
   -->
-  <!-- #381 — `themeCssVars` en la raíz: navy/teal/cyan de la página (header incluido) salen del
-       theme público del hotel, mismo patrón que hotel-landing.vue. Sin theme → preset classic. -->
-  <div class="min-h-screen bg-surface flex flex-col" :style="themeCssVars">
+  <div class="min-h-screen bg-surface flex flex-col">
     <!--
       #241 — Cabecera con la identidad del hotel: logo (si lo cargó), nombre grande y dirección.
       Todo sale de `GET /api/public/hotel/:slug` (allow-list pública) — nada hardcodeado. Mientras
@@ -489,7 +487,7 @@ import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { LandingService } from '@/services/Landing.service'
-import { themeToCssVars, darkestThemeColor, contrastTextColor } from '@/utils/landing-theme'
+import { darkestThemeColor, contrastTextColor } from '@/utils/landing-theme'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
 import { receiptPdfUrl, receiptAvailable } from '@/utils/booking-confirmation-format'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
@@ -523,10 +521,10 @@ const errorMessage = ref(t('confirm.errorDefault'))
 /** Info pública del hotel (#241): identidad, dirección, contacto y horarios de la cabecera y
  *  las tarjetas. `null` mientras carga o si el endpoint falla — la página confirma igual. */
 const hotel = ref<PublicHotelInfo | null>(null)
-/** #381 — theme público de la landing (GET /api/public/hotels/:slug/landing). Best-effort: null → classic. */
+/** #381 — theme público de la landing (GET /api/public/hotels/:slug/landing). Best-effort: null → classic.
+ *  Solo alimenta la card "Your stay": el resto de la página no se reskinea (sus botones/badges no
+ *  tienen cálculo de contraste y un theme claro los dejaría ilegibles). */
 const landingTheme = ref<LandingTheme | null>(null)
-/** CSS custom properties del theme para la raíz de la página (mismo patrón que hotel-landing.vue). */
-const themeCssVars = computed<Record<string, string>>(() => themeToCssVars(landingTheme.value))
 /** Card "Your stay": fondo = token más oscuro del theme; texto blanco (o navy si el theme es claro). */
 const stayCardBg = computed(() => darkestThemeColor(landingTheme.value))
 const stayCardFg = computed(() => contrastTextColor(stayCardBg.value))

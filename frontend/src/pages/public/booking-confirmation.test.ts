@@ -577,16 +577,16 @@ describe('theme público en la card "Your stay" (#381)', () => {
     expect(color(stayStyle(w).color)).toBe('#FFFFFF')
   })
 
-  it('el fondo es el color más oscuro del theme del hotel y la página lleva sus CSS vars', async () => {
+  it('el fondo es el color más oscuro del theme del hotel; el resto de la página no se reskinea', async () => {
     getLanding.mockResolvedValue({ data: [], theme: { templateId: 'classic', colors: { gold: '#111111' } } })
     const w = await render()
     expect(color(stayStyle(w).backgroundColor)).toBe('#111111')
     expect(color(stayStyle(w).color)).toBe('#FFFFFF')
-    // Las CSS vars del theme van en la raíz: header + main heredan navy/teal/cyan del hotel.
+    // El theme solo pinta la card: la raíz no lleva CSS vars (botones/badges sin cálculo de
+    // contraste quedarían ilegibles con un theme claro).
     const root = w.find('.min-h-screen')
     expect(root.exists()).toBe(true)
-    expect(root.attributes('style')).toContain('--color-gold: #111111')
-    expect(root.attributes('style')).toContain('--color-navy: #0D2B4E')
+    expect(root.attributes('style') ?? '').not.toContain('--color-')
   })
 
   it('con un theme claro el texto pasa a oscuro por contraste', async () => {
