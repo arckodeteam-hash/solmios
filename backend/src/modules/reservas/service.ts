@@ -176,7 +176,6 @@ export class ReservasService {
   async setGuaranteePin(user: any, body: any): Promise<{ success: boolean }> { return setGuaranteePinUsecase(this.queries, this.userRepo, user, body) }
 
   async getGuaranteeHasPin(user: any): Promise<{ hasPin: boolean }> { return getGuaranteeHasPinUsecase(this.queries, this.userRepo, user) }
-
   async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> { return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth) }
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
   private cancelCoreDeps = () => ({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }) // núcleo compartido por cancel / cancelBySystem / reject — ver usecases/cancel-core.ts
@@ -194,9 +193,7 @@ export class ReservasService {
   async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem(this.cancelCoreDeps(), id, input) }
 
   async getBookingEngineDashboard(user: any): Promise<any> { return getBookingEngineDashboardUsecase(this.queries, user) }
-  async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> {
-    return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)
-  }
+  async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> { return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user) }
   /** #336: enlace del check-in digital por email. `messageLogRepo` lo inyecta setEmailDeps; sin él cae al OrmRepository, como lock-code-email. */
   async sendCheckinLinkEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string; checkinUrl: string }> { return sendCheckinLinkEmailUsecase({ reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo, emailSender: this.emailSender, messageLogRepo: this.messageLogRepo ?? new OrmRepository<any>(deps.orm, 'MessageLogs'), publicUrl: process.env.PUBLIC_URL ?? '', logger: this.logger }, id, user) }
 }
