@@ -19,6 +19,7 @@ import { triggerAutoMessages } from './usecases/trigger-auto-messages'
 import type { EmailSender } from '../../services/email-sender'
 import type { NotificationEvent, NotificationLanguage } from '../../services/notification-defaults'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+import { ROOM_INFO_DEDUP_PREFIX, ROOM_INFO_RETRY_STATUS } from '../../shared/usecases/room-info-notice'
 
 export interface TriggerDeps {
   emailSender: EmailSender
@@ -88,6 +89,30 @@ export class MarketingService {
     return data.sort((a, b) => (b.sentAt || '').localeCompare(a.sentAt || ''))
   }
   async createMessageLog(dto: CreateMessageLogDTO): Promise<MessageLogDTO> { return this.logRepo.create(dto as any) }
+
+  /**
+   * Reintento manual del aviso de habitación (issue #338, CA19). No manda nada: escribe un
+   * MARCADOR `retry_requested` con la misma clave de dedup, y `roomInfoSendState` (shared)
+   * cuenta sólo los failed posteriores a él → el cron reenvía en el próximo tick.
+   * Sólo aplica a un envío `failed` de `auto:room_info:`; el resto de mensajes no tiene cron
+   * que los retome, así que reabrirlos sería mentirle al usuario.
+   */
+  async retryMessageLog(hotelId: string, id: string, user?: MarketingUser): Promise<MessageLogDTO> {
+    const existing = await this.logRepo.findById(id)
+    // Mismo 404 para ajeno e inexistente: no revelar que el id existe en otro hotel.
+    if (!existing || existing.hotelId !== hotelId) throw new NotFoundError('Envío no encontrado')
+    if (existing.status !== 'failed' || !String(existing.response ?? '').startsWith(ROOM_INFO_DEDUP_PREFIX)) {
+      throw new ConflictError('Sólo se reintenta un aviso de habitación fallido')
+    }
+    const marker = await this.logRepo.create({
+      hotelId: existing.hotelId, reservationId: existing.reservationId, guestId: (existing as any).guestId,
+      messageType: existing.messageType, channel: existing.channel, recipient: existing.recipient,
+      response: existing.response, status: ROOM_INFO_RETRY_STATUS, sentAt: new Date().toISOString(), errorMessage: '',
+    } as any)
+    await auditSafely(this.auditPort, this.logger, { hotelId: existing.hotelId, userId: user?.id, action: 'message_log.retry',
+      entity: 'message_log', entityId: id, detail: `Reintento del aviso de habitación pedido (${existing.channel ?? 'email'})` })
+    return marker
+  }
 
   // El acuse de entrega lo recibe el webhook de `ai-recepcionista`, pero `message_logs` es de acá.
   // Estos dos métodos son lo único que ese módulo necesita, vía el connector `whatsapp-delivery-status`.

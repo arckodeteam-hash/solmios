@@ -19,7 +19,7 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
 
     contract: {
       name: 'marketing', version: '1.0.0', description: 'Auto-messages + WhatsApp templates (sync con Meta) + delivery logs',
-      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages','submitTemplateToMeta','syncTemplateStatus','crearPlantillasBase'],
+      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','retryMessageLog','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages','submitTemplateToMeta','syncTemplateStatus','crearPlantillasBase'],
       events: ['onAutoMessageSent'],
       tables: ['auto_messages','message_logs','whatsapp_templates'],
       dependencies: [],
@@ -58,8 +58,10 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
       router.post('/api/whatsapp-templates/:id/sync-status', guard('settings', 'edit'), (req) => controller.syncTemplateStatus(req))
 
       router.get('/api/message-logs', guard('settings', 'view'), (req) => controller.listMessageLogs(req))
+      // Reintento manual del aviso de habitación (#338): escribe un marcador, el cron reenvía.
+      router.post('/api/message-logs/:id/retry', guard('settings', 'edit'), (req) => controller.retryMessageLog(req))
 
-      log.info('Módulo marketing listo — 3 tablas, 12 endpoints + trigger')
+      log.info('Módulo marketing listo — 3 tablas, 13 endpoints + trigger')
       return service
     },
   })

@@ -51,6 +51,7 @@
           <option class="text-navy" value="pending">Pendientes</option>
           <option class="text-navy" value="failed">Fallidos</option>
           <option class="text-navy" value="queued">En cola</option>
+          <option class="text-navy" value="retry_requested">Reintento pedido</option>
         </select>
       </template>
 
@@ -131,6 +132,11 @@
                 <p v-if="log.errorMessage" class="mt-1 max-w-[240px] text-[10px] font-bold text-coral">
                   {{ log.errorMessage }}
                 </p>
+                <!-- Sólo el aviso de habitación fallido admite reintento (el cron lo retoma en el próximo tick). -->
+                <button v-if="canRetry(log)" @click.stop="retry(log)" :disabled="retrying === log.id"
+                  class="mt-1 rounded-full border border-navy/20 px-2.5 py-0.5 text-[10px] font-bold text-navy hover:bg-navy/10 transition-colors cursor-pointer disabled:opacity-50">
+                  {{ retrying === log.id ? 'Pidiendo…' : 'Reintentar' }}
+                </button>
               </td>
               <td class="px-4 py-3 hidden xl:table-cell">
                 <div v-if="log.response" class="max-w-[220px] truncate text-[11px] text-text-muted">{{ log.response }}</div>
@@ -201,7 +207,10 @@
           <pre class="whitespace-pre-wrap rounded-xl bg-surface p-3 font-sans text-[11px] text-navy">{{ detailModal.log.body }}</pre>
         </div>
         <div v-if="detailModal.log.response">
-          <div class="mb-1 text-[10px] font-bold uppercase tracking-wide text-text-muted">Respuesta del proveedor</div>
+          <!-- En el aviso de habitación `response` guarda la clave de dedup del cron, no una respuesta del proveedor. -->
+          <div class="mb-1 text-[10px] font-bold uppercase tracking-wide text-text-muted">
+            {{ detailModal.log.response.startsWith(ROOM_INFO_DEDUP_PREFIX) ? 'Clave de envío' : 'Respuesta del proveedor' }}
+          </div>
           <pre class="whitespace-pre-wrap rounded-xl bg-coral/5 p-3 font-mono text-[10px] text-coral">{{ detailModal.log.response }}</pre>
         </div>
       </div>
@@ -209,6 +218,10 @@
       <template #footer>
         <button @click="detailModal.show = false"
           class="rounded-full px-5 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cerrar</button>
+        <button v-if="canRetry(detailModal.log)" @click="retry(detailModal.log)" :disabled="retrying === detailModal.log.id"
+          class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-all cursor-pointer disabled:opacity-50">
+          {{ retrying === detailModal.log.id ? 'Pidiendo…' : 'Reintentar envío' }}
+        </button>
       </template>
     </AppModal>
   </div>
@@ -216,7 +229,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { MessageLogsService, msgStatusMeta, msgTypeMeta, ICON_INBOX , msgChannelMeta } from '@/services/MessageLogs.service'
+import { MessageLogsService, msgStatusMeta, msgTypeMeta, ICON_INBOX, msgChannelMeta, isRoomInfoRetryable, ROOM_INFO_DEDUP_PREFIX } from '@/services/MessageLogs.service'
 import type { MessageLog } from '@/services/MessageLogs.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
@@ -240,6 +253,20 @@ const filterType = ref('')
 const filterStatus = ref('')
 
 const detailModal = ref<{ show: boolean; log: MessageLog | null }>({ show: false, log: null })
+/** id del log cuyo reintento está en vuelo (deshabilita su botón). */
+const retrying = ref<string | null>(null)
+
+/**
+ * Un fallo se puede reintentar si es de room-info y todavía no tiene un marcador
+ * `retry_requested` posterior (misma clave y canal): ese pedido ya está en manos del cron
+ * y volver a pedirlo sólo agregaría filas redundantes.
+ */
+function canRetry(log: MessageLog): boolean {
+  if (!isRoomInfoRetryable(log)) return false
+  const at = log.sentAt || log.createdAt || ''
+  return !logs.value.some(l => l.status === 'retry_requested' && l.response === log.response
+    && l.channel === log.channel && (l.sentAt || l.createdAt || '') > at)
+}
 
 const stats = computed(() => ({
   total: logs.value.length,
@@ -288,6 +315,25 @@ async function load() {
 
 function showDetail(log: MessageLog) {
   detailModal.value = { show: true, log }
+}
+
+/**
+ * Reintento manual del aviso de habitación (CA19). El backend sólo crea un marcador
+ * `retry_requested`: el envío real lo hace el cron en el próximo tick, no acá.
+ */
+async function retry(log: MessageLog) {
+  if (retrying.value) return
+  retrying.value = log.id
+  try {
+    await MessageLogsService.retry(log.id)
+    detailModal.value = { show: false, log: null }
+    toast.success('Reintento pedido: el aviso se vuelve a enviar en los próximos minutos')
+    await load()
+  } catch (e: any) {
+    toast.error(e.message || 'No se pudo pedir el reintento')
+  } finally {
+    retrying.value = null
+  }
 }
 
 function exportCsv() {

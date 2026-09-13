@@ -57,6 +57,11 @@ export class MarketingController {
     const d = validateSchema(CreateMessageLogSchema, this.withHotelId(req)) as any
     return { status: 201, body: await this.service.createMessageLog(d) }
   }
+  /** Pide el reintento manual de un aviso de habitación fallido. hotelId SIEMPRE del token. */
+  async retryMessageLog(req: HttpRequest) {
+    const user = (req as any).user as MarketingUser | undefined
+    return { status: 200, body: { data: await this.service.retryMessageLog(this.hotelIdFor(req), req.params.id, user) } }
+  }
 
   async listTemplates(req: HttpRequest) { const h = this.hotelIdFor(req); return { status: 200, body: { data: await this.service.listTemplates(h) } } }
   async createTemplate(req: HttpRequest) {

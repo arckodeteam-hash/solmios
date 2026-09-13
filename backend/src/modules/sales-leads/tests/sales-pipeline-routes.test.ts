@@ -10,8 +10,9 @@ import { Router } from 'arckode-framework'
 import { makeAuth, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { SalesLeadsModule } from '../index'
 
-// Anclado al reloj real: la ruta calcula el stage con `new Date()`, y con una fecha fija el trial
-// de h2 (`iso(3)`) pasó a 'expired' el 2026-09-13 y el test se rompió solo (#306).
+// Anclado al reloj REAL: el módulo no permite inyectar `now` por la ruta y el pipeline calcula el
+// stage con `new Date()`. Con una fecha fija el trial de h2 (`iso(3)`) pasó a 'expired' el
+// 2026-09-13 y el test se rompió solo (#306, #338).
 const NOW = new Date()
 const DAY = 24 * 60 * 60 * 1000
 const iso = (offsetDays: number) => new Date(NOW.getTime() + offsetDays * DAY).toISOString()
