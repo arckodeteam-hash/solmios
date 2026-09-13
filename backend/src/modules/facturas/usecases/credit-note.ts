@@ -35,6 +35,7 @@ export async function generateCreditNote(
     ncf: invoice.ncf ? `NCF-CN-${invoice.invoiceNumber}` : null,
     notes: `Nota de crédito por cancelación de ${invoice.invoiceNumber}. Razón: ${reason}`,
     amountPaid: 0,
+    issuedBy: userId ?? null, // CA 24 de #298: quién emitió la nota de crédito
     createdAt: now,
     updatedAt: now,
   } as any)
