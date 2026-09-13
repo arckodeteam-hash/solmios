@@ -49,6 +49,61 @@ describe('canales-reservas — cancelación OTA', () => {
   })
 })
 
+describe('canales-reservas — auto-asignación de unidad al ingresar una reserva OTA (corrección a REQ-HAC-05)', () => {
+  function ctxWithAssign(canales: any, opts: { throws?: boolean; result?: any } = {}) {
+    const assigned: Array<{ reservationId: string; hotelId: string }> = []
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'reservas') {
+          return {
+            cancelBySystem: async () => ({ ok: true }),
+            autoAssignRoom: async (reservationId: string, hotelId: string) => {
+              if (opts.throws) throw new Error('boom')
+              assigned.push({ reservationId, hotelId })
+              return opts.result ?? { assigned: true, roomId: 'rm1', roomNumber: '101' }
+            },
+          }
+        }
+        if (name === 'canales') return canales
+        throw new Error(`módulo inesperado: ${name}`)
+      },
+    } as any
+    return { ctx, assigned }
+  }
+
+  it('onOtaBookingIngested → autoAssignRoom(reservationId, hotelId)', async () => {
+    let sockets: any = {}
+    const canales = { setReservationCancelPort: () => {}, setSockets: (s: any) => { sockets = { ...sockets, ...s } } }
+    const { ctx, assigned } = ctxWithAssign(canales)
+    canalesReservasConnector(ctx)
+
+    expect(typeof sockets.onOtaBookingIngested).toBe('function')
+    await sockets.onOtaBookingIngested({ hotelId: 'hotel-a', reservationId: 'r1', ota: 'Booking.com' })
+    expect(assigned).toEqual([{ reservationId: 'r1', hotelId: 'hotel-a' }])
+  })
+
+  it('sin unidad libre o con error → la ingesta no se entera (resuelve igual)', async () => {
+    let sockets: any = {}
+    const canales = { setReservationCancelPort: () => {}, setSockets: (s: any) => { sockets = { ...sockets, ...s } } }
+    canalesReservasConnector(ctxWithAssign(canales, { throws: true }).ctx)
+    await expect(sockets.onOtaBookingIngested({ hotelId: 'hotel-a', reservationId: 'r1', ota: 'Booking.com' })).resolves.toBeUndefined()
+
+    let sockets2: any = {}
+    const canales2 = { setReservationCancelPort: () => {}, setSockets: (s: any) => { sockets2 = { ...sockets2, ...s } } }
+    canalesReservasConnector(ctxWithAssign(canales2, { result: { assigned: false, reason: 'no_rooms' } }).ctx)
+    await expect(sockets2.onOtaBookingIngested({ hotelId: 'hotel-a', reservationId: 'r1', ota: 'Booking.com' })).resolves.toBeUndefined()
+  })
+
+  it('payload incompleto → no llama a reservas', async () => {
+    let sockets: any = {}
+    const canales = { setReservationCancelPort: () => {}, setSockets: (s: any) => { sockets = { ...sockets, ...s } } }
+    const { ctx, assigned } = ctxWithAssign(canales)
+    canalesReservasConnector(ctx)
+    await sockets.onOtaBookingIngested({ hotelId: 'hotel-a', ota: 'Booking.com' })
+    expect(assigned).toEqual([])
+  })
+})
+
 describe('ai-recepcionista-reservas / ai-gerente-reservas — cancelación directa', () => {
   it('el asistente cancela con la política del hotel (sin penaltyMode)', async () => {
     const calls: any[] = []

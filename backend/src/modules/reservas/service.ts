@@ -81,7 +81,7 @@ export class ReservasService {
     /** Storage (foto de documento + firma del pre-checkin público). Sin él, `submitPreCheckin`/`uploadPreCheckinPhoto` fallan — ver composition-root.ts. */ private readonly storage?: StorageService,
     /** Catálogo `Seasons` (label/color) para el quote del wizard — ver index.ts. */ private readonly seasonsRepo?: RepositoryAdapter<any>,
     /** `RateOverrides` — tarifa por FECHA. AL FINAL: no corre ningún posicional existente. */ private readonly rateOverrideRepo?: RepositoryAdapter<any>,
-    /** Requerimiento 7 (2026-09-03) — `Configuration` KV general, para `resolveChildPolicy` al repreciar un reagendado con niños. AL FINAL, mismo criterio. */ private readonly configRepo?: RepositoryAdapter<any>,
+    /** Requerimiento 7 (2026-09-03) — `Configuration` KV general, para `resolveChildPolicy` al repreciar un reagendado con niños. AL FINAL, mismo criterio. */ private readonly configRepo?: RepositoryAdapter<any>, /** `RoomAmenities` — la auto-asignación al nacer una reserva web/OTA prefiere una unidad con cuna si la reserva la pide (usecases/auto-assign-room.ts). AL FINAL. */ private readonly roomAmenityRepo?: RepositoryAdapter<any>,
   ) {}
 
   // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
@@ -121,8 +121,8 @@ export class ReservasService {
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
   async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
-  /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
-  /** #262 (REQ-HAC-07) — el cron de pre-llegada asigna la sugerida con usuario `system` (roomAssignedBy + audit); ver usecases/auto-assign-room.ts. */ autoAssignRoom(id: string, hotelId: string) { return autoAssignSuggestedRoom(this.roomAssignmentDeps(), id, hotelId) }
+  /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, configRepo: this.configRepo, roomAmenityRepo: this.roomAmenityRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
+  /** #262 (REQ-HAC-07) y alta web/OTA (connectors reservas-bookingengine / canales-reservas): asigna una unidad libre del tipo con usuario `system` (roomAssignedBy + audit); ver usecases/auto-assign-room.ts. */ autoAssignRoom(id: string, hotelId: string) { return autoAssignSuggestedRoom(this.roomAssignmentDeps(), id, hotelId) }
   async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> { return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger }) } // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
   /** Saldo de la cuenta abierta — lo consulta la guarda de deuda del checkout. */

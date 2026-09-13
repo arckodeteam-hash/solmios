@@ -454,7 +454,7 @@ export class BookingengineController {
     if (result.status === 201 && result.body?.reservation) {
       const r = result.body.reservation
       this.service.notifyBookingCreated({
-        id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
+        id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, reservationIds: [r.id],
         checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount, status: r.status,
         guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
@@ -507,6 +507,8 @@ export class BookingengineController {
       const r = result.body.reservations[0]
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+        // Todas las filas del grupo: la auto-asignación de unidad (reservas-bookingengine) es por fila.
+        reservationIds: result.body.reservations.map((x: any) => String(x.id)),
         guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
         guestPhone: result.body.guest?.phone ?? '',
         paid: false, hasCheckout: result.body.checkoutUrl != null,

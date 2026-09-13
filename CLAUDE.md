@@ -254,6 +254,21 @@ Corolario al agregar una columna así: `ormMigrate` hace `ADD COLUMN` y **no rel
 viejas** (quedan en `NULL` → invisibles). Toda columna discriminadora nueva necesita su backfill
 (`scripts/backfill-announcement-audience.ts`).
 
+### Habitación asignada al nacer, cambiable después (corrección 2026-09-13 a REQ-HAC-05 #260)
+El epic #255 dejó a las reservas web y OTA naciendo SIN habitación (`roomId: null`, se asignaba al
+check-in). El usuario lo corrigió: **la habitación queda asignada en el sistema desde que el huésped
+reserva/paga, y recepción la puede cambiar cuando haga falta**. La venta y la disponibilidad siguen por
+TIPO (HAC-02, sin cambios); lo que se agregó es que, apenas la fila existe, el sistema le asigna una
+unidad: `onBookingCreated` (widget + grupo, payload con `reservationIds` de todas las filas) →
+`connectors/reservas-bookingengine.ts`, y `onOtaBookingIngested` → `connectors/canales-reservas.ts`, ambos
+vía `shared/usecases/auto-assign-on-create.ts` → `reservas.autoAssignRoom`
+(`reservas/usecases/auto-assign-room.ts`, el mismo del cron de pre-llegada). Criterio: libres del tipo sin
+solape ni bloqueo → que la composición ENTRE (capacidad) → con cuna si `needsCrib` → orden del panel.
+Best-effort: sin unidad (`no_rooms`/`no_fit`) queda en la banda "Sin asignar" — NUNCA se fuerza una chica
+ni se toca la reserva ya creada. El `roomId` no viene en el 201 del widget (corre tras el evento). No
+volver a "nace sin habitación" ni mover la elección de unidad al motor: la única función que escribe
+`roomId` sigue siendo `assign-room.ts`.
+
 ### Motor de reservas público — un solo interruptor (#276 MR-11)
 El motor público (`/api/public/hotels/:slug/...` y `POST /api/public/booking[/group]`) tiene DOS flags
 que lo abren o cierran, con dueños distintos:
