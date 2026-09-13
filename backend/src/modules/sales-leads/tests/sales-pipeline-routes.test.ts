@@ -10,7 +10,9 @@ import { Router } from 'arckode-framework'
 import { makeAuth, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { SalesLeadsModule } from '../index'
 
-const NOW = new Date('2026-09-10T12:00:00.000Z')
+// Reloj REAL: el módulo no permite inyectar `now` por la ruta y el pipeline compara `trialEndsAt`
+// contra `new Date()`. Con una fecha fija el seed caducaba solo (falló el 2026-09-13).
+const NOW = new Date()
 const DAY = 24 * 60 * 60 * 1000
 const iso = (offsetDays: number) => new Date(NOW.getTime() + offsetDays * DAY).toISOString()
 
