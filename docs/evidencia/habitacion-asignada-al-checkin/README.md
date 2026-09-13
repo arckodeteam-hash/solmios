@@ -42,7 +42,7 @@ la única con cerradura TTLock: lock `9a9797c8-282a-4e0b-8ad7-8421d950e75b`, en 
 | 06 | `06-ttlock-codigo.png` | Mismo modal, tarjeta **"Cerradura"**: En línea · 100 %, Abrir/Cerrar puerta, horario 15:00 → 12:00, código activo (tapado), botones Enviar código por email / Regenerar / Cambiar / Desactivar. El código se generó **al asignar la 103 en el check-in** (fila nueva en `GET /api/ttlock/codes`, ver abajo) |
 | 07a | `07a-reasignar-modal.png` | "Cambiar" → RoomAssignModal con "Ver todos los tipos" tildado (`GET /assignable-rooms?allTypes=1`): Hab. 103 "Actual · Ocupada" (Asignar deshabilitado), 101/102/202/204/205/208/203 marcadas "Otro tipo" (8 libres) |
 | 07 | `07-reasignada-208.png` | Tras Asignar 208 y aceptar el `confirm()` "La habitación es de otro tipo. ¿Asignar igual?": toast "Habitación 208 asignada", "Tipo: Doble · Habitación: 208 (asignada el 13/09/2026, 03:25 por Hotel Admin Demo)", Cerradura: **"Sin código vigente — el anterior fue desactivado"**, "1 código(s) anterior(es)" (la 208 no tiene cerradura) |
-| 08 | `08-reports-ocupacion.png` | `/panel/finanzas/reportes` pestaña Ocupación (Este mes): 9 hab., ocupación media 20 %, 2 ocupadas/día, 7 libres/día, Hab. por tipo suite 3 / double 4 / triple 1 / single 1. Renderiza con reservas sin `roomId` en el rango |
+| 08 | `08-reports-ocupacion.png` | `/panel/finanzas/reportes` pestaña Ocupación (Este mes): 9 hab., ocupación media 19 %, 2 ocupadas/día, 7 libres/día (captura de la re-corrida de las 03:41Z, ver Reports), Hab. por tipo suite 3 / double 4 / triple 1 / single 1. Renderiza con reservas sin `roomId` en el rango |
 | 08b | `08b-reports-ocupacion-diaria.png` | Tabla "Detalle diario" del mismo reporte (01–21 sep) |
 
 Nota sobre 08/08b: se rehicieron con `--only=8` a las 03:29Z, **después** de la limpieza. Como las
@@ -152,10 +152,16 @@ en 208, estadía `checked_in` en 208):
 | `GET /api/reports` | `totalReservations: 65`, `todayCheckins: 1`, `todayCheckouts: 0`, `channelBookings: {direct: 12, OpenChannel: 4}`, `occupancyByType: [suite 3/0, double total 4 · occupied 1 · 25 %, triple 1/0, single 1/0]` — la ocupada es la estadía, contada por `roomType` (= double tras el cambio de tipo); sólo cuenta `confirmed`/`checked_in` de esta noche, por eso la web pendiente y las OTA del 18 no aparecen |
 | `GET /api/reports/advanced?type=ocupacion&from=2026-09-12&to=2026-09-27` | `totalRooms: 9`, `avgRealOccupancy: 14`, `byRoomType: {suite 3, double 4, triple 1, single 1}`; daily `2026-09-13: occupied 2 · free 7 · 22 %`, `2026-09-18: occupied 3 · free 6 · 33 %` (OTA-A con hab., OTA-B sin hab. y una pending previa de la 103 del 14 → 19), `2026-09-23: occupied 2 · free 7 · 22 %` (la web sin hab. + otra) |
 
-Lectura 2 (03:29Z, después de la limpieza, con la temporal `b2d70362-…` confirmada sin hab. 18 → 20;
-es la de las capturas 08/08b): `occupancyByType` todo 0 (nadie alojado esta noche),
+Lectura 2 (03:29Z, después de la limpieza, con la temporal `b2d70362-…` confirmada sin hab. 18 → 20): `occupancyByType` todo 0 (nadie alojado esta noche),
 `todayCheckins: 0`, `channelBookings: {direct: 11, OpenChannel: 2}`; daily `09-13: 2` · `09-18: 2`
 (sin la temporal daba 1) · `09-23: 1`. `unassignedLive` = sólo la temporal.
+
+Las capturas 08/08b son de una **re-corrida** del paso 8 a las 03:41Z (`--only=8`, que crea otra temporal
+sin hab. 18 → 20 — `469c0325-…`, cancelada al final): por eso muestran ocupación media 19 % y la fila
+`13 sept: 3 ocupadas / 33 %`, no los valores de las lecturas 1 y 2. Las 3 filas no canceladas que cubren
+esa noche según `GET /api/reservas` a las 03:50Z: `c9cfb597-…` (`checked_out`, la estadía), `b521a741-…`
+(`pending`, suite 13 → 16) y `dd119516-…` (`no_show`, suite 11 → 16) — consistente con que la estrategia
+`ocupacion` cuenta toda reserva `status !== 'cancelled'`.
 
 Coherencia: las filas sin `roomId` cuentan en la ocupación por día y `occupancyByType` agrupa por
 `roomType`, no por la habitación. La estrategia `ocupacion` cuenta toda reserva `status !==
@@ -234,7 +240,8 @@ Lo que **no** salió como dice el issue, o que conviene saber:
 | `dad33929-5c47-46fb-ab7f-9038aa7bcecc` | OTA-B 18 → 20 sep double, sin habitación | `cancelled` (200), `roomId: null` |
 | `8044eda7-048a-4c93-ade7-a0ed38e952fe`, `d220056e-67dc-4801-90c2-df6a355a9589` | duplicados del panel (fallback del paso 3) | `cancelled` (a mano, 03:21Z) |
 | `c9cfb597-e4ed-4d73-98ee-49b9d85281da` | estadía single hoy, check-in en 103, reasignada a 208 | `checked_out` (`POST /checkout {settle: null, acknowledgeDebt: true}` → 200 `{ok, status: checked_out, settlement: null}`); folio `fb9ffffa-9615-428c-adc4-8b80d8570d37` queda **`open` con deuda 76.70** (no se pagó); código TTLock `92567f8f-…` `expired` |
-| `b2d70362-16af-4f39-af3f-f62506dbd1b6` | temporal del paso 8 (re-corrida de las capturas 08/08b) | `cancelled` (200) |
+| `b2d70362-16af-4f39-af3f-f62506dbd1b6` | temporal del paso 8 (lectura 2) | `cancelled` (200) |
+| `469c0325-…` | temporal de la re-corrida del paso 8 (03:41Z, capturas 08/08b) | `cancelled` (200) |
 
 - Channex staging: los bookings `f8e91a0d-…`, `744704cb-…` y el de la estadía quedan en el sandbox
   de open_channel, acknowledged por el ingest; no se cancelaron del lado Channex.
