@@ -9,6 +9,7 @@ import type { ORM } from 'arckode-framework'
 import type { ChannexUseCase } from './channex'
 import type { BookingRevisionDTO } from '../types'
 import { localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
+import { findOrCreateGuest, guestsOnTx } from '../../../shared/usecases/find-or-create-guest'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/canales-reservas.ts`).
@@ -70,6 +71,13 @@ export interface MappedBookingDTO {
   channexRevisionId: string
   channexBookingId: string
   channexRoomTypeId: string | null
+  // #306 (REQ-RWP-03): datos del huésped tal como los trajo la OTA. NO se persisten en la fila
+  // (igual que `CreateReservasDTO` en reservas/types.ts): `applyBookingRevision` los resuelve a
+  // una ficha `Guests` vía `findOrCreateGuest` y enlaza `guestId`. `guestName` vacío si la OTA no
+  // mandó nombre (el fallback 'OTA Guest' sólo va a `otaNotes`).
+  guestName: string
+  guestEmail: string
+  guestPhone: string
 }
 
 /**
@@ -80,7 +88,7 @@ export interface MappedBookingDTO {
  * Preserva el mapeo histórico de channex.ingestBookings (guestName, occupancy, locator, etc.).
  */
 export function mapBookingRevision(booking: BookingRevisionDTO, hotelId: string): MappedBookingDTO {
-  const guestName = [booking.customer?.name, booking.customer?.surname].filter(Boolean).join(' ') || 'OTA Guest'
+  const guestName = [booking.customer?.name, booking.customer?.surname].filter(Boolean).join(' ')
   const guestEmail = booking.customer?.mail || ''
   const guestPhone = booking.customer?.phone || ''
   const firstRoom = (booking.rooms || [])[0] || ({} as BookingRevisionDTO['rooms'][number])
@@ -99,10 +107,13 @@ export function mapBookingRevision(booking: BookingRevisionDTO, hotelId: string)
     adults,
     children,
     notes: `OTA: ${booking.otaName} | Ref: ${booking.uniqueId}`,
-    otaNotes: `Guest: ${guestName} <${guestEmail}> ${guestPhone} | revision ${booking.id} | booking ${booking.bookingId}`,
+    otaNotes: `Guest: ${guestName || 'OTA Guest'} <${guestEmail}> ${guestPhone} | revision ${booking.id} | booking ${booking.bookingId}`,
     channexRevisionId: booking.id,
     channexBookingId: booking.bookingId,
     channexRoomTypeId: firstRoom.roomTypeId || null,
+    guestName,
+    guestEmail,
+    guestPhone,
   }
 }
 
@@ -161,7 +172,8 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
   }
 
   // Resolver roomType: Channex referencia roomTypeId (tipo); la fila del PMS lleva ese tipo.
-  const { channexRoomTypeId, channexRevisionId, channexBookingId, ...payload } = dto
+  // guestName/guestEmail/guestPhone tampoco van a la fila: se resuelven a `guestId` más abajo.
+  const { channexRoomTypeId, channexRevisionId, channexBookingId, guestName, guestEmail, guestPhone, ...payload } = dto
   // REQ-HAC-05 (#260): la OTA vende un TIPO, no una unidad. Antes acá se elegía habitación
   // (`availableOfType` + `rooms[0]` de fallback) y dos OTA del mismo tipo con las mismas fechas
   // terminaban en la misma unidad o marcadas como overbooking cuando en realidad había cupo. Ahora
@@ -192,6 +204,24 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
     if (roomType) payload.notes = [payload.notes, `⚠ TIPO SIN MAPEAR (${channexTitle || channexRoomTypeId || 'sin room type'})`].filter(Boolean).join(' | ')
   }
   if (!roomType) throw new Error(`Sin habitaciones para el hotel ${hotelId}`)
+
+  // #306 (REQ-RWP-03): la reserva OTA nacía sin `guestId` y el aviso al hotel decía "Huésped sin
+  // nombre". Mismo helper que el widget (public-booking.ts): busca la ficha por email/teléfono
+  // normalizados y sólo crea si no existe. Sin nombre, mail ni teléfono no hay ficha que enlazar.
+  // Best-effort: si falla, la reserva se ingesta igual sin `guestId` — la OTA ya cobró, nunca se dropea.
+  if (guestName || guestEmail || guestPhone) {
+    try {
+      const { guest } = await findOrCreateGuest(
+        { guests: guestsOnTx(orm), lockTx: null },
+        { hotelId, name: guestName || 'OTA Guest', email: guestEmail, phone: guestPhone },
+      )
+      payload.guestId = String(guest.id)
+    } catch (e) {
+      deps.logger?.error('No se pudo enlazar la ficha del huésped OTA', {
+        hotelId, externalLocator: dto.externalLocator, channel: dto.channel, guestEmail, error: (e as Error).message,
+      })
+    }
+  }
 
   payload.id = crypto.randomUUID()
   payload.roomId = null
