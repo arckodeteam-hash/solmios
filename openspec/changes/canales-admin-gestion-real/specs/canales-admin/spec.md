@@ -137,6 +137,20 @@ cron sale una sola vez.
   lleva `⚠ TIPO SIN MAPEAR (<título Channex o id>)`. Sólo un hotel sin habitaciones hace fallar la
   revisión (`Sin habitaciones para el hotel`). Las notas `⚠ OVERBOOKING` y `⚠ AUTO-ASSIGNED ROOM`
   desaparecen.
+- (#306, REQ-RWP-03) La reserva OTA nace ENLAZADA a una ficha `guests`: `mapBookingRevision` expone
+  `guestName`/`guestEmail`/`guestPhone` (lo que trajo `customer` de Channex; no se persisten en la
+  fila) y `applyBookingRevision` los resuelve con `shared/usecases/find-or-create-guest` —el mismo
+  helper que el widget— buscando por email/teléfono normalizados y creando la ficha sólo si no
+  existe; la fila lleva `guestId`. Sin nombre, mail ni teléfono no se crea ficha. Best-effort: si
+  enlazar falla, se registra en el log y la reserva se ingesta igual sin `guestId` (la OTA ya
+  cobró; nunca se descarta). Así `notify-reservation-received` resuelve el nombre real en vez de
+  "Huésped sin nombre".
+
+**Given** una revisión nueva de Channex con `customer { name: 'Ana', surname: 'Pérez', mail, phone }`
+**When** la ingesta crea la reserva
+**Then** existe una ficha `guests` "Ana Pérez" con ese mail y teléfono (o se reusa la que ya tenía
+ese mail), la fila `reservations` lleva su `guestId` y la campanita dice "Nueva reserva de {OTA} —
+Ana Pérez". Una segunda revisión con el mismo mail no crea otra ficha.
 
 **Given** una revisión nueva de Channex para un hotel con recepción y camarera
 **When** la ingesta crea la reserva

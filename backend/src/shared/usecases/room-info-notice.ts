@@ -270,7 +270,11 @@ export interface RoomInfoLog {
   sentAt?: string | null
 }
 
-const DELIVERED_STATUS: ReadonlySet<string> = new Set(['sent', 'queued'])
+// 'delivered' y 'read' los escribe el webhook de Meta (whatsapp-delivery-status.ts)
+// sobre la misma fila de message_logs que nació como 'sent': siguen contando como
+// enviado, si no el cron reenviaba la info de habitación cada vez que el huésped
+// leía el mensaje (#327).
+const DELIVERED_STATUS: ReadonlySet<string> = new Set(['sent', 'queued', 'delivered', 'read'])
 
 /**
  * Decide qué hacer con una huella+canal mirando sus filas de message_logs:

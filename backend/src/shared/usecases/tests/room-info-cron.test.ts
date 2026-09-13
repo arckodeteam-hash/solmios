@@ -217,6 +217,36 @@ describe('room-info-cron (#297)', () => {
     expect(h.sends).toHaveLength(1)
   })
 
+  it('(i bis) #327: Meta marca delivered/read la fila whatsapp_api entre ticks → no reenvía', async () => {
+    // Antes del fix, roomInfoSendState sólo reconocía sent/queued: cuando el webhook de Meta
+    // (whatsapp-delivery-status) pasaba la fila a delivered o read, el cron la leía como
+    // "pending" y volvía a mandar el código en cada tick.
+    const h = harness({ config: { enabled: true, hoursBefore: 12, channel: 'whatsapp', whatsappTemplateId: 'wt1' } })
+    const r1 = await h.cron(hoursBefore(11))
+    expect(r1.sent).toBe(1)
+    expect(h.sends).toHaveLength(1)
+    const wa = h.logs().find(l => l.channel === 'whatsapp_api')
+    expect(wa.status).toBe('sent')
+    expect(wa.providerMessageId).toBe('wamid.1')
+    expect(wa.response).toMatch(/^auto:room_info:[0-9a-f]{16}$/)
+
+    // Acuse de Meta: el webhook muta la misma fila (updateStatus sobre message_logs).
+    wa.status = 'delivered'
+    const r2 = await h.cron(hoursBefore(10))
+    expect(r2.sent).toBe(0)
+    expect(r2.failed).toBe(0)
+    expect(h.sends).toHaveLength(1)
+    expect(h.logs()).toHaveLength(1)
+
+    wa.status = 'read'
+    const r3 = await h.cron(hoursBefore(9))
+    expect(r3.sent).toBe(0)
+    expect(r3.failed).toBe(0)
+    expect(h.sends).toHaveLength(1)
+    expect(h.logs()).toHaveLength(1)
+    expect(h.logs()[0].status).toBe('read')
+  })
+
   it('(j) channel whatsapp sin plantilla configurada → fila whatsapp_api failed con motivo', async () => {
     const h = harness({ config: { enabled: true, hoursBefore: 12, channel: 'whatsapp' } })
     const r = await h.cron(hoursBefore(11))

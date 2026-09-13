@@ -66,7 +66,9 @@ function makeOrm(opts: {
       if (model === 'Rooms') return opts.rooms ?? [{ id: 'room-1', type: 'Double' }]
       return []
     },
-    create: async (_model: string, payload: any) => {
+    create: async (model: string, payload: any) => {
+      // #306: la ingesta ahora también crea la ficha Guests; sólo contamos/acumulamos Reservations.
+      if (model !== 'Reservations') return payload
       createCalls++
       if (opts.createThrowOnCall && createCalls === opts.createThrowOnCall) {
         throw new Error('DB write failed')
