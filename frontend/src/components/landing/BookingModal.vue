@@ -342,12 +342,16 @@
                         />
                         <span>{{ a.name }}</span>
                       </span>
+                      <!-- #355 — el precio de la amenidad viene de /room-amenities SIN conversión server-side
+                           (hotels.currency = chargeCurrency), igual que el régimen: etiquetarlo con
+                           displayCurrency mostraría "€200" por un cobro de $200 (D10). -->
                       <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="room-amenity-price">
-                        {{ Number(a.price) > 0 ? money(Number(a.price)) : 'Gratis' }}
+                        {{ Number(a.price) > 0 ? moneyCharge(Number(a.price)) : 'Gratis' }}
                       </span>
                     </label>
+                    <!-- #355 — suma de amenidades, también en chargeCurrency (D10). -->
                     <p v-if="composedRoomAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="room-amenities-total">
-                      + {{ money(composedRoomAmenitiesTotal(rt)) }}
+                      + {{ moneyCharge(composedRoomAmenitiesTotal(rt)) }}
                     </p>
                   </div>
 
@@ -752,10 +756,11 @@
               <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
             </div>
             <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292 incluida), una fila por
-                 habitación × amenidad. -->
+                 habitación × amenidad. #355 — el importe viene de /room-amenities sin conversión
+                 server-side (hotels.currency = chargeCurrency): moneyCharge, como el régimen (D10). -->
             <div v-for="line in store.roomAmenityLines" :key="`${line.lineKey}-${line.key}`" class="flex justify-between" data-testid="room-amenity-line">
               <span class="text-text-muted">{{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
-              <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
+              <span class="font-bold tabular-nums text-navy">{{ moneyCharge(line.total) }}</span>
             </div>
             <!-- MR-03 (#268) — régimen, una fila por habitación con régimen (incluido → sin importe). -->
             <div v-for="line in store.mealPlanLines" :key="`${line.lineKey}-mp`" class="flex justify-between" data-testid="meal-plan-line">

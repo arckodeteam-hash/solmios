@@ -494,6 +494,35 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       expect(options[0]).toContain('Cuna')
       expect(q('[data-testid="room-amenity-price"]')!.textContent!.trim()).toBe('Gratis')
     })
+
+    // #355 — el precio de las amenidades viene de /room-amenities SIN conversión server-side
+    // (hotels.currency = chargeCurrency): igual que el régimen, se etiqueta con chargeCurrency y
+    // NUNCA con displayCurrency (D10). Antes, con display EUR / cobro USD, "€15" por un cobro de $15.
+    it('#355: precio y total de amenidades usan chargeCurrency, NUNCA displayCurrency (D10)', async () => {
+      const res = ratesResponse(true)
+      res.currency = 'EUR'
+      res.chargeCurrency = 'USD'
+      vi.mocked(BookingService.getRates).mockResolvedValue(res)
+      await open(FROM_HERO)
+      const store = useBookingStore()
+      store.roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
+      await flushPromises()
+
+      const prices = Array.from(document.body.querySelectorAll<HTMLElement>('[data-testid="room-amenity-price"]')).map((el) => el.textContent ?? '')
+      expect(prices).toHaveLength(2)
+      for (const price of prices) {
+        expect(price).toContain('US$')
+        expect(price).not.toContain('€')
+      }
+
+      document.body.querySelector<HTMLInputElement>(`input[value="${CUNA.key}"]`)!.click()
+      await flushPromises()
+      const total = q('[data-testid="room-amenities-total"]')!.textContent ?? ''
+      expect(total).toContain('US$')
+      expect(total).not.toContain('€')
+      // La fila `room-amenity-line` del resumen propio del modal vive en el paso 'pay' (no se
+      // alcanza desde aquí sin navegar pasos); la de <EstimatedTotals> en este paso es de #364.
+    })
   })
 
   // ── REQ-02 (#234) — resumen con clasificación por niño + "Editar" en el carrito ──────────
