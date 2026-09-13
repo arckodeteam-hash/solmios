@@ -905,6 +905,8 @@ seed que refrescar) y el flujo del panel (`reservation-email.ts`) parte de
 
 ### Requirement: La reserva vende un tipo; la habitación física se asigna (REQ-HAC-01 mínimo + REQ-HAC-03, #258)
 
+> **Cierre del epic #255 (#263, 2026-09-13).** REQ-HAC-01..07 (#256-#262) están mergeados y en producción: `relax-reservations-roomid.ts` + `backfill-reservation-room-type.ts` corrieron vía `bun run migrate` del auto-deploy (0 reservas del hotel demo con `roomType` vacío; reservas web insertadas con `roomId: null`). Gates y recorrido de punta a punta en prod con capturas: `docs/evidencia/habitacion-asignada-al-checkin/` (`gates.md`, `README.md`). Regla que resume la capability: **`roomType` es lo vendido; `roomId` es dónde duerme y puede ser nulo hasta el check-in**; la disponibilidad se decide SIEMPRE por `availableOfType`, el solape físico solo al asignar, y el código TTLock se genera al asignar (si el hotel quiere el código la víspera: `autoAssignBeforeArrivalHours`). Hallazgos del recorrido que NO cubre esta spec (deuda): la caché de 300 s del listado no se invalida con la ingesta de Channex; reasignar con `allowTypeChange` cambia `roomType`; entidad `room_types` propia, overbooking controlado por tipo y preferencias del huésped siguen pendientes.
+
 **Modelo (HAC-01, lo mínimo que HAC-03 necesita; el resto de #256 —tipo obligatorio y `roomId`
 opcional en el alta— es HAC-05).** `reservations.roomType` (string, indexado) es el tipo vendido
 (= `rooms.type`); `roomId` es nullable ("dónde duerme"); `roomAssignedAt`/`roomAssignedBy` registran
