@@ -34,6 +34,13 @@ export interface RoomAssignmentDeps {
   roomRepo: RepositoryAdapter<any>
   /** RoomBlocks. Opcional como en crud.ts: sin repo no hay bloqueos que chequear. */
   blockRepo?: RepositoryAdapter<any>
+  /** `Configuration` KV (child_policy, room_type_capacity) — sólo la auto-asignación lo usa para
+   *  elegir una unidad en la que la composición ENTRE (usecases/auto-assign-room.ts). Sin él, cae a
+   *  la capacidad física de la unidad. */
+  configRepo?: RepositoryAdapter<any>
+  /** `RoomAmenities` — sólo la auto-asignación lo usa para preferir una unidad con cuna cuando la
+   *  reserva la pide (`needsCrib`). Sin él, no se mira la cuna. */
+  roomAmenityRepo?: RepositoryAdapter<any>
   /**
    * Folio abierto + habitaciones + transacción (reasignación en estadía). Acá entra tanto el
    * `ReservasQueries` del service como, dentro de `transactionWithRepos` (#314), un shim atado al

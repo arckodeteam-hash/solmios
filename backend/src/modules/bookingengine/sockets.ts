@@ -18,8 +18,12 @@ export interface BookingCancelledEvent {
   promoCode?: string | null
 }
 
+/** Payload de `onBookingCreated`. `reservationIds` = TODAS las filas del alta (un grupo crea varias;
+ *  `id` es la líder). Lo usa la auto-asignación de unidad al nacer (connectors/reservas-bookingengine.ts). */
+export type BookingCreatedEvent = PublicBookingDTO & { reservationIds?: string[] }
+
 export interface BookingengineSockets {
-  onBookingCreated?: (data: PublicBookingDTO) => Promise<void>
+  onBookingCreated?: (data: BookingCreatedEvent) => Promise<void>
   /** Stripe confirmó el cobro del widget. Es plata real: tiene que asentarse en `payments`. */
   onBookingPaid?: (data: PublicBookingDTO) => Promise<void>
   /** F4/F5 #627 — Auto-cancelación del huésped: notifica a connectors que reaccionan al

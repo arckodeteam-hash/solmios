@@ -66,7 +66,7 @@ const occupying = (id: string, roomId: string) => ({ id, hotelId: HOTEL, roomId,
 
 type Harness = { deps: RoomAssignmentDeps; updates: any[]; audits: AuditEntry[]; emitted: any[]; repo: any }
 
-function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[] } = {}): Harness {
+function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[]; amenities?: any[]; config?: any[] } = {}): Harness {
   const updates: any[] = []
   const audits: AuditEntry[] = []
   const emitted: any[] = []
@@ -76,6 +76,8 @@ function harness(reservas: any[], opts: { rooms?: any[]; blocks?: any[] } = {}):
     repo,
     roomRepo: memRepo(rooms),
     blockRepo: memRepo(opts.blocks ?? []),
+    configRepo: opts.config ? memRepo(opts.config) : undefined,
+    roomAmenityRepo: opts.amenities ? memRepo(opts.amenities) : undefined,
     queries: fakeQueries(rooms, repo),
     sockets: { onRoomAssigned: async (d: any) => { emitted.push(d) } },
     auditPort: { record: async (e) => { audits.push(e) } },
@@ -162,5 +164,67 @@ describe('autoAssignSuggestedRoom — sin efecto', () => {
   it('reserva inexistente → not_found', async () => {
     const h = harness([])
     expect(await autoAssignSuggestedRoom(h.deps, 'nope', HOTEL)).toEqual({ assigned: false, reason: 'not_found' })
+  })
+})
+
+// Corrección 2026-09-13 a REQ-HAC-05: la reserva web/OTA nace por tipo y el sistema le asigna una unidad al
+// instante. Como ya no elige el motor (que sabía capacidad y amenidades por unidad), el criterio vive acá.
+describe('autoAssignSuggestedRoom — elección de la unidad: capacidad, cuna, orden', () => {
+  const ROOMS_CAP = () => [
+    { id: 'room-101', hotelId: HOTEL, number: '101', type: 'familiar', status: 'available', capacity: 2 },
+    { id: 'room-102', hotelId: HOTEL, number: '102', type: 'familiar', status: 'available', capacity: 4 },
+    { id: 'room-103', hotelId: HOTEL, number: '103', type: 'familiar', status: 'available', capacity: 4 },
+  ]
+
+  it('saltea la unidad en la que la composición NO entra (2 adultos + 2 niños → no la de capacidad 2)', async () => {
+    const h = harness([baseRes({ roomType: 'familiar', adults: 2, children: 2, childrenAges: [8, 10] })], { rooms: ROOMS_CAP() })
+    const out = await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)
+    expect(out).toEqual({ assigned: true, roomId: 'room-102', roomNumber: '102' })
+  })
+
+  it('con capacidad de sobra elige la primera del orden (limpia + available, menor número)', async () => {
+    const h = harness([baseRes({ roomType: 'familiar', adults: 2, children: 0 })], { rooms: ROOMS_CAP() })
+    expect(await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).toEqual({ assigned: true, roomId: 'room-101', roomNumber: '101' })
+  })
+
+  it('ninguna unidad libre en la que entre → no_fit, sin escribir (recepción decide; queda en "Sin asignar")', async () => {
+    const h = harness([baseRes({ roomType: 'familiar', adults: 3, children: 2, childrenAges: [8, 10] })], { rooms: ROOMS_CAP() })
+    const out = await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)
+    expect(out).toEqual({ assigned: false, reason: 'no_fit' })
+    expect((await h.repo.findById('r1')).roomId).toBeNull()
+    expect(h.updates).toHaveLength(0)
+    expect(h.emitted).toHaveLength(0)
+  })
+
+  it('unidades sin capacidad cargada no se descartan (sin dato no hay veto)', async () => {
+    const h = harness([baseRes({ adults: 6, children: 0 })])
+    expect((await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).assigned).toBe(true)
+  })
+
+  it('la política del TIPO (room_type_capacity) manda sobre la capacidad física de la unidad', async () => {
+    // Física: 101 entra 2. Política del tipo: 4 → la 101 SÍ sirve para 2+2.
+    const config = [{ hotelId: HOTEL, key: 'room_type_capacity', value: JSON.stringify({ familiar: { capacity: 4 } }) }]
+    const h = harness([baseRes({ roomType: 'familiar', adults: 2, children: 2, childrenAges: [8, 10] })], { rooms: ROOMS_CAP(), config })
+    expect(await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).toEqual({ assigned: true, roomId: 'room-101', roomNumber: '101' })
+  })
+
+  it('needsCrib → prefiere la unidad con cuna activa en RoomAmenities aunque no sea la primera del orden', async () => {
+    const amenities = [
+      { id: 'a1', roomId: 'room-103', amenityKey: 'custom:cuna', name: 'Cuna', isActive: true },
+      { id: 'a2', roomId: 'room-101', amenityKey: 'custom:cuna', name: 'Cuna', isActive: false }, // desactivada: no cuenta
+    ]
+    const h = harness([baseRes({ needsCrib: true, cribCount: 1 })], { amenities })
+    expect(await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).toEqual({ assigned: true, roomId: 'room-103', roomNumber: '103' })
+  })
+
+  it('needsCrib sin ninguna unidad con cuna → asigna igual la primera (la cuna no bloquea la asignación)', async () => {
+    const h = harness([baseRes({ needsCrib: true, cribCount: 1 })], { amenities: [] })
+    expect(await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).toEqual({ assigned: true, roomId: 'room-101', roomNumber: '101' })
+  })
+
+  it('la cuna nunca gana a la capacidad: con cuna sólo en la chica, va a la grande sin cuna', async () => {
+    const amenities = [{ id: 'a1', roomId: 'room-101', amenityKey: 'custom:cuna', name: 'Cuna', isActive: true }]
+    const h = harness([baseRes({ roomType: 'familiar', adults: 2, children: 2, childrenAges: [8, 10], needsCrib: true })], { rooms: ROOMS_CAP(), amenities })
+    expect(await autoAssignSuggestedRoom(h.deps, 'r1', HOTEL)).toEqual({ assigned: true, roomId: 'room-102', roomNumber: '102' })
   })
 })

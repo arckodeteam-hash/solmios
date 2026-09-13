@@ -12,8 +12,9 @@ import type { ConnectorContext } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { reservasBookingengineConnector } from '../reservas-bookingengine'
 
-function makeCtx(opts: { invalidateThrows?: boolean } = {}) {
+function makeCtx(opts: { invalidateThrows?: boolean; assignThrows?: boolean; assignResult?: any } = {}) {
   const invalidated: string[] = []
+  const assigned: Array<{ reservationId: string; hotelId: string }> = []
   const sockets: Record<string, any> = {}
   const modules: Record<string, any> = {
     bookingengine: { setSockets: (s: any) => accumulateSockets(sockets, s) },
@@ -21,6 +22,11 @@ function makeCtx(opts: { invalidateThrows?: boolean } = {}) {
       invalidateListCache: async (hotelId: string) => {
         if (opts.invalidateThrows) throw new Error('cache caída')
         invalidated.push(hotelId)
+      },
+      autoAssignRoom: async (reservationId: string, hotelId: string) => {
+        if (opts.assignThrows) throw new Error('sin unidad')
+        assigned.push({ reservationId, hotelId })
+        return opts.assignResult ?? { assigned: true, roomId: 'rm1', roomNumber: '101' }
       },
     },
   }
@@ -31,7 +37,7 @@ function makeCtx(opts: { invalidateThrows?: boolean } = {}) {
     },
   } as unknown as ConnectorContext
   reservasBookingengineConnector(ctx)
-  return { sockets, invalidated }
+  return { sockets, invalidated, assigned }
 }
 
 const CANCELLED = {
@@ -60,6 +66,35 @@ describe('reservasBookingengineConnector', () => {
     expect(typeof sockets.onBookingPaid).toBe('function')
     await sockets.onBookingPaid(PAID)
     expect(invalidated).toEqual(['h1'])
+  })
+
+  // Corrección 2026-09-13 a REQ-HAC-05: la fila nace por tipo, pero el sistema le asigna una unidad al instante.
+  it('onBookingCreated → pide una unidad para la reserva (autoAssignRoom con id + hotel)', async () => {
+    const { sockets, assigned } = makeCtx()
+    await sockets.onBookingCreated({ id: 'res-1', hotelId: 'h1' })
+    expect(assigned).toEqual([{ reservationId: 'res-1', hotelId: 'h1' }])
+  })
+
+  it('onBookingCreated de un grupo → una unidad por CADA fila (`reservationIds`), no sólo la líder', async () => {
+    const { sockets, assigned } = makeCtx()
+    await sockets.onBookingCreated({ id: 'res-1', hotelId: 'h1', reservationIds: ['res-1', 'res-2', 'res-3'] })
+    expect(assigned.map((a) => a.reservationId)).toEqual(['res-1', 'res-2', 'res-3'])
+    expect(new Set(assigned.map((a) => a.hotelId))).toEqual(new Set(['h1']))
+  })
+
+  it('la auto-asignación falla o no encuentra unidad → el evento resuelve igual (la reserva ya existe)', async () => {
+    const a = makeCtx({ assignThrows: true })
+    await expect(a.sockets.onBookingCreated({ id: 'res-1', hotelId: 'h1' })).resolves.toBeUndefined()
+    const b = makeCtx({ assignResult: { assigned: false, reason: 'no_rooms' } })
+    await expect(b.sockets.onBookingCreated({ id: 'res-1', hotelId: 'h1', reservationIds: ['res-1', 'res-2'] })).resolves.toBeUndefined()
+    expect(b.assigned).toHaveLength(2)
+  })
+
+  it('onBookingPaid / onBookingCancelled NO asignan (sólo el alta)', async () => {
+    const { sockets, assigned } = makeCtx()
+    await sockets.onBookingPaid(PAID)
+    await sockets.onBookingCancelled(CANCELLED)
+    expect(assigned).toEqual([])
   })
 
   it('la invalidación falla → el evento resuelve igual', async () => {

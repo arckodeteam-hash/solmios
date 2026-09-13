@@ -11,7 +11,7 @@ import type {
   BookingAnalytics,
   UpsellDTO,
 } from './types'
-import type { BookingengineSockets } from './sockets'
+import type { BookingengineSockets, BookingCreatedEvent } from './sockets'
 import { bookingPaidPayload } from './usecases/booking-paid-event'
 import { ConfigUseCase } from './usecases/config'
 import { AvailabilityUseCase } from './usecases/availability'
@@ -79,7 +79,7 @@ export class BookingengineService {
     // huérfana `public_bookings`, spec booking-unification D2/D3). hotelsRepo: successUrl real con slug+id+accessToken.
     this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined, attempts)
   }
-  async notifyBookingCreated(d: PublicBookingDTO) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
+  async notifyBookingCreated(d: BookingCreatedEvent) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
   /** #266 — Post-init (composition-root): `checkout.session.expired` vence la reserva con el mismo usecase del cron. Sin cablear = no-op. */
   setExpirePending(fn: ExpirePendingFn): void { this.stripe.setExpirePending(fn) }
   /** #276 (MR-11) — Post-init: Groups/Guests para que el asiento del grupo marque `confirmed`+`paidAmount` y exponga al huésped. */

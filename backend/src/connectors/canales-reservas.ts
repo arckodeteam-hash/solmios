@@ -17,7 +17,20 @@
 // depósito retenido se libera completo. Si un hotel quisiera aplicar TAMBIÉN su propia
 // penalidad a las cancelaciones OTA, el cambio es una línea: `penaltyMode: 'hotel-policy'`.
 
+//
+// Auto-asignación de unidad al ingresar (corrección 2026-09-13 a REQ-HAC-05 #260): la ingesta crea la
+// reserva OTA por TIPO y sin unidad (`roomId: null`) — lo que arregló el overbooking de `rooms[0]` —
+// pero el hotel quiere verla con habitación asignada desde que entra (recepción la cambia después si
+// hace falta, #258). Acá, sobre `onOtaBookingIngested`, se le pide a `reservas.autoAssignRoom` una
+// unidad libre del tipo (`shared/usecases/auto-assign-on-create.ts`, compartido con el widget): elige
+// SIN solape ni bloqueo (assign-room.ts), así dos bookings del mismo tipo y fechas caen en unidades
+// distintas — y si no queda ninguna libre, la reserva sigue en "Sin asignar". Best-effort: nunca
+// frena la ingesta ni el ack de la revisión.
+
 import type { ConnectorContext } from 'arckode-framework'
+import { autoAssignOnCreate, type AutoAssignPort } from '../shared/usecases/auto-assign-on-create'
+
+const warn = { warn: (message: string) => console.warn(message) }
 
 interface ReservasCancelPort {
   cancelBySystem: (
@@ -27,7 +40,12 @@ interface ReservasCancelPort {
 }
 
 export function canalesReservasConnector(ctx: ConnectorContext): void {
-  const canales = ctx.resolveModule<{ setReservationCancelPort?: (fn: any) => void }>('canales')
+  const canales = ctx.resolveModule<{ setReservationCancelPort?: (fn: any) => void; setSockets?: (s: any) => void }>('canales')
+
+  canales.setSockets?.({
+    onOtaBookingIngested: (d: { hotelId: string; reservationId: string; ota: string }) =>
+      autoAssignOnCreate(ctx.resolveModule<AutoAssignPort>('reservas'), String(d?.hotelId ?? ''), [d?.reservationId], warn, `canales-reservas:${d?.ota ?? 'ota'}`).then(() => undefined),
+  })
 
   canales.setReservationCancelPort?.(async (reservationId: string, hotelId: string, reason: string) => {
     const reservas = ctx.resolveModule<ReservasCancelPort>('reservas')

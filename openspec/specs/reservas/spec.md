@@ -1079,9 +1079,29 @@ REQ-HAC-05) y nunca dropea un booking OTA.
 - **WHEN** se cotiza el reagendo con `excludeReservationId`
 - **THEN** `available` es 1 y el reagendo es posible
 
-### Requirement: Toda alta nace por tipo, sin habitación (REQ-HAC-05, #260)
+### Requirement: Toda alta nace por tipo; web y OTA reciben una unidad al instante (REQ-HAC-05, #260 + corrección 2026-09-13)
 
-**Lo que se vende es el tipo; la unidad se asigna después.** Todas las altas —widget individual
+**Lo que se vende es el tipo; la unidad la asigna el sistema al nacer (web/OTA) o recepción (panel).**
+Corrección del 2026-09-13 al alcance original de #260: el hotel quiere ver la habitación asignada en el
+sistema desde que la reserva entra (el huésped reservó y pagó), no recién al check-in — y poder
+cambiarla después si hace falta (HAC-03). La venta y el inventario NO cambian: siguen siendo por tipo.
+
+**Asignación automática al nacer.** Tras el alta del widget (1 habitación y grupo, socket
+`onBookingCreated` con `reservationIds` = todas las filas) y tras la ingesta OTA (`onOtaBookingIngested`),
+los connectors `reservas-bookingengine.ts` y `canales-reservas.ts` MUST pedir a `reservas.autoAssignRoom`
+una unidad para CADA fila (`shared/usecases/auto-assign-on-create.ts`). La elección
+(`reservas/usecases/auto-assign-room.ts`) toma las libres del tipo de `listAssignableRooms` (vendibles, sin
+solape ni bloqueo — dos bookings OTA del mismo tipo y fechas caen en unidades distintas) y elige, en este
+orden: (1) una en la que la composición ENTRE (`fitsRoomCapacity` con la política del tipo o la capacidad
+física; sin capacidad cargada no se descarta), (2) con `needsCrib`, una con cuna activa en `RoomAmenities`,
+(3) el orden de `listAssignableRooms` (limpia + available, número). Firma `roomAssignedBy: 'system'`,
+audita `reservation.room_assigned` y emite `onRoomAssigned` (TTLock genera el código sólo si la reserva ya
+está confirmada/pagada; para una `pending` sale al pagar). Es best-effort: sin unidad libre (`no_rooms`) o
+sin ninguna en la que entre (`no_fit`) la reserva queda en la banda "Sin asignar" y lo decide recepción —
+nunca se fuerza una unidad chica. El `roomId` NO viaja en el 201 del widget (la asignación corre después
+del evento); el panel la ve asignada al recargar/refrescar.
+
+Todas las altas —widget individual
 (`bookingengine/usecases/public-booking.ts`), grupo web (`public-booking-group.ts`), ingesta OTA
 (`canales/usecases/booking-ingestion.ts`), panel (`reservas/usecases/crud.ts`), Recepción IA
 (`ai-recepcionista/usecases/llm-pipeline.ts`, tool `create_reservation`) y API pública v1
@@ -1118,6 +1138,23 @@ capacity }` para el wizard. El push a Channex tras un alta sin unidad va por tip
 (`pushAvailabilityByType` → `canales.pushAvailability(hotelId, roomType)`), también desde la IA.
 Toda respuesta de alta o lectura (panel, widget, IA, API pública) lleva `roomType`, con `roomId`
 nullable hasta la asignación; los mensajes de la IA nombran el tipo, nunca un número de habitación.
+
+#### Scenario: Reserva web nace con unidad asignada por el sistema
+- **GIVEN** un tipo con 2 unidades vendibles libres y un widget que reserva 1 de ese tipo
+- **WHEN** `onBookingCreated` llega a `reservas-bookingengine`
+- **THEN** la fila queda con `roomId` de una de las dos, `roomAssignedBy: 'system'`, auditoría `reservation.room_assigned` y `onRoomAssigned` emitido; el hotel la puede reasignar con HAC-03
+
+#### Scenario: Grupo de 3 del mismo tipo con 3 unidades libres
+- **WHEN** `onBookingCreated` llega con `reservationIds` de las 3 filas
+- **THEN** cada fila recibe una unidad DISTINTA (la segunda ya ve ocupada a la primera)
+
+#### Scenario: Dos bookings OTA del mismo tipo y fechas
+- **WHEN** la ingesta emite `onOtaBookingIngested` por cada uno
+- **THEN** quedan en unidades distintas; con una sola unidad libre, el segundo queda sin asignar (`no_rooms`) — nunca la misma habitación
+
+#### Scenario: La composición no entra en ninguna libre
+- **GIVEN** 2 adultos + 2 niños y las únicas unidades libres del tipo tienen capacidad 2
+- **THEN** `no_fit`: la reserva queda sin unidad y recepción decide
 
 #### Scenario: Widget N+1 del tipo
 - **GIVEN** un tipo con N unidades vendibles y N reservas bloqueantes del tipo (asignadas o no) que solapan la estadía

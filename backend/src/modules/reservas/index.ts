@@ -111,8 +111,9 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // repreciar un reagendado con niños (`reprice.ts`/`reschedule.ts`). Se declara ACÁ (antes
       // solo existía más abajo, para permGuard/moduleGuard) porque el service la necesita.
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
+      const roomAmenityRepo = new OrmRepository<any>(orm, 'RoomAmenities') // auto-asignación al alta web/OTA: preferir unidad con cuna
       const queries = new ReservasQueries(orm)
-      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo, rateOverrideRepo, configRepo)
+      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo, rateOverrideRepo, configRepo, roomAmenityRepo)
       const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo, guestRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
