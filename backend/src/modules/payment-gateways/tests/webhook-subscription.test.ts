@@ -104,3 +104,52 @@ describe('testGatewayConnection (stripe) + warnings del webhook', () => {
     expect(r.warnings).toBeUndefined()
   })
 })
+
+// ── StripeGateway.listWebhookEndpoints: método REAL, sólo se stubea `webhookEndpoints.list` del ──
+// cliente interno (patrón de payments/tests/refund.test.ts). Cubre el mapeo enabled_events →
+// enabledEvents, status, coerción a String y `data` vacío/undefined. Sin red.
+describe('StripeGateway.listWebhookEndpoints', () => {
+  function makeGateway(listResult: any) {
+    const gw = new StripeGateway({ secretKey: 'sk_test_x', currency: 'usd' }, 'test')
+    const calls: any[] = []
+    ;(gw as any).stripe.webhookEndpoints = {
+      list: async (params: any) => { calls.push(params); return listResult },
+    }
+    return { gw, calls }
+  }
+
+  it('mapea id/url/status/enabled_events → {id,url,status,enabledEvents} como strings', async () => {
+    const { gw, calls } = makeGateway({
+      data: [
+        { id: 'we_1', url: URL_OWN, status: 'enabled', enabled_events: ['checkout.session.completed', 'payment_intent.payment_failed'] },
+        { id: 'we_2', url: 'https://otro.example.com/hook', status: 'disabled', enabled_events: ['*'] },
+      ],
+    })
+    const r = await gw.listWebhookEndpoints()
+    expect(r).toEqual([
+      { id: 'we_1', url: URL_OWN, status: 'enabled', enabledEvents: ['checkout.session.completed', 'payment_intent.payment_failed'] },
+      { id: 'we_2', url: 'https://otro.example.com/hook', status: 'disabled', enabledEvents: ['*'] },
+    ])
+    expect(calls).toEqual([{ limit: 100 }])
+  })
+
+  it('data vacío → []', async () => {
+    const { gw } = makeGateway({ data: [] })
+    expect(await gw.listWebhookEndpoints()).toEqual([])
+  })
+
+  it('respuesta sin data → []', async () => {
+    const { gw } = makeGateway({})
+    expect(await gw.listWebhookEndpoints()).toEqual([])
+  })
+
+  it('endpoint sin enabled_events → enabledEvents: []', async () => {
+    const { gw } = makeGateway({ data: [{ id: 'we_3', url: URL_OWN, status: 'enabled' }] })
+    expect(await gw.listWebhookEndpoints()).toEqual([{ id: 'we_3', url: URL_OWN, status: 'enabled', enabledEvents: [] }])
+  })
+
+  it('campos faltantes o no-string se coercionan a String', async () => {
+    const { gw } = makeGateway({ data: [{ id: 123, enabled_events: [1, 'x'] }] })
+    expect(await gw.listWebhookEndpoints()).toEqual([{ id: '123', url: '', status: '', enabledEvents: ['1', 'x'] }])
+  })
+})
