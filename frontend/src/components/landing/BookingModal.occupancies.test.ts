@@ -750,7 +750,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     await bumpAdults(1)
     await clickAddRoom()
     expect(store.cart).toHaveLength(1)
-    store.cart[0]!.mealPlan = { code: 'half_board', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 }
+    store.cart[0]!.mealPlan = { code: 'half_board', name: 'Desayuno y cena', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 }
     await flushPromises()
     const line = document.body.querySelector('[data-testid="estimated-totals"] [data-testid="meal-plan-line"]')?.textContent ?? ''
     expect(line).toContain('Régimen')
@@ -760,40 +760,50 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     expect(line).not.toContain('included')
   })
 
-  // MR-03 (#268) — el régimen es un radio POR TARJETA (mismo composer que RoomsStep.vue). Regla del
-  // dueño (se mantiene): los códigos que el hotel no ofrece siguen VISIBLES, deshabilitados y con
-  // el motivo — nunca ocultos.
-  it('sin regímenes configurados: "Sólo alojamiento" marcado y los 3 códigos visibles pero deshabilitados', async () => {
-    // getMealPlans devuelve [] (ningún régimen activo en este hotel) — se ve el eje completo,
-    // nada más es seleccionable.
+  // MR-03 (#268) / #361 — el régimen es un radio POR TARJETA (mismo composer que RoomsStep.vue) y
+  // el catálogo es ABIERTO: la landing sólo muestra las filas que devuelve `getMealPlans` (ya
+  // filtradas por el backend: switch `showMealPlans` + activas), con el `name` del hotel. Nada
+  // fijo, nada deshabilitado y SIN "Sólo alojamiento" implícito.
+  it('sin regímenes configurados (catálogo vacío): NO se renderiza la sección de régimen', async () => {
+    // getMealPlans devuelve [] (switch apagado o ningún régimen activo en este hotel).
     await open()
 
+    expect(document.body.querySelector('[data-testid="meal-plan-section"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="meal-plan-options"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="meal-plan-option"]')).toBeNull()
+    expect(document.body.querySelector('[role="radiogroup"]')).toBeNull()
     const text = document.body.textContent ?? ''
-    expect(text).toContain('Sólo alojamiento')
-    expect(text).toContain('Desayuno incluido')
-    expect(text).toContain('Desayuno y cena')
-    expect(text).toContain('Todo incluido')
-
-    const radios = Array.from(document.body.querySelectorAll<HTMLInputElement>('[role="radiogroup"] input[type="radio"]'))
-    expect(radios.map((r) => r.value)).toEqual(['room_only', 'breakfast', 'half_board', 'all_inclusive'])
-    expect(radios[0]!.checked).toBe(true)
-    expect(radios[0]!.disabled).toBe(false)
-    for (const r of radios.slice(1)) expect(r.disabled).toBe(true)
-    const disabledLabels = Array.from(document.body.querySelectorAll('[data-testid="meal-plan-option"]'))
-      .filter((l) => l.getAttribute('title') === 'Este hotel no ofrece este régimen')
-    expect(disabledLabels).toHaveLength(3)
+    expect(text).not.toContain('Régimen')
+    expect(text).not.toContain('Sólo alojamiento')
+    expect(text).not.toContain('Desayuno incluido')
+    expect(text).not.toContain('Este hotel no ofrece este régimen')
   })
 
-  it('régimen incluido en la tarifa: radio habilitado con "Incluido"; al elegirlo se marca (mismo estilo que "Sólo alojamiento")', async () => {
+  it('régimen incluido en la tarifa: las opciones son EXACTAMENTE las del catálogo (con su nombre), ninguna deshabilitada; al elegirlo se marca', async () => {
     vi.mocked(BookingService.getMealPlans).mockResolvedValue([
-      { code: 'breakfast', priceMode: 'included', price: 0 },
+      { code: 'room_only', name: 'Solo habitación', priceMode: 'included', price: 0 },
+      { code: 'breakfast', name: 'Desayuno buffet', priceMode: 'included', price: 0 },
     ])
     await open()
 
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Régimen')
+    const radios = Array.from(document.body.querySelectorAll<HTMLInputElement>('[role="radiogroup"] input[type="radio"]'))
+    expect(radios.map((r) => r.value)).toEqual(['room_only', 'breakfast'])
+    for (const r of radios) expect(r.disabled).toBe(false)
+    const labels = Array.from(document.body.querySelectorAll('[data-testid="meal-plan-option"]'))
+    expect(labels.map((l) => l.textContent?.trim())).toEqual(['Solo habitación· Incluido', 'Desayuno buffet· Incluido'])
+    expect(labels.some((l) => l.getAttribute('title') === 'Este hotel no ofrece este régimen')).toBe(false)
+    // Ni los nombres legacy de los códigos históricos ni códigos que el catálogo no trae.
+    expect(text).not.toContain('Sólo alojamiento')
+    expect(text).not.toContain('Desayuno incluido')
+    expect(document.body.querySelector('input[value="half_board"]')).toBeNull()
+    expect(document.body.querySelector('input[value="all_inclusive"]')).toBeNull()
+
+    // La primera fila del catálogo arranca marcada; elegir otra la reemplaza (un régimen por tarjeta).
+    expect(radios[0]!.checked).toBe(true)
     const breakfast = document.body.querySelector<HTMLInputElement>('input[value="breakfast"]')!
-    expect(breakfast.disabled).toBe(false)
-    const label = Array.from(document.body.querySelectorAll('[data-testid="meal-plan-option"]'))
-      .find((l) => l.textContent?.includes('Desayuno incluido'))!
+    const label = labels.find((l) => l.textContent?.includes('Desayuno buffet'))!
     expect(label.textContent).toContain('Incluido')
     expect(label.className).not.toContain('bg-navy')
 
@@ -801,11 +811,12 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     breakfast.dispatchEvent(new Event('change'))
     await flushPromises()
     expect(label.className).toContain('bg-navy')
+    expect(labels[0]!.className).not.toContain('bg-navy')
   })
 
   it('régimen con costo aparte: radio habilitado con el importe para la composición actual, sin "Próximamente"', async () => {
     vi.mocked(BookingService.getMealPlans).mockResolvedValue([
-      { code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 },
+      { code: 'all_inclusive', name: 'Todo incluido', priceMode: 'per_person_per_night', price: 45 },
     ])
     await open()
 
@@ -837,7 +848,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     res.chargeCurrency = 'USD'
     vi.mocked(BookingService.getRates).mockResolvedValue(res)
     vi.mocked(BookingService.getMealPlans).mockResolvedValue([
-      { code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 },
+      { code: 'all_inclusive', name: 'Todo incluido', priceMode: 'per_person_per_night', price: 45 },
     ])
     await open()
 

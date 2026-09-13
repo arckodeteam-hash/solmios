@@ -237,7 +237,10 @@ function toInput(d: Draft): CreateMealPlanInput | null {
   if (description.length > DESCRIPTION_MAX) { formError.value = `La descripción debe tener como máximo ${DESCRIPTION_MAX} caracteres`; return null }
   const price = d.price === '' || d.price === null || d.price === undefined ? 0 : Number(d.price)
   if (!Number.isFinite(price) || price < 0) { formError.value = 'El suplemento debe ser un número mayor o igual a 0'; return null }
-  return { name, description: description || null, price, active: d.active }
+  // Descripción vacía → `''`, NUNCA `null`: el validador del backend descarta las claves `null`
+  // no requeridas del PATCH, así que con `null` la descripción vieja quedaba sin limpiar. El
+  // backend mapea `''` → null.
+  return { name, description, price, active: d.active }
 }
 
 async function submitForm(): Promise<void> {

@@ -165,6 +165,18 @@ describe('MealPlansEditor (#361) — edición', () => {
     expect(create).not.toHaveBeenCalled()
     expect(w.find('[data-testid=meal-plan-form]').exists()).toBe(false)
   })
+
+  it('vaciar la descripción al editar manda description: "" (no null: el backend descarta null y no la limpiaría)', async () => {
+    const w = await mountEditor()
+    await w.findAll('[data-testid=meal-plan-edit]')[1].trigger('click')
+    expect((w.find('#meal-plan-description').element as HTMLTextAreaElement).value).toBe('Desayuno y cena')
+    await w.find('#meal-plan-description').setValue('')
+    await w.find('[data-testid=meal-plan-save]').trigger('click')
+    await flushPromises()
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith('mp2', expect.objectContaining({ description: '' }))
+    expect(update.mock.calls[0][1].description).not.toBeNull()
+  })
 })
 
 describe('MealPlansEditor (#361) — baja', () => {

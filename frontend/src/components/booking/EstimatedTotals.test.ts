@@ -172,7 +172,7 @@ describe('EstimatedTotals — desglose estimado antes de pagar (#220)', () => {
     store.cart = [{
       ...line('std', 390),
       roomName: 'Doble',
-      mealPlan: { code: 'breakfast', priceMode: 'per_person_per_night', unitPrice: 10, persons: 2, total: 20 },
+      mealPlan: { code: 'breakfast', name: 'Desayuno incluido', priceMode: 'per_person_per_night', unitPrice: 10, persons: 2, total: 20 },
     }]
     const w = mount(EstimatedTotals, { props: { format } })
 
@@ -187,7 +187,7 @@ describe('EstimatedTotals — desglose estimado antes de pagar (#220)', () => {
     expect(w.get('[data-testid="tax-line"]').text()).toContain('73.80')
     expect(w.get('[data-testid="estimated-total"]').text()).toBe('483.80')
 
-    store.cart = [{ ...line('std', 390), mealPlan: { code: 'all_inclusive', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 } }]
+    store.cart = [{ ...line('std', 390), mealPlan: { code: 'all_inclusive', name: 'Todo incluido', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 } }]
     await w.vm.$nextTick()
     const included = w.get('[data-testid="meal-plan-line"]')
     expect(included.text()).toContain('Todo incluido')
@@ -199,7 +199,8 @@ describe('EstimatedTotals — desglose estimado antes de pagar (#220)', () => {
 
   it('#343: `labels.mealPlan` / `mealPlanIncluded` / `mealPlanNames` reemplazan al i18n (landing)', () => {
     const store = seed([], 100)
-    store.cart = [{ ...line('std', 100), mealPlan: { code: 'half_board', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 } }]
+    // #361: sin `name` en el snapshot (línea vieja / fila sin nombre) manda `labels.mealPlanNames`.
+    store.cart = [{ ...line('std', 100), mealPlan: { code: 'half_board', name: '', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 } }]
     const w = mount(EstimatedTotals, {
       props: { format, labels: { mealPlan: 'Plan de comidas', mealPlanIncluded: 'va en la tarifa', mealPlanNames: { half_board: 'Media pensión' } } },
     })
