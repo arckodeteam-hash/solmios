@@ -2,7 +2,8 @@
 // Mover (cambiar habitación/fechas) o extender (cambiar salida) una reserva desde el planning.
 // - quoteReschedule: dry-run, NO escribe. Devuelve disponibilidad + diferencia de precio para el modal.
 // - commitReschedule: aplica el cambio (reusa updateReservation → validateRoomAssignment) y cobra la diferencia.
-//   En estadía (`checked_in`) el cambio de habitación delega ANTES en `assignRoom` (folio + estados).
+//   En estadía (`checked_in`) el cambio de habitación delega ANTES en `assignRoom` (folio + estados),
+//   en UNA tx con el update de fechas/total y con los efectos diferidos al commit (#314).
 // El cobro NO se orquesta acá: se delega a un puerto inyectado por el connector (folio/efectivo/tarjeta).
 //
 // ─── Dos precios, el usuario elige (fix "siempre se queda con el mismo precio") ───────────────
@@ -16,8 +17,14 @@
 // en el commit), NO se devuelve plata automáticamente.
 
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
+import type { CacheAdapter, Logger } from 'arckode-framework'
 import { updateReservation } from './crud'
 import { assignRoom, assertNoRoomConflict, type RoomAssignmentDeps } from './assign-room'
+import type { TxRepos } from './reservas-queries'
+import type { ReservasSockets } from '../sockets'
+import type { AuditPort } from '../../../shared/usecases/audit'
+import { safeEmit } from './safe-emit'
+import { invalidateReservasCaches } from './cache'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
 import { availableOfType } from '../../../shared/usecases/type-availability'
 import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, freeChildrenLimitError, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
@@ -374,6 +381,73 @@ export async function quoteReschedule(deps: RescheduleDeps, id: string, input: R
   return { ...quote, available, reason }
 }
 
+type Deferred = () => Promise<void>
+
+/** Sockets que en vez de emitir encolan la emisión real (vía `safeEmit`) para después del commit. */
+function deferSockets(sockets: ReservasSockets | undefined, logger: Logger, defer: (fn: Deferred) => void): ReservasSockets {
+  const out: Record<string, (...args: any[]) => Promise<void>> = {}
+  for (const [name, handler] of Object.entries(sockets ?? {})) {
+    if (typeof handler !== 'function') continue
+    out[name] = async (...args: any[]) => { defer(() => safeEmit(logger, name, handler as any, ...args)) }
+  }
+  return out as ReservasSockets
+}
+
+function deferAudit(port: AuditPort | null | undefined, defer: (fn: Deferred) => void): AuditPort | null {
+  return port ? { record: async (entry) => { defer(() => port.record(entry)) } } : null
+}
+
+/** Caché que no invalida nada: dentro de la tx la invalidación se hace UNA vez tras el commit. */
+const silentCache: CacheAdapter = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} }
+
+/**
+ * #314 — Estadía en curso (`checked_in`) a OTRA habitación: `assignRoom` (roomId + folio abierto +
+ * estados de ambas habitaciones) y el update de fechas/total corren en UNA transacción real del
+ * ORM (`transactionWithRepos`, patrón checkin/checkout). Antes eran dos escrituras separadas: si el
+ * update fallaba, la reserva quedaba movida de habitación con las fechas y el total viejos.
+ *
+ *   · `assignRoom` recibe `repo`/`roomRepo` atados al `tx` y un `queries.transaction` que corre
+ *     `fn(tx.writer)` directo (sqlite no anida BEGIN; en postgres otro handle quedaría fuera).
+ *   · Los efectos secundarios (sockets, auditoría, `ceilingGuard`, invalidación de caché) se
+ *     encolan y recién corren tras el commit: emitirlos adentro publica un estado que puede
+ *     revertirse. Si la tx hace rollback, la cola se descarta entera.
+ *   · Sin `transactionWithRepos` (shims de test) cae a `queries.transaction` con los repos del
+ *     caller: el orden y los efectos diferidos se mantienen, la atomicidad la da el ORM.
+ */
+async function moveStayAndUpdate(deps: RescheduleDeps, ra: RoomAssignmentDeps, id: string, roomId: string, dto: any, user: { id: string; role: string; hotelId?: string }): Promise<any> {
+  const deferred: Deferred[] = []
+  const defer = (fn: Deferred) => { deferred.push(fn) }
+  const auditPort = deferAudit(ra.auditPort, defer)
+  const runInTx = <T>(fn: (tx: TxRepos) => Promise<T>): Promise<T> => ra.queries.transactionWithRepos
+    ? ra.queries.transactionWithRepos(fn)
+    : ra.queries.transaction((writer) => fn({ repo: ra.repo, roomRepo: ra.roomRepo, writer }))
+
+  const reservation = await runInTx(async (tx) => {
+    const txAssignment: RoomAssignmentDeps = {
+      ...ra, repo: tx.repo, roomRepo: tx.roomRepo, auditPort, cache: silentCache,
+      queries: { transaction: (fn) => fn(tx.writer) },
+      sockets: deferSockets(ra.sockets, ra.logger, defer),
+    }
+    await assignRoom(txAssignment, id, { roomId, allowTypeChange: true }, user)
+    return updateReservation(
+      tx.repo, deps.logger, silentCache, deferSockets(deps.sockets, ra.logger, defer), id, dto, user,
+      tx.roomRepo, undefined, undefined, undefined,
+      {
+        afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(tx.repo, deps.addonsOf, id, deps.paidOf, item) }),
+        afterCeilingDrop: deps.ceilingGuard
+          ? async (item) => { defer(() => deps.ceilingGuard!(String(item.hotelId), String(item.id))) }
+          : undefined,
+        roomAssignment: { blockRepo: ra.blockRepo, auditPort },
+      },
+    )
+  })
+
+  // Commit hecho: ahora sí los efectos, en el mismo orden en que se habrían emitido.
+  for (const fn of deferred) await fn()
+  for (const cache of new Set([ra.cache, deps.cache].filter(Boolean))) await invalidateReservasCaches(cache, reservation.hotelId)
+  return reservation
+}
+
 /** Aplica el cambio de habitación/fechas y cobra la diferencia según el método elegido. */
 export async function commitReschedule(deps: RescheduleDeps, id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<{
   reservation: any
@@ -419,19 +493,17 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   //  · Antes del check-in: el `roomId` viaja en el dto del update (crud.ts delega en assign-room).
   //  · En estadía: crud.ts rechaza el `roomId` (409 `use_assign_endpoint`) porque mover una estadía
   //    también mueve el folio abierto y los estados de las habitaciones. Se delega en `assignRoom`
-  //    ANTES del update y el dto NO lleva `roomId` (ya quedó persistido). `assignRoom` valida el
-  //    solape con las fechas VIGENTES; si además se extiende la salida, se comprueba el rango
-  //    NUEVO acá antes de mover nada, para no dejar la estadía a medio mover si la extensión choca.
+  //    ANTES del update, en la MISMA tx (#314, `moveStayAndUpdate`), y el dto NO lleva `roomId`.
+  //    `assignRoom` valida el solape con las fechas VIGENTES; si además se extiende la salida, se
+  //    comprueba el rango NUEVO acá antes de mover nada, para no abrir una tx que va a revertirse.
   // Antes de escribir nada: inventario del tipo (fuente única) + solape de la unidad destino con el
   // rango NUEVO. `updateReservation` revalida la unidad, pero no cuenta las reservas sin asignar.
   await assertRescheduleAvailable(deps, existing, quote, id)
   const cambiaHabitacion = Boolean(quote.roomId) && String(quote.roomId) !== String(existing.roomId ?? '')
   const mueveEstadia = cambiaHabitacion && existing.status === 'checked_in'
-  if (mueveEstadia) {
-    if (!deps.roomAssignment) throw new ConflictError('No se puede mover una estadía sin deps de asignación', { reason: 'use_assign_endpoint' })
-    await assignRoom(deps.roomAssignment, id, { roomId: quote.roomId, allowTypeChange: true }, user)
-  }
+  if (mueveEstadia && !deps.roomAssignment) throw new ConflictError('No se puede mover una estadía sin deps de asignación', { reason: 'use_assign_endpoint' })
   const roomDto = cambiaHabitacion && !mueveEstadia ? { roomId: quote.roomId, allowTypeChange: true } : {}
+  const dto = { ...roomDto, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal, ...reclassifyDto } as any
 
   // Reusa updateReservation: revalida solape (validateRoomAssignment / assertNoRoomConflict) y emite
   // el socket + invalida caché. El `afterPersist` recalcula el saldo persistido DENTRO de esa
@@ -440,19 +512,21 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   // SEC3-2: el dto lleva `totalAmount`, así que crud dispara `afterCeilingDrop` — hay que pasarle el
   // clamp. Sin él, un reagendado que BAJA el total (reprice con `creditAmount>0`) deja links pending
   // vivos por el saldo viejo: el huésped puede pagar un importe mayor que el nuevo.
-  const reservation = await updateReservation(
-    deps.repo, deps.logger, deps.cache, deps.sockets, id,
-    { ...roomDto, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal, ...reclassifyDto } as any,
-    user,
-    deps.roomRepo, undefined, undefined, undefined,
-    {
-      afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(deps.repo, deps.addonsOf, id, deps.paidOf, item) }),
-      afterCeilingDrop: deps.ceilingGuard
-        ? async (item) => { await deps.ceilingGuard!(String(item.hotelId), String(item.id)) }
-        : undefined,
-      roomAssignment: deps.roomAssignment ? { blockRepo: deps.roomAssignment.blockRepo, auditPort: deps.roomAssignment.auditPort } : undefined,
-    },
-  )
+  // #314: en estadía con cambio de habitación, `assignRoom` y este update van en UNA tx (ver
+  // `moveStayAndUpdate`): si el update de fechas/total falla, la habitación no queda movida.
+  const reservation = mueveEstadia
+    ? await moveStayAndUpdate(deps, deps.roomAssignment!, id, quote.roomId!, dto, user)
+    : await updateReservation(
+      deps.repo, deps.logger, deps.cache, deps.sockets, id, dto, user,
+      deps.roomRepo, undefined, undefined, undefined,
+      {
+        afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(deps.repo, deps.addonsOf, id, deps.paidOf, item) }),
+        afterCeilingDrop: deps.ceilingGuard
+          ? async (item) => { await deps.ceilingGuard!(String(item.hotelId), String(item.id)) }
+          : undefined,
+        roomAssignment: deps.roomAssignment ? { blockRepo: deps.roomAssignment.blockRepo, auditPort: deps.roomAssignment.auditPort } : undefined,
+      },
+    )
 
   deps.audit?.({
     reservationId: id, hotelId: existing.hotelId, userId: user.id,
