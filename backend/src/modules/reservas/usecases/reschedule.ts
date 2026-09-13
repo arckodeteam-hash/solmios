@@ -22,7 +22,7 @@ import { updateReservation } from './crud'
 import { assignRoom, assertNoRoomConflict, type RoomAssignmentDeps } from './assign-room'
 import type { TxRepos } from './reservas-queries'
 import type { ReservasSockets } from '../sockets'
-import type { AuditPort } from '../../../shared/usecases/audit'
+import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { safeEmit } from './safe-emit'
 import { invalidateReservasCaches } from './cache'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
@@ -393,8 +393,9 @@ function deferSockets(sockets: ReservasSockets | undefined, logger: Logger, defe
   return out as ReservasSockets
 }
 
-function deferAudit(port: AuditPort | null | undefined, defer: (fn: Deferred) => void): AuditPort | null {
-  return port ? { record: async (entry) => { defer(() => port.record(entry)) } } : null
+/** Auditoría diferida al commit. Pasa por `auditSafely`: un audit log caído NUNCA tumba la operación. */
+function deferAudit(port: AuditPort | null | undefined, logger: Logger, defer: (fn: Deferred) => void): AuditPort | null {
+  return port ? { record: async (entry) => { defer(() => auditSafely(port, logger, entry)) } } : null
 }
 
 /** Caché que no invalida nada: dentro de la tx la invalidación se hace UNA vez tras el commit. */
@@ -417,7 +418,7 @@ const silentCache: CacheAdapter = { get: async () => null, set: async () => {}, 
 async function moveStayAndUpdate(deps: RescheduleDeps, ra: RoomAssignmentDeps, id: string, roomId: string, dto: any, user: { id: string; role: string; hotelId?: string }): Promise<any> {
   const deferred: Deferred[] = []
   const defer = (fn: Deferred) => { deferred.push(fn) }
-  const auditPort = deferAudit(ra.auditPort, defer)
+  const auditPort = deferAudit(ra.auditPort, ra.logger, defer)
   const runInTx = <T>(fn: (tx: TxRepos) => Promise<T>): Promise<T> => ra.queries.transactionWithRepos
     ? ra.queries.transactionWithRepos(fn)
     : ra.queries.transaction((writer) => fn({ repo: ra.repo, roomRepo: ra.roomRepo, writer }))
@@ -442,8 +443,12 @@ async function moveStayAndUpdate(deps: RescheduleDeps, ra: RoomAssignmentDeps, i
     )
   })
 
-  // Commit hecho: ahora sí los efectos, en el mismo orden en que se habrían emitido.
-  for (const fn of deferred) await fn()
+  // Commit hecho: ahora sí los efectos, en el mismo orden en que se habrían emitido. La reserva ya
+  // quedó movida: un efecto que falle se loguea y NO propaga (si no, el caller recibiría un error
+  // por una operación que sí se aplicó).
+  for (const fn of deferred) {
+    try { await fn() } catch (e) { ra.logger.error('Falló un efecto diferido tras reagendar la estadía', { reservationId: id, error: String(e) }) }
+  }
   for (const cache of new Set([ra.cache, deps.cache].filter(Boolean))) await invalidateReservasCaches(cache, reservation.hotelId)
   return reservation
 }
