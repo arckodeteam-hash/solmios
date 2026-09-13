@@ -354,7 +354,7 @@ personalizada de la habitación** `RoomAmenities` con key `custom:cuna` (nombre,
 más abajo). En el motor público la pregunta "¿Necesita cuna?" (Sí/No, con "(+ $precio)"
 cuando tiene precio) se ofrece SOLO si la tarjeta declara al menos un bebé Y el tipo
 publica `custom:cuna` en `GET /api/public/hotels/:slug/room-amenities` (unión de sus
-unidades vendibles, precio mínimo); "Sí" agrega la key `custom:cuna` a `roomAmenities`
+unidades vendibles, precio MÁXIMO entre ellas — #365); "Sí" agrega la key `custom:cuna` a `roomAmenities`
 de esa línea y la cuna NO aparece en el checklist genérico de amenidades de la
 habitación. En una reserva múltiple cada línea se evalúa contra su propio tipo. El
 backend (`public-booking.ts` / `public-booking-group.ts`) resuelve `needsCrib` = bebés > 0
