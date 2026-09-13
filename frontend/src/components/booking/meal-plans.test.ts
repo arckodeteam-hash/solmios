@@ -92,7 +92,7 @@ beforeEach(() => {
 })
 
 describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
-  it('(i) catálogo [room_only, breakfast 10/pp/noche]: 2 opciones tal cual vienen (nombre, orden), 2 adultos × 3 noches → 60; default = primera fila', async () => {
+  it('(i) catálogo [room_only, breakfast 10/pp/noche]: 2 opciones tal cual vienen (nombre, orden), 2 adultos × 3 noches → 60; default = primera fila gratis', async () => {
     const store = seedStore([ROOM_ONLY, BREAKFAST_PAID])
     const { mealPlanOptions, mealPlanCode, setMealPlan, setAdults, addComposedRoom, composedMealPlanTotal } = useGuestComposer()
     const rt = roomType()
@@ -106,7 +106,7 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(options[0]).toMatchObject({ code: 'room_only', name: 'Solo alojamiento', priceMode: 'included', unitPrice: 0, total: 0 })
     expect(options[1]).toMatchObject({ code: 'breakfast', name: 'Desayuno incluido', priceMode: 'per_person_per_night', unitPrice: 10, total: 60 })
 
-    // Sin elegir nada, la tarjeta arranca en la PRIMERA fila del catálogo.
+    // Sin elegir nada, la tarjeta arranca en la PRIMERA fila SIN costo del catálogo.
     expect(mealPlanCode(rt)).toBe('room_only')
     expect(composedMealPlanTotal(rt)).toBe(0)
     setMealPlan(rt, 'breakfast')
@@ -164,16 +164,66 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(store.mealPlansTotal).toBe(0)
   })
 
-  it('#361 — un código libre del catálogo abierto es reservable como cualquier otro (nombre + descripción)', async () => {
+  it('#361 — un código libre del catálogo abierto es reservable como cualquier otro; con UNA sola fila PAGA no hay preselección (nada se cobra sin elegir)', async () => {
     const store = seedStore([GOURMET])
-    const { mealPlanOptions, mealPlanCode, setAdults, addComposedRoom } = useGuestComposer()
+    const { mealPlanOptions, mealPlanCode, composedMealPlanTotal, setMealPlan, setAdults, addComposedRoom } = useGuestComposer()
     const rt = roomType()
     setAdults(rt, 2)
     expect(mealPlanOptions(rt)).toEqual([{ code: 'x_gourmet', name: 'Pensión gourmet', priceMode: 'per_person_per_night', unitPrice: 40, total: 240, available: true }])
-    expect(mealPlanCode(rt)).toBe('x_gourmet')
+    // Ninguna opción gratis → sin preselección: código null, importe 0.
+    expect(mealPlanCode(rt)).toBeNull()
+    expect(composedMealPlanTotal(rt)).toBe(0)
+    // Agregar sin elegir → la línea NO lleva régimen y el total no lo incluye.
     await addComposedRoom(rt)
-    expect(store.cart[0]!.mealPlan).toMatchObject({ code: 'x_gourmet', name: 'Pensión gourmet', total: 240 })
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.mealPlan).toBeUndefined()
+    expect(store.mealPlansTotal).toBe(0)
+    expect(store.subtotal).toBe(300)
+    // Elección explícita → viaja con su importe.
+    setMealPlan(rt, 'x_gourmet')
+    expect(mealPlanCode(rt)).toBe('x_gourmet')
+    expect(composedMealPlanTotal(rt)).toBe(240)
+    await addComposedRoom(rt)
+    expect(store.cart).toHaveLength(2)
+    expect(store.cart[1]!.mealPlan).toMatchObject({ code: 'x_gourmet', name: 'Pensión gourmet', total: 240 })
     expect(store.mealPlansTotal).toBe(240)
+    expect(store.subtotal).toBe(840)
+  })
+
+  it('preselección = la PRIMERA opción SIN costo en el orden del catálogo, aunque no sea la primera fila: [breakfast pago, room_only gratis] → room_only', async () => {
+    const store = seedStore([BREAKFAST_PAID, ROOM_ONLY])
+    const { mealPlanOptions, mealPlanCode, composedMealPlanTotal, addComposedRoom } = useGuestComposer()
+    const rt = roomType()
+    expect(mealPlanOptions(rt).map((o) => [o.code, o.total])).toEqual([['breakfast', 30], ['room_only', 0]])
+    expect(mealPlanCode(rt)).toBe('room_only')
+    expect(composedMealPlanTotal(rt)).toBe(0)
+    await addComposedRoom(rt)
+    expect(store.cart[0]!.mealPlan).toMatchObject({ code: 'room_only', total: 0 })
+    expect(store.mealPlansTotal).toBe(0)
+  })
+
+  it('preselección: [room_only gratis, breakfast pago] → room_only (primera gratis); [breakfast incluido, room_only] → breakfast (primera gratis, aunque sea "included")', () => {
+    seedStore([ROOM_ONLY, BREAKFAST_PAID])
+    const { mealPlanCode, composedMealPlanTotal } = useGuestComposer()
+    const rt = roomType()
+    expect(mealPlanCode(rt)).toBe('room_only')
+    expect(composedMealPlanTotal(rt)).toBe(0)
+
+    useBookingStore().mealPlans = [{ ...BREAKFAST_INCLUDED }, { ...ROOM_ONLY }]
+    expect(mealPlanCode(rt)).toBe('breakfast')
+    expect(composedMealPlanTotal(rt)).toBe(0)
+  })
+
+  it('sin opción gratis, un código elegido que desaparece del catálogo vuelve a "sin preselección" (no cae a otra fila paga)', () => {
+    seedStore([BREAKFAST_PAID, GOURMET])
+    const { setMealPlan, mealPlanCode, composedMealPlanTotal } = useGuestComposer()
+    const rt = roomType()
+    expect(mealPlanCode(rt)).toBeNull()
+    setMealPlan(rt, 'breakfast')
+    expect(mealPlanCode(rt)).toBe('breakfast')
+    useBookingStore().mealPlans = [{ ...GOURMET }]
+    expect(mealPlanCode(rt)).toBeNull()
+    expect(composedMealPlanTotal(rt)).toBe(0)
   })
 
   it('un niño con plaza paga régimen; un niño libre no (mismo criterio que el backend)', () => {
@@ -188,13 +238,13 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(mealPlanOptions(rt).find((o) => o.code === 'breakfast')!.total).toBe(90)
   })
 
-  it('elegir un código que no está en el catálogo se ignora: la tarjeta sigue en la primera fila', () => {
+  it('elegir un código que no está en el catálogo se ignora: la tarjeta sigue en la primera fila gratis', () => {
     seedStore([ROOM_ONLY, BREAKFAST_PAID])
     const { setMealPlan, mealPlanCode } = useGuestComposer()
     const rt = roomType()
     setMealPlan(rt, 'half_board')
     expect(mealPlanCode(rt)).toBe('room_only')
-    // Un código elegido que después desaparece del catálogo cae a la primera fila (no queda colgado).
+    // Un código elegido que después desaparece del catálogo cae a la primera fila gratis (no queda colgado).
     setMealPlan(rt, 'breakfast')
     expect(mealPlanCode(rt)).toBe('breakfast')
     useBookingStore().mealPlans = [{ ...ROOM_ONLY }]
@@ -414,21 +464,43 @@ describe('RoomsStep — radio de régimen por tarjeta (MR-03 #268, catálogo abi
     expect(text).not.toContain('Próximamente')
     expect(w.find('[title="Este hotel no ofrece este régimen"]').exists()).toBe(false)
 
-    // La primera fila del catálogo arranca marcada.
+    // La primera fila GRATIS del catálogo arranca marcada.
     expect((group.get('input[value="room_only"]').element as HTMLInputElement).checked).toBe(true)
     expect((group.get('input[value="breakfast"]').element as HTMLInputElement).checked).toBe(false)
     w.unmount()
   })
 
-  it('#361 — una fila con código libre se pinta con su nombre y su descripción (title + texto secundario)', async () => {
-    seedStore([GOURMET])
+  it('#361 — una fila con código libre se pinta con su nombre y su descripción (title + texto secundario); sola y PAGA, arranca SIN marcar y no se cobra hasta elegirla', async () => {
+    const store = seedStore([GOURMET])
     const w = mount(RoomsStep)
     const labels = w.findAll('[data-testid="meal-plan-option"]')
     expect(labels).toHaveLength(1)
     expect(labels[0]!.text()).toContain('Pensión gourmet')
     expect(labels[0]!.text()).not.toContain('x_gourmet')
     expect(labels[0]!.attributes('title')).toBe('Cena de 5 pasos')
+    // Ningún radio marcado: no hay opción gratis → sin preselección (ni descripción de "elegida").
+    const radio = w.get('input[value="x_gourmet"]').element as HTMLInputElement
+    expect(radio.checked).toBe(false)
+    expect(w.find('[data-testid="meal-plan-description"]').exists()).toBe(false)
+    expect(w.find('[data-testid="meal-plan-total"]').exists()).toBe(false)
+    expect(w.find('[data-testid="meal-plan-hint"]').exists()).toBe(false)
+
+    await w.findAll('button').find((b) => b.text().includes('Agregar esta habitación'))!.trigger('click')
+    await flushPromises()
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.mealPlan).toBeUndefined()
+    expect(store.mealPlansTotal).toBe(0)
+
+    // Elección explícita → se marca, aparece la descripción y el importe (1 adulto × 3 noches × 40).
+    await w.get('input[value="x_gourmet"]').setValue(true)
+    expect((w.get('input[value="x_gourmet"]').element as HTMLInputElement).checked).toBe(true)
     expect(w.get('[data-testid="meal-plan-description"]').text()).toBe('Cena de 5 pasos')
+    expect(w.get('[data-testid="meal-plan-total"]').text()).toContain('120')
+    await w.findAll('button').find((b) => b.text().includes('Agregar esta habitación'))!.trigger('click')
+    await flushPromises()
+    expect(store.cart).toHaveLength(2)
+    expect(store.cart[1]!.mealPlan).toMatchObject({ code: 'x_gourmet', total: 120 })
+    expect(store.mealPlansTotal).toBe(120)
     w.unmount()
   })
 

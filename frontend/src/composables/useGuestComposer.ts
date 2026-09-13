@@ -167,15 +167,22 @@ export function useGuestComposer() {
 
   // ─── MR-03 (#268) — régimen de alimentación, POR TARJETA ────────────────────────────────────
 
-  /** Código elegido en esta tarjeta. #361: si el composer tiene un código que está en el
-   *  catálogo → ese; si no (nada elegido todavía, o el catálogo cambió) → la PRIMERA opción del
-   *  catálogo; sin catálogo → `null` (la sección no se renderiza y no viaja nada). */
+  /** Código elegido en esta tarjeta. #361 — regla de preselección:
+   *   1. Una elección explícita del huésped (`setMealPlan`) SIEMPRE manda mientras su código siga
+   *      en el catálogo.
+   *   2. Sin elección (o si el código elegido dejó de existir) → la PRIMERA opción SIN COSTO para
+   *      la composición actual (`total === 0`: `included` o precio 0), en el orden del catálogo.
+   *   3. Si NINGUNA opción es gratis → `null`: ningún radio marcado, `composedMealPlanTotal` = 0 y
+   *      al agregar al carrito NO viaja `mealPlan` hasta que el huésped elija explícitamente.
+   *      Nunca se preselecciona (ni se cobra) un régimen pago que nadie eligió — el catálogo puede
+   *      no arrancar con una fila gratis (el hotel puede borrar "Solo alojamiento").
+   *   4. Sin catálogo → `null` (la sección no se renderiza y no viaja nada). */
   function mealPlanCode(rt: RoomTypeRate): MealPlanCode | null {
     const options = mealPlanOptions(rt)
     if (options.length === 0) return null
     const chosen = composer(rt).mealPlan
     if (chosen && options.some((o) => o.code === chosen)) return chosen
-    return options[0]!.code
+    return options.find((o) => o.total === 0)?.code ?? null
   }
 
   /** Elige un régimen para esta tarjeta. Un código que no está en el catálogo visible se ignora
@@ -319,9 +326,10 @@ export function useGuestComposer() {
     // `cribCount` es siempre 1 o 0, nunca una cantidad elegida por el huésped.
     const needsCrib = hasCribKeySelected(rt, roomAmenityKeysToSend)
     // MR-03 (#268) / #361 — viaja el código resuelto contra el catálogo visible (`mealPlanCode`
-    // ya cae a la primera opción si el elegido dejó de existir), INCLUIDO `room_only` cuando es
-    // una fila del catálogo; `null` (sin catálogo) = la línea no lleva régimen. Nunca se agrega
-    // una línea con un código que el backend rechazaría.
+    // ya cae a la primera opción GRATIS si el elegido dejó de existir), INCLUIDO `room_only`
+    // cuando es una fila del catálogo; `null` (sin catálogo, o sin elección explícita y sin
+    // opción gratis) = la línea no lleva régimen. Nunca se agrega una línea con un código que el
+    // backend rechazaría ni se cobra un régimen que el huésped no eligió.
     const mealPlanToSend = mealPlanCode(rt)
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
