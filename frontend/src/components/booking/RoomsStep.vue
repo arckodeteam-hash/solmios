@@ -239,12 +239,16 @@
                   />
                   <span>{{ a.name }}</span>
                 </span>
+                <!-- #355 — el precio de la amenidad viene de /room-amenities SIN conversión server-side
+                     (hotels.currency = chargeCurrency), igual que el régimen: etiquetarlo con
+                     displayCurrency mostraría "€200" por un cobro de $200 (D10). -->
                 <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="room-amenity-price">
-                  {{ Number(a.price) > 0 ? formatPrice(Number(a.price), store.displayCurrency) : t('rooms.guests.roomAmenityFree') }}
+                  {{ Number(a.price) > 0 ? formatPrice(Number(a.price), store.chargeCurrency) : t('rooms.guests.roomAmenityFree') }}
                 </span>
               </label>
+              <!-- #355 — suma de amenidades, también en chargeCurrency (D10). -->
               <p v-if="composedRoomAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="room-amenities-total">
-                + {{ formatPrice(composedRoomAmenitiesTotal(rt), store.displayCurrency) }}
+                + {{ formatPrice(composedRoomAmenitiesTotal(rt), store.chargeCurrency) }}
               </p>
             </div>
 
