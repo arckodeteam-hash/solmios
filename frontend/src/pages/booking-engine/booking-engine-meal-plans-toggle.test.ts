@@ -1,7 +1,8 @@
-// booking-engine-meal-plans-toggle.test.ts — #360: el editor CRUD de regímenes se mudó de
-// Página pública → Motor de reservas a Configuración → Regímenes (ver
-// `settings/settings-meal-plans.test.ts`). En esta página queda SOLO el toggle
-// `booking_config.showMealPlans`: se muestra, refleja la config cargada y viaja al guardar.
+// booking-engine-meal-plans-toggle.test.ts — REQ "Mover la gestión completa de Regímenes a
+// Página pública": el editor CRUD de regímenes vive ACÁ (mudado desde Configuración Base), junto
+// al toggle `booking_config.showMealPlans`. Este archivo cubre el toggle en sí — se muestra,
+// refleja la config cargada y viaja al guardar — con `MealPlansEditor` stubeado (su propio CRUD
+// tiene test dedicado en `components/booking/MealPlansEditor.test.ts`, decoupled de esta página).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -41,6 +42,7 @@ const MOUNT_OPTS = {
     stubs: {
       RouterLink: true,
       CancellationPolicyEditor: true,
+      MealPlansEditor: true,
     },
   },
 }
@@ -67,21 +69,19 @@ function toggleOf(w: Awaited<ReturnType<typeof mountBookingEngine>>) {
   return w.find('#booking-engine-regimenes-mostrar')
 }
 
-describe('#360 — Página pública → Motor de reservas: toggle "Mostrar regímenes en el motor de reservas"', () => {
-  it('la página ya NO monta el editor de regímenes (vive en Configuración → Regímenes)', async () => {
+describe('Página pública → Motor de reservas: toggle "Mostrar regímenes" + editor de regímenes', () => {
+  it('la página monta el editor de regímenes junto al toggle (gestión completa acá)', async () => {
     const w = await mountBookingEngine()
-    expect(w.findComponent({ name: 'MealPlansEditor' }).exists()).toBe(false)
-    expect(w.text()).not.toContain('Agregar régimen')
+    expect(w.findComponent({ name: 'MealPlansEditor' }).exists()).toBe(true)
   })
 
-  it('muestra el checkbox con su etiqueta y la nota que apunta a Configuración → Regímenes', async () => {
+  it('muestra el checkbox con su etiqueta', async () => {
     const w = await mountBookingEngine()
     const input = toggleOf(w)
     expect(input.exists()).toBe(true)
     expect(input.attributes('type')).toBe('checkbox')
     expect(input.attributes('name')).toBe('showMealPlans')
     expect(w.text()).toContain('Mostrar regímenes en el motor de reservas')
-    expect(w.text()).toContain('Los regímenes se administran en Configuración → Regímenes')
   })
 
   it('con getConfig → showMealPlans:false el checkbox queda desmarcado', async () => {

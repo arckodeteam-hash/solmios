@@ -354,19 +354,23 @@
                 </div>
               </div>
 
-              <!-- #360 — Regímenes de alimentación: el catálogo (CRUD) se mudó a Configuración →
-                   Regímenes (settings/index.vue, tab meal_plans). Acá queda SOLO el toggle
-                   `showMealPlans` que decide si el motor de reservas los ofrece al huésped —
-                   nada de formularios ni mantenimiento del catálogo en esta pantalla. -->
+              <!-- Regímenes — gestión COMPLETA acá (mudada desde Configuración Base): el toggle
+                   `showMealPlans` decide si el motor los ofrece al huésped, y debajo el editor
+                   crea/edita/elimina/activa cada régimen. Mismos endpoints `/api/meal-plans` y
+                   misma tabla de siempre — mover la pantalla no duplica ni pierde datos, los
+                   regímenes que el hotel ya tenía cargados siguen apareciendo acá tal cual. -->
               <div class="mt-4">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes de alimentación</label>
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes</label>
                 <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
                   <input id="booking-engine-regimenes-mostrar" name="showMealPlans" type="checkbox" v-model="form.showMealPlans" class="w-4 h-4 text-cyan rounded" />
                   <div>
                     <div class="text-sm font-bold text-navy">Mostrar regímenes en el motor de reservas</div>
-                    <div class="text-[10px] text-text-muted">Si está apagado, el huésped no elige régimen al reservar. Los regímenes se administran en Configuración → Regímenes.</div>
+                    <div class="text-[10px] text-text-muted">Si está apagado, el huésped no elige régimen al reservar. Los regímenes configurados abajo no se pierden.</div>
                   </div>
                 </label>
+                <div class="mt-3 rounded-xl border border-border p-4">
+                  <MealPlansEditor />
+                </div>
               </div>
             </div>
 
@@ -570,6 +574,7 @@ import { useToast } from '@/composables/useToast'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
+import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()

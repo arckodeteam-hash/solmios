@@ -1,20 +1,19 @@
-// settings-meal-plans.test.ts — issue #360: los regímenes de alimentación pasan de catálogo fijo
-// (3 códigos, Página pública → Motor de reservas) a catálogo ABIERTO por hotel administrado desde
-// Configuración → pestaña "Regímenes" (MealPlansEditor como lista CRUD).
+// MealPlansEditor.test.ts — REQ "Mover la gestión completa de Regímenes a Página pública":
+// el componente es el mismo desde #360 (catálogo abierto por hotel), solo cambió DÓNDE se monta
+// (antes Configuración Base → Regímenes, ahora Página pública → Motor de reservas). El test se
+// monta directo, sin pasar por ninguna página — el componente no toma props ni depende de dónde
+// vive, así el test no se rompe si vuelve a mudarse de pantalla.
 //
-// Contratos de esta pantalla:
-//   1. Existe la pestaña "Regímenes" en Configuración.
-//   2. Con lista vacía se ve el estado vacío y el botón "+ Agregar régimen".
-//   3. Completar el formulario y guardar llama MealPlansService.create con
+// Contratos cubiertos:
+//   1. Con lista vacía se ve el estado vacío y el botón "+ Agregar régimen".
+//   2. Completar el formulario y guardar llama MealPlansService.create con
 //      {name, description, priceMode, price, active}.
-//   4. Eliminar (con confirm) llama MealPlansService.remove(id).
-//   5. Cambiar el checkbox activo llama MealPlansService.update(id, {active}).
+//   3. Eliminar (con confirm) llama MealPlansService.remove(id).
+//   4. Cambiar el checkbox activo llama MealPlansService.update(id, {active}).
+//   5. Editar precarga el formulario y guardar llama update(id, payload).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import type { VueWrapper } from '@vue/test-utils'
 
-// `vi.mock(...)` se hoistea sobre estas líneas: los mocks se referencian desde arrows para que
-// existan al momento de la llamada (mismo patrón que settings-amenities-removed.test.ts).
 const mealPlanListMock = vi.fn(async (): Promise<unknown[]> => [])
 const mealPlanCreateMock = vi.fn(async (_input: Record<string, unknown>) => ({}))
 const mealPlanUpdateMock = vi.fn(async (_id: string, _input: Record<string, unknown>) => ({}))
@@ -28,73 +27,11 @@ vi.mock('@/services/MealPlans.service', () => ({
     remove: (id: string) => mealPlanRemoveMock(id),
   },
 }))
-
-// ── Dependencias de la pantalla (mismo set de mocks que settings-amenities-removed.test.ts) ──
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ success: () => {}, error: () => {}, info: () => {}, warning: () => {} }),
 }))
-vi.mock('@/composables/useGoogleMaps', () => ({
-  loadGoogleMaps: async () => null,
-  resetGoogleMapsLoader: () => {},
-}))
-vi.mock('@/services/Signup.service', () => ({
-  SignupService: {
-    publicPlans: async () => [],
-    mySubscription: async () => ({
-      status: 'active', trialEndsAt: null, currentPeriodEnd: null, planId: 'plan-x',
-      allowed: true, reason: null, daysLeft: null, hasStripeCustomer: true,
-    }),
-  },
-}))
-vi.mock('@/services/Settings.service', () => ({
-  SettingsService: {
-    get: async () => ({
-      hotel: {
-        id: 'h1', name: 'Hotel Test', country: 'República Dominicana',
-        phone: '+18095551234', email: 'x@y.test', phone2: '+18295559876',
-      },
-    }),
-    patchHotel: async () => ({}),
-  },
-}))
-vi.mock('@/services/Hotel.service', () => ({
-  HotelService: {
-    amenitiesCatalog: async () => ({}),
-    amenitiesHotel: async () => ({ data: [] }),
-    saveAmenitiesHotel: async () => ({}),
-  },
-}))
-vi.mock('@/services/Room.service', () => ({
-  RoomService: { list: async () => ({ rooms: [], total: 0 }) },
-}))
-vi.mock('@/services/Platform.service', () => ({
-  ConfigService: { get: async () => null, set: async () => ({}) },
-  EmergencyContactsService: { get: async () => null, invalidate: () => {} },
-}))
-vi.mock('@/services/Guarantee.service', () => ({
-  GuaranteeService: { hasPin: async () => ({ hasPin: false }), setPin: async () => ({}) },
-}))
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {} }),
-  useRouter: () => ({ push: () => {} }),
-  onBeforeRouteLeave: () => {},
-}))
-vi.mock('@/stores/auth.store', () => ({ useAuthStore: () => ({ user: { hotelId: 'h1', name: 'Tester' } }) }))
-vi.mock('@/services/cancellationPolicies.service', () => ({
-  CancellationPoliciesService: {
-    list: async () => [],
-    upsertBase: async () => ({}),
-    upsertOverride: async () => ({}),
-    remove: async () => ({}),
-  },
-}))
-vi.mock('@/services/Channel.service', () => ({
-  ChannelService: { status: async () => null },
-}))
 
-import Settings from './index.vue'
-
-const MOUNT_OPTS = { global: { stubs: { RouterLink: true, PhoneInput: true } } }
+import MealPlansEditor from './MealPlansEditor.vue'
 
 // Se clona en cada mock (`{ ...ROW }`): el editor muta la fila en el toggle optimista.
 const ROW = {
@@ -103,17 +40,11 @@ const ROW = {
   sortOrder: 1, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
 }
 
-/** Monta la pantalla y activa la pestaña "Regímenes". */
-async function mountOnMealPlansTab(): Promise<VueWrapper> {
-  const wrapper = mount(Settings, MOUNT_OPTS)
+async function mountEditor() {
+  const w = mount(MealPlansEditor)
   await flushPromises()
   await flushPromises()
-  const tab = wrapper.findAll('button').find((b) => b.text().trim() === 'Regímenes')
-  expect(tab, 'la pestaña Regímenes tiene que existir').toBeTruthy()
-  await tab!.trigger('click')
-  await flushPromises()
-  await flushPromises()
-  return wrapper
+  return w
 }
 
 beforeEach(() => {
@@ -125,29 +56,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
-  it('la pestaña "Regímenes" existe en Configuración', async () => {
-    const w = mount(Settings, MOUNT_OPTS)
-    await flushPromises()
-    await flushPromises()
-    const tab = w.findAll('button').find((b) => b.text().trim() === 'Regímenes')
-    expect(tab).toBeTruthy()
-  })
-
+describe('MealPlansEditor — CRUD de regímenes', () => {
   it('con lista vacía se ve el estado vacío y el botón "+ Agregar régimen"', async () => {
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
     expect(mealPlanListMock).toHaveBeenCalledTimes(1)
     expect(w.text()).toContain('Todavía no hay regímenes')
     const add = w.findAll('[data-testid="meal-plan-add"]')
     expect(add.length).toBeGreaterThan(0)
     expect(add[0]!.text()).toBe('+ Agregar régimen')
     expect(w.findAll('[data-testid="meal-plan-row"]')).toHaveLength(0)
-    // Texto explicativo pedido por el requisito.
-    expect(w.text()).toContain('Los regímenes que ofrece el hotel')
   })
 
   it('completar el formulario y guardar llama MealPlansService.create con el payload completo', async () => {
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
     await w.find('[data-testid="meal-plan-add"]').trigger('click')
     await flushPromises()
 
@@ -178,7 +99,7 @@ describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
   })
 
   it('guardar con nombre vacío no llama a create', async () => {
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
     await w.find('[data-testid="meal-plan-add"]').trigger('click')
     await flushPromises()
     await w.find('[data-testid="meal-plan-save"]').trigger('submit')
@@ -191,7 +112,7 @@ describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
     mealPlanListMock.mockResolvedValue([{ ...ROW }])
     const confirmSpy = vi.fn(() => true)
     vi.stubGlobal('confirm', confirmSpy)
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
 
     const rows = w.findAll('[data-testid="meal-plan-row"]')
     expect(rows).toHaveLength(1)
@@ -211,7 +132,7 @@ describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
   it('eliminar con confirm → false NO llama remove', async () => {
     mealPlanListMock.mockResolvedValue([{ ...ROW }])
     vi.stubGlobal('confirm', vi.fn(() => false))
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
     await w.find('[data-testid="meal-plan-delete"]').trigger('click')
     await flushPromises()
     expect(mealPlanRemoveMock).not.toHaveBeenCalled()
@@ -219,7 +140,7 @@ describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
 
   it('cambiar el checkbox activo llama update(id, {active:false})', async () => {
     mealPlanListMock.mockResolvedValue([{ ...ROW }])
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
 
     const active = w.find('[data-testid="meal-plan-active"]')
     expect((active.element as HTMLInputElement).checked).toBe(true)
@@ -233,7 +154,7 @@ describe('#360 — Configuración → Regímenes (lista CRUD)', () => {
 
   it('Editar abre el formulario con los datos de la fila y guardar llama update(id, payload)', async () => {
     mealPlanListMock.mockResolvedValue([{ ...ROW }])
-    const w = await mountOnMealPlansTab()
+    const w = await mountEditor()
     await w.find('[data-testid="meal-plan-edit"]').trigger('click')
     await flushPromises()
 
