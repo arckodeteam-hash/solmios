@@ -56,6 +56,7 @@ export interface TestConnectionResult {
   ok: boolean
   message: string
   accountName?: string
+  warnings?: string[]
 }
 
 export const PaymentGatewayService = {

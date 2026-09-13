@@ -470,6 +470,7 @@ async function testConnection(id: string) {
     const r = await PaymentGatewayService.test(id)
     if (r.ok) toast.success(r.message)
     else toast.error(r.message)
+    for (const w of r.warnings ?? []) toast.warning(w)
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo probar la conexión')
   } finally {

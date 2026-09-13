@@ -306,6 +306,21 @@ export class StripeGateway implements RefundableGateway {
     }
   }
 
+  /**
+   * #308: lista los webhook endpoints de la cuenta para que "Probar conexión" avise qué eventos
+   * faltan tildar en el Dashboard (un rechazo sin `payment_intent.payment_failed` no deja fila
+   * 'failed'). Sin try/catch a propósito: el caller decide si es best-effort.
+   */
+  async listWebhookEndpoints(): Promise<Array<{ id: string; url: string; status: string; enabledEvents: string[] }>> {
+    const res = await this.stripe.webhookEndpoints.list({ limit: 100 })
+    return (res.data || []).map((w: any) => ({
+      id: String(w?.id ?? ''),
+      url: String(w?.url ?? ''),
+      status: String(w?.status ?? ''),
+      enabledEvents: Array.isArray(w?.enabled_events) ? w.enabled_events.map(String) : [],
+    }))
+  }
+
   /** Consulta puntual de una sesión (reconciliación / fallback si el webhook no llegó). */
   async getSession(sessionId: string): Promise<Stripe.Checkout.Session | null> {
     try {
