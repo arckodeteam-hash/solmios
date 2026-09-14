@@ -230,6 +230,31 @@ async function cargarLista() {
   }
 }
 
+/**
+ * Recargas SIN skeletons, para después de una acción propia (enviar / tomar / soltar).
+ *
+ * Los skeletons de `cargarLista`/`abrir` están para la carga INICIAL; reutilizarlos después
+ * de cada respuesta hace que los dos paneles parpadeen enteros y se siente como si la página
+ * se refrescara sola. Acá los datos ya están en pantalla: se pisan sin apagar nada.
+ */
+async function recargarListaSilenciosa() {
+  try {
+    const r = await AiReceptionistService.inbox()
+    conversaciones.value = r.data || []
+  } catch {
+    // El próximo sondeo reintenta; un toast acá sería más ruido que el problema.
+  }
+}
+
+async function recargarHiloSilencioso() {
+  if (!abiertaId.value) return
+  try {
+    hilo.value = await AiReceptionistService.inboxConversation(abiertaId.value)
+  } catch {
+    // Ídem: el sondeo de 20 s vuelve a intentar.
+  }
+}
+
 async function cargarNombres() {
   try {
     const r = await TeamService.list()
@@ -262,8 +287,8 @@ async function tomar() {
   try {
     await AiReceptionistService.takeConversation(hilo.value.id)
     toast.success('Estás atendiendo esta conversación', 'El asistente automático no va a responder')
-    await abrir(hilo.value.id)
-    await cargarLista()
+    await recargarHiloSilencioso()
+    await recargarListaSilenciosa()
   } catch (e: any) {
     toast.error('No se pudo tomar', e?.message)
   } finally {
@@ -277,8 +302,8 @@ async function soltar() {
   try {
     await AiReceptionistService.releaseConversation(hilo.value.id)
     toast.success('El asistente vuelve a responder esta conversación')
-    await abrir(hilo.value.id)
-    await cargarLista()
+    await recargarHiloSilencioso()
+    await recargarListaSilenciosa()
   } catch (e: any) {
     toast.error('No se pudo devolver', e?.message)
   } finally {
@@ -292,8 +317,8 @@ async function responder() {
   try {
     await AiReceptionistService.replyConversation(hilo.value.id, respuesta.value.trim())
     respuesta.value = ''
-    await abrir(hilo.value.id)
-    await cargarLista()
+    await recargarHiloSilencioso()
+    await recargarListaSilenciosa()
   } catch (e: any) {
     toast.error('No se pudo enviar', e?.message || 'Revisá la conexión de WhatsApp')
   } finally {
