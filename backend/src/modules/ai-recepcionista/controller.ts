@@ -6,6 +6,7 @@ import { redactWhatsappConfig } from './usecases/whatsapp-config'
 import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
 import { resolverCredencialesApp, resolverTokenVerificacionWebhook } from '../../infrastructure/meta-app-config'
 import { resolverHotelDelEvento, resolverHotelDeVerificacion } from './usecases/webhook-routing'
+import { enviarRespuestaDelBot } from './usecases/bot-whatsapp-reply'
 
 export class AiRecepcionistaController {
   constructor(
@@ -362,7 +363,23 @@ export class AiRecepcionistaController {
 
         // Si una persona del hotel tomó la conversación, el bot NO responde: el huésped recibiría
         // dos respuestas distintas al mismo tiempo y el hotel quedaría como incoherente.
-        if (!silenciado) await this.service.processIncomingMessage(conv.id, text, hotelDueno)
+        if (!silenciado) {
+          const respuesta = await this.service.processIncomingMessage(conv.id, text, hotelDueno)
+          // La vía Meta era la única que no enviaba la respuesta: el bot contestaba dentro del
+          // panel y al teléfono del huésped no llegaba nada (la legacy QR sí mandaba, ver
+          // whatsapp-sessions.ts). El envío es blando: si falla, ya se logueó y el mensaje del
+          // huésped quedó registrado — el webhook igual responde 200.
+          if (respuesta?.text) {
+            // Por el mismo puerto que la bandeja (connector ai-recepcionista-whatsapp), sin
+            // pasar por `responderConversacion`: ese marca la conversación como atendida por
+            // una persona y silenciaría al bot.
+            const ports = this.service.inboxPorts
+            await enviarRespuestaDelBot(
+              { whatsapp: ports.whatsapp, registrarEnvio: ports.registrarEnvio, logger: this.logger },
+              { conversationId: conv.id, hotelId: hotelDueno, phone: from, text: respuesta.text },
+            )
+          }
+        }
       }
 
       return { status: 200, body: { status: 'processed' } }
