@@ -98,7 +98,7 @@
           message="Elegí una de la lista para ver el hilo y responder." />
 
         <div v-else class="flex flex-col gap-4">
-          <div class="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+          <div ref="hiloScroll" data-testid="hilo-scroll" class="max-h-[420px] space-y-3 overflow-y-auto pr-1">
             <div v-for="m in hilo.mensajes" :key="m.id" class="flex"
               :class="m.sender === 'guest' ? 'justify-start' : 'justify-end'">
               <div class="max-w-[80%] rounded-2xl px-4 py-2.5"
@@ -153,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { AiReceptionistService } from '@/services/AiReceptionist.service'
@@ -268,10 +268,32 @@ async function recargarListaSilenciosa() {
   }
 }
 
+/**
+ * El hilo es una caja con scroll propio: si nadie la baja, queda donde estaba y el último mensaje
+ * (el que importa) queda fuera de la vista. Como en cualquier chat, se baja al final al abrir, al
+ * enviar y al llegar algo nuevo.
+ */
+const hiloScroll = ref<HTMLElement | null>(null)
+/** Margen para considerar que la persona "está al final" aunque le falten unos píxeles. */
+const CERCA_DEL_FINAL_PX = 120
+
+function estaCercaDelFinal(): boolean {
+  const el = hiloScroll.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= CERCA_DEL_FINAL_PX
+}
+
+async function bajarAlFinal() {
+  await nextTick()
+  const el = hiloScroll.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
 async function recargarHiloSilencioso() {
   if (!abiertaId.value) return
   try {
     hilo.value = await AiReceptionistService.inboxConversation(abiertaId.value)
+    await bajarAlFinal()
   } catch {
     // Ídem: el sondeo de 20 s vuelve a intentar.
   }
@@ -310,6 +332,8 @@ async function abrir(id: string) {
   } finally {
     cargandoHilo.value = false
   }
+  // Después de apagar el skeleton: recién ahí existe la caja del hilo en el DOM.
+  await bajarAlFinal()
 }
 
 async function tomar() {
@@ -379,7 +403,12 @@ async function sondear() {
     if (abiertaId.value) {
       const t = await AiReceptionistService.inboxConversation(abiertaId.value)
       // Solo se pisa si llegó algo nuevo, para no interrumpir lo que se está escribiendo.
-      if (t.mensajes.length !== (hilo.value?.mensajes.length ?? 0)) hilo.value = t
+      if (t.mensajes.length !== (hilo.value?.mensajes.length ?? 0)) {
+        // Si subió a leer algo viejo no se lo arrastra al final; si estaba abajo, sigue la charla.
+        const seguir = estaCercaDelFinal()
+        hilo.value = t
+        if (seguir) await bajarAlFinal()
+      }
     }
   } catch {
     // Silencioso: el próximo ciclo reintenta. Un toast cada 20 s sería peor que el problema.
