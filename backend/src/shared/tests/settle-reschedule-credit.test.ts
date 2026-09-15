@@ -48,6 +48,18 @@ describe('devolver', () => {
     expect(calls.cashRefund).toHaveLength(0)
   })
 
+  // Fila REAL de producción (2026-09-15): el link de pago del panel y el motor web asientan el cobro de
+  // Stripe con `method: 'link'`, no 'card'. Con la regla vieja (`method === 'card'`) esa plata se
+  // "devolvía" por caja y la tarjeta del huésped nunca recibía el reembolso.
+  it('si pagó por link de Stripe (method link, con pi_), vuelve a la tarjeta', async () => {
+    const linkCharge: CreditPaymentRow = { id: 'p-link', type: 'charge', status: 'completed', method: 'link', amount: 210, stripePaymentId: 'pi_3UG3jKAmbL9' }
+    const { ports, calls } = makePorts([linkCharge])
+    const out = await settleRescheduleCredit(ports, PARAMS)
+    expect(out).toMatchObject({ target: 'card', applied: true })
+    expect(calls.refundCard).toEqual([{ paymentId: 'p-link', amount: 11.7 }])
+    expect(calls.cashRefund).toHaveLength(0)
+  })
+
   it('una tarjeta pasada por el POS NO se intenta reembolsar por Stripe: sale por caja', async () => {
     // El cobro POS se registra como pago manual y Stripe no lo conoce; intentarlo falla feo.
     const { ports, calls } = makePorts([posCard])
