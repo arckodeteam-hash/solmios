@@ -440,7 +440,7 @@ export function explicarErrorDeEnvio(err: unknown): string {
     // Token vencido o revocado: Meta lo describe como "Authentication Error", que no le dice
     // nada a quien está atendiendo. La salida es reconectar, no reintentar.
     case 190:
-      return 'La conexión de WhatsApp del hotel quedó vencida (el permiso que dio Meta expiró). Hay que reconectar WhatsApp desde la configuración del recepcionista.'
+      return 'La conexión de WhatsApp del hotel quedó vencida (el permiso que dio Meta expiró). Hay que reconectar WhatsApp desde Integraciones → WhatsApp.'
     case 130429:
       return 'Se alcanzó el límite de mensajes por hora de la cuenta. Probá más tarde.'
     default:

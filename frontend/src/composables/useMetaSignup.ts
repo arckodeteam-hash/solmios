@@ -60,6 +60,16 @@ function cargarSdk(): Promise<void> {
 }
 
 /**
+ * Precarga el SDK en la pantalla de conexión, antes del clic, para que `FB.login` no espere la red.
+ * Sigue siendo carga bajo demanda: solo corre donde está la tarjeta de WhatsApp, no en todo el panel.
+ */
+export function precargarSdkDeMeta(): void {
+  cargarSdk().catch(() => {
+    // Si falla acá, el clic lo vuelve a intentar y muestra el motivo.
+  })
+}
+
+/**
  * Escucha el evento que Meta emite DENTRO del flujo con la cuenta y el número elegidos.
  *
  * Estos dos ids no vienen en la respuesta del login: llegan por `postMessage` mientras el usuario
@@ -92,12 +102,17 @@ function escucharDatosDeLaCuenta(): { leer: () => { wabaId: string; phoneNumberI
  * Abre la ventana de Meta y devuelve lo que hace falta para conectar.
  * `null` cuando la persona la cerró sin terminar: no es un error, es una decisión.
  */
-export async function abrirVentanaDeMeta(): Promise<DatosDeConexion | null> {
-  await cargarSdk()
+export async function abrirVentanaDeMeta(opts: { signal?: AbortSignal } = {}): Promise<DatosDeConexion | null> {
+  // Con el SDK ya cargado, `FB.login` sale en el mismo tick del clic. Si antes hubiera que esperar
+  // la descarga del script, el navegador puede dar el clic por vencido y bloquear la ventana
+  // emergente: entonces Meta nunca llama al callback y el botón quedaba "Conectando…" para siempre.
+  if (!window.FB) await cargarSdk()
   const escucha = escucharDatosDeLaCuenta()
 
   try {
     const respuesta = await new Promise<any>((resolve) => {
+      // Cancelar desde el panel: cubre la ventana bloqueada o perdida detrás de otra, que no avisan.
+      opts.signal?.addEventListener('abort', () => resolve(null), { once: true })
       window.FB.login(resolve, {
         config_id: CONFIG_ID,
         response_type: 'code',
