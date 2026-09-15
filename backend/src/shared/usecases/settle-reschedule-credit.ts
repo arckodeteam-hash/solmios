@@ -80,13 +80,22 @@ export interface RescheduleCreditPorts {
   hasInvoice(hotelId: string, reservationId: string): Promise<boolean>
 }
 
-/** El cobro que se puede devolver por Stripe: entró con tarjeta, está cobrado y tiene cargo real. */
+/**
+ * El cobro que se puede devolver por Stripe: está cobrado y tiene un cargo REAL en la pasarela.
+ *
+ * El discriminante es `stripePaymentId`, NO `method`. Hasta el 2026-09-15 se exigía además
+ * `method === 'card'`, pero los dos flujos de Stripe que existen asientan `method: 'link'` (link de
+ * pago del panel, `payment-requests/usecases/payment-port.ts`; motor web,
+ * `shared/usecases/post-booking-payment.ts`). Verificado en producción con un pago de prueba: fila
+ * `method: 'link'` con `pi_…`. Resultado: toda devolución de un pago por Stripe salía por caja y la
+ * tarjeta del huésped nunca recibía el reembolso. Una tarjeta pasada por el POS no tiene
+ * `stripePaymentId`, así que sigue saliendo por caja.
+ */
 function refundableCard(rows: readonly CreditPaymentRow[]): CreditPaymentRow | null {
   const candidates = rows.filter((p) =>
     String(p?.status ?? '') === 'completed' &&
     String(p?.type ?? '') !== 'refund' &&
-    String(p?.method ?? '') === 'card' &&
-    !!p?.stripePaymentId &&
+    !!String(p?.stripePaymentId ?? '').trim() &&
     Number(p?.amount ?? 0) > 0)
   // El más grande primero: un reembolso parcial tiene que caber dentro del cobro elegido.
   return candidates.sort((a, b) => Number(b.amount ?? 0) - Number(a.amount ?? 0))[0] ?? null
