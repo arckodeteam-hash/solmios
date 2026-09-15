@@ -21,7 +21,9 @@
           Los mensajes no se van a enviar hasta que alguien con acceso a la cuenta de Meta del hotel la vuelva a conectar.
         </p>
       </div>
-      <router-link to="/panel/ia/recepcionista/config"
+      <!-- A Integraciones → WhatsApp: ahí está la conexión oficial de Meta. /panel/ia/recepcionista/config
+           es la vinculación vieja por QR, y su "Reconectar" no arregla un token de Meta vencido. -->
+      <router-link to="/panel/integraciones?tab=whatsapp"
         class="rounded-full bg-navy px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-navy-light">
         Reconectar WhatsApp
       </router-link>

@@ -91,6 +91,21 @@
         class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:bg-navy-light disabled:opacity-50 disabled:cursor-wait">
         {{ ocupado ? 'Conectando…' : conexion?.estado === 'expired' ? 'Reconectar WhatsApp' : conexion?.estado === 'error' ? 'Reintentar conexión' : 'Conectar WhatsApp' }}
       </button>
+
+      <!-- Mientras la ventana de Meta está abierta el botón no puede decir nada útil. Si la ventana
+           quedó detrás o el navegador la bloqueó, sin esto la persona ve "Conectando…" para siempre. -->
+      <div v-if="esperandoMeta" role="status" class="rounded-xl bg-cyan/10 px-4 py-3">
+        <div class="text-xs font-bold text-navy">Se abrió una ventana de Meta para iniciar sesión</div>
+        <p class="mt-1 text-[11px] leading-relaxed text-text-secondary">
+          Completá los pasos en esa ventana. Si no la ves, puede haber quedado detrás de esta, o el
+          navegador la bloqueó: buscá el aviso de ventana emergente bloqueada en la barra de
+          direcciones, permitila y volvé a intentar.
+        </p>
+        <button @click="cancelarConexion"
+          class="mt-2 text-[11px] font-bold text-coral transition-colors hover:underline">
+          Cancelar
+        </button>
+      </div>
     </div>
   </SectionCard>
 
@@ -144,12 +159,15 @@ import { AiReceptionistService } from '@/services/AiReceptionist.service'
 import type { WhatsappConnection } from '@/services/AiReceptionist.service'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
-import { abrirVentanaDeMeta } from '@/composables/useMetaSignup'
+import { abrirVentanaDeMeta, precargarSdkDeMeta } from '@/composables/useMetaSignup'
 
 const toast = useToast()
 const conexion = ref<WhatsappConnection | null>(null)
 const cargando = ref(true)
 const ocupado = ref(false)
+/** La ventana de Meta está abierta (o debería estarlo): se muestra la ayuda y el botón Cancelar. */
+const esperandoMeta = ref(false)
+let cancelacion: AbortController | null = null
 const mostrarAdvertencia = ref(false)
 
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
@@ -219,8 +237,11 @@ function abrirAdvertencia() { mostrarAdvertencia.value = true }
 async function conectar() {
   mostrarAdvertencia.value = false
   ocupado.value = true
+  esperandoMeta.value = true
+  cancelacion = new AbortController()
   try {
-    const datos = await abrirVentanaDeMeta()
+    const datos = await abrirVentanaDeMeta({ signal: cancelacion.signal })
+    esperandoMeta.value = false
     if (!datos) { toast.error('Conexión cancelada', 'Se cerró la ventana de Meta antes de terminar'); return }
     conexion.value = await AiReceptionistService.connectWhatsapp(datos)
     toast.success('WhatsApp conectado', conexion.value?.displayPhoneNumber || undefined)
@@ -229,7 +250,13 @@ async function conectar() {
     await cargar()
   } finally {
     ocupado.value = false
+    esperandoMeta.value = false
+    cancelacion = null
   }
+}
+
+function cancelarConexion() {
+  cancelacion?.abort()
 }
 
 function pedirBaja() {
@@ -241,5 +268,8 @@ function pedirBaja() {
   })
 }
 
-onMounted(cargar)
+onMounted(() => {
+  cargar()
+  precargarSdkDeMeta()
+})
 </script>
