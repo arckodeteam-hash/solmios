@@ -193,24 +193,45 @@ export function appCredentialsFromEnv(): MetaAppCredentials | null {
 }
 
 /**
- * Canjea el código de un solo uso que devuelve la ventana de Meta por el token permanente del
- * negocio del hotel.
+ * Canjea el código de un solo uso que devuelve la ventana de Meta por el token del negocio del
+ * hotel, de larga duración.
  *
  * Este paso EXIGE el `app_secret`, y por eso vive en el servidor: si el navegador pidiera el token
  * directo (`response_type: 'token'`), esa credencial —que puede escribirle a todos los huéspedes del
  * hotel— quedaría en el JavaScript de la página, al alcance de cualquiera con la consola abierta.
  *
  * El código vence en segundos y es de un solo uso: un reintento con el mismo código SIEMPRE falla.
+ *
+ * Son DOS canjes: el código devuelve un token de sesión que vive un par de horas, y hay que
+ * canjearlo por el de larga duración (`grant_type=fb_exchange_token`). Guardar el primero deja al
+ * hotel "conectado" y a las horas sin poder enviar ni recibir, sin que nada lo avise (pasó en prod
+ * el 2026-09-14: token vencido 90 min después de conectar). Si el segundo canje falla, la conexión
+ * falla: es mejor un error visible al conectar que una muerte silenciosa después.
  */
 export async function exchangeCode(
   app: MetaAppCredentials,
   code: string,
 ): Promise<{ accessToken: string }> {
+  const corto = await solicitarToken(app, { code })
+  const largo = await solicitarToken(app, { fbExchangeToken: corto })
+  return { accessToken: largo }
+}
+
+/** Llamada a `/oauth/access_token`: canje del código o extensión del token, según los params. */
+async function solicitarToken(
+  app: MetaAppCredentials,
+  params: { code: string } | { fbExchangeToken: string },
+): Promise<string> {
   const version = app.graphVersion || DEFAULT_GRAPH_VERSION
   const url = new URL(`${GRAPH_BASE}/${version}/oauth/access_token`)
   url.searchParams.set('client_id', app.appId)
   url.searchParams.set('client_secret', app.appSecret)
-  url.searchParams.set('code', code)
+  if ('code' in params) {
+    url.searchParams.set('code', params.code)
+  } else {
+    url.searchParams.set('grant_type', 'fb_exchange_token')
+    url.searchParams.set('fb_exchange_token', params.fbExchangeToken)
+  }
 
   let res: Response
   try {
@@ -229,7 +250,7 @@ export async function exchangeCode(
     const msg = e.error_user_msg || e.message || `HTTP ${res.status}`
     throw new WhatsappCloudError(msg, res.ok ? 502 : res.status, e.code, e.error_subcode, e.fbtrace_id)
   }
-  return { accessToken: String(parsed.access_token) }
+  return String(parsed.access_token)
 }
 
 /**
@@ -411,6 +432,10 @@ export function explicarErrorDeEnvio(err: unknown): string {
       return 'Esa plantilla no existe o todavía no está aprobada en la cuenta del hotel.'
     case 131031:
       return 'Meta suspendió la cuenta de WhatsApp del hotel.'
+    // Token vencido o revocado: Meta lo describe como "Authentication Error", que no le dice
+    // nada a quien está atendiendo. La salida es reconectar, no reintentar.
+    case 190:
+      return 'La conexión de WhatsApp del hotel quedó vencida (el permiso que dio Meta expiró). Hay que reconectar WhatsApp desde la configuración del recepcionista.'
     case 130429:
       return 'Se alcanzó el límite de mensajes por hora de la cuenta. Probá más tarde.'
     default:

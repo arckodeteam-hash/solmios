@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'bun:test'
 import {
   createMetaTemplate, getMetaTemplateStatus, deleteMetaTemplate, WhatsappCloudError,
   exchangeCode, subscribeApp, unsubscribeApp, registerPhoneNumber, getPhoneNumber, getWabaInfo,
-  appCredentialsFromEnv, explicarErrorDeConexion,
+  appCredentialsFromEnv, explicarErrorDeConexion, explicarErrorDeEnvio,
 } from './whatsapp-cloud-client'
 
 const CREDS = { wabaId: 'waba1', accessToken: 'tok1' }
@@ -140,12 +140,34 @@ describe('deleteMetaTemplate', () => {
 const APP = { appId: '123', appSecret: 'secreto' }
 
 describe('exchangeCode', () => {
-  it('canjea el código por el token permanente del hotel', async () => {
-    const calls = mockFetch(() => ok({ access_token: 'TOKEN-PERMANENTE' }))
+  // El código devuelve un token de sesión de ~2 h; el segundo canje lo transforma en el de larga
+  // duración. Sin ese paso el hotel queda "conectado" y muere a las horas sin aviso (prod 2026-09-14).
+  it('canjea el código y después lo extiende por el token de larga duración', async () => {
+    const calls = mockFetch((url) => url.includes('grant_type=fb_exchange_token')
+      ? ok({ access_token: 'TOKEN-LARGO', expires_in: 5184000 })
+      : ok({ access_token: 'TOKEN-CORTO' }))
     const r = await exchangeCode(APP, 'AQB-codigo')
-    expect(r.accessToken).toBe('TOKEN-PERMANENTE')
-    expect(calls[0].url).toContain('/oauth/access_token')
+    expect(r.accessToken).toBe('TOKEN-LARGO')
+    expect(calls.length).toBe(2)
     expect(calls[0].url).toContain('code=AQB-codigo')
+    expect(calls[1].url).toContain('grant_type=fb_exchange_token')
+    expect(calls[1].url).toContain('fb_exchange_token=TOKEN-CORTO')
+  })
+
+  // Un hotel "conectado" con el token de sesión es exactamente el bug: se ve verde y a las horas
+  // deja de enviar. Si Meta no entrega el token largo, la conexión tiene que fallar AHORA.
+  it('si la extensión a token largo falla, no devuelve el corto', async () => {
+    const calls = mockFetch((url) => url.includes('grant_type=fb_exchange_token')
+      ? fail(400, { message: 'failed to exchange', code: 190 })
+      : ok({ access_token: 'TOKEN-CORTO' }))
+    try {
+      await exchangeCode(APP, 'AQB-codigo')
+      throw new Error('debería haber fallado')
+    } catch (e) {
+      expect(e).toBeInstanceOf(WhatsappCloudError)
+      expect((e as WhatsappCloudError).message).toBe('failed to exchange')
+      expect(calls.length).toBe(2)
+    }
   })
 
   // Meta a veces responde 200 con un cuerpo sin token. Tratarlo como éxito dejaría al hotel
@@ -168,6 +190,15 @@ describe('exchangeCode', () => {
     } catch (e) {
       expect((e as WhatsappCloudError).httpStatus).toBe(503)
     }
+  })
+})
+
+describe('explicarErrorDeEnvio', () => {
+  // Meta llama "Authentication Error" a un token vencido: crudo no le dice nada a un recepcionista
+  // en mitad de una charla con un huésped. La salida es reconectar, no reintentar.
+  it('un token vencido (código 190) explica que hay que reconectar', async () => {
+    const msg = explicarErrorDeEnvio(new WhatsappCloudError('Authentication Error', 401, 190))
+    expect(msg).toContain('reconectar')
   })
 })
 
