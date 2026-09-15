@@ -173,12 +173,12 @@
                   <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-coral"></span>Rechazada
                 </span>
                 <!-- REQ-RWP-04 — en <768px la columna "Pago" se oculta y el badge va acá, debajo del estado. -->
-                <span data-testid="reservation-payment-badge" class="md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
+                <span data-testid="reservation-payment-badge" class="md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="reservationPaymentBadge(r).cls">{{ reservationPaymentBadge(r).label }}</span>
               </div>
             </td>
             <!-- REQ-RWP-04 — estado real de cobro (`paymentState` del backend, desde `payments`). -->
             <td class="px-4 py-5 hidden md:table-cell">
-              <span data-testid="reservation-payment-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
+              <span data-testid="reservation-payment-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="reservationPaymentBadge(r).cls">{{ reservationPaymentBadge(r).label }}</span>
             </td>
             <td class="px-4 py-5">
               <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="srcClass(r.source)">
@@ -313,7 +313,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
-import { paymentStateBadge } from '@/utils/payment-state'
+import { reservationPaymentBadge } from '@/utils/payment-state'
 import { effectiveMealPlan, hasMealPlan, mealPlanLabel, MEAL_PLAN_LABELS } from '@/utils/meal-plans'
 import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
 import Icon from '@/components/ui/Icon.vue'
@@ -723,7 +723,7 @@ function exportCSV() {
   const head = ['Huésped', 'Email', 'Hab', 'CheckIn', 'CheckOut', 'Noches', 'Estado', 'Pago', 'Canal', 'Total']
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const lines = [head.join(','), ...filtered.value.map((r: any) =>
-    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, paymentStateBadge(r.paymentState).label, r.source, r.total].map(esc).join(','),
+    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, reservationPaymentBadge(r).label, r.source, r.total].map(esc).join(','),
   )]
   const csv = '﻿' + lines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })

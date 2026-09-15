@@ -16,3 +16,34 @@ export function paymentStateBadge(state?: string | null): { label: string; cls: 
   }
   return m[state || ''] || { label: '—', cls: 'bg-gray-100 text-gray-500' }
 }
+
+/** Lo mínimo de una reserva para decidir el badge de pago. */
+export interface PaymentBadgeReservation {
+  status?: string | null
+  paymentState?: string | null
+  cancellationFee?: number | null
+  refundAmount?: number | null
+  refundStatus?: string | null
+}
+
+/**
+ * Badge de pago de una reserva, con el caso CANCELADA resuelto.
+ *
+ * `paymentState` sólo conoce pendiente/parcial/pagada, y en una cancelada lo cobrable es la
+ * penalidad: "0 cobrado de 0 a cobrar" sale `pending`. El listado de producción mostraba
+ * "Cancelada · Pendiente" en rojo en 11 de 13 canceladas del hotel demo (verificado 2026-09-15),
+ * incluso las que nunca se cobraron o ya se devolvieron. En una cancelada lo que importa es qué
+ * pasa con la plata:
+ *   · hay dinero para devolver y no se devolvió → "A devolver"
+ *   · ya se devolvió → "Devuelto"
+ *   · el huésped debe la penalidad y no la pagó → "Penalidad pendiente"
+ *   · nada que cobrar ni devolver → "Sin saldo"
+ */
+export function reservationPaymentBadge(r: PaymentBadgeReservation | null | undefined): { label: string; cls: string } {
+  if (r?.status !== 'cancelled') return paymentStateBadge(r?.paymentState)
+  const refund = Number(r.refundAmount) || 0
+  if (refund > 0 && r.refundStatus === 'done') return { label: 'Devuelto', cls: 'bg-purple/10 text-purple' }
+  if (refund > 0) return { label: 'A devolver', cls: 'bg-gold/10 text-gold' }
+  if ((Number(r.cancellationFee) || 0) > 0 && r.paymentState !== 'paid') return { label: 'Penalidad pendiente', cls: 'bg-coral/10 text-coral' }
+  return { label: 'Sin saldo', cls: 'bg-gray-100 text-gray-500' }
+}

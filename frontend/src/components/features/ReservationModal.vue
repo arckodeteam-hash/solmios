@@ -21,7 +21,7 @@ import { RoomService } from '@/services/Room.service'
 import { TeamService, type TeamMember } from '@/services/Team.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
-import { paymentStateBadge } from '@/utils/payment-state'
+import { reservationPaymentBadge } from '@/utils/payment-state'
 import { effectiveMealPlan, mealPlanLabel } from '@/utils/meal-plans'
 import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
@@ -1583,7 +1583,7 @@ function facturar() {
                 <h4 class="text-sm font-black text-navy">Importe y Pago</h4>
                 <!-- Requerimiento 14 — estado único, comprensible, sourced del backend (nunca de
                      `deposit` a secas: ver el comentario de `paymentStateBadge` en el script). -->
-                <span data-testid="payment-state-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full" :class="paymentStateBadge(d.paymentState).cls">{{ paymentStateBadge(d.paymentState).label }}</span>
+                <span data-testid="payment-state-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full" :class="reservationPaymentBadge(d).cls">{{ reservationPaymentBadge(d).label }}</span>
               </div>
               <!-- REQ-RWP-02 — aviso ámbar si el último intento en la pasarela no terminó en cobro. -->
               <p v-if="lastAttemptFailure" class="mb-2 text-[11px] leading-tight text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="failed-payment-warning">
