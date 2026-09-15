@@ -564,6 +564,9 @@ async function load() {
         paidAmount: r.paidAmount ?? 0, groupId: r.groupId, createdAt: r.createdAt,
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
+        // Badge de pago de una CANCELADA (`reservationPaymentBadge`): sin estos tres campos la fila
+        // decía "Sin saldo" también en una reserva con dinero por devolver o ya devuelta (visto en prod).
+        cancellationFee: r.cancellationFee ?? 0, refundAmount: r.refundAmount ?? 0, refundStatus: r.refundStatus ?? null,
         // MR-03 (#268) — régimen: `regime` (editable) manda, `mealPlan` (snapshot web) cubre.
         // El badge solo se muestra cuando hay algo más que alojamiento.
         mealPlan: r.mealPlan ?? null, regime: r.regime ?? null,
