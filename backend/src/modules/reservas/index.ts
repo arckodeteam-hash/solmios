@@ -47,7 +47,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'sendCheckinLinkEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'listTypeAvailability', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'sendCheckinLinkEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'listTypeAvailability', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund', 'cancellationRefund'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned', 'onRoomVacatedMidStay'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
@@ -135,6 +135,8 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       router.post('/api/reservas/:id/cancel', guard('reservations', 'edit'), (req) => controller.cancel(req))
       // #272 — reintenta el reembolso Stripe de una cancelación web que quedó `failed` (puerto del connector bookingengine-refunds).
       router.post('/api/reservas/:id/retry-refund', guard('reservations', 'edit'), (req) => controller.retryRefund(req))
+      // Devolución de lo que dejó a favor una cancelación del panel (Stripe si entró por tarjeta, si no caja). Mueve plata → billing:create, igual que mark-paid.
+      router.post('/api/reservas/:id/cancellation-refund', guard('billing', 'create'), (req) => controller.cancellationRefund(req))
 
       // ── Approve (Tarea 3.4, corrección 2026-08-25): reserva pública pendiente de
       //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──

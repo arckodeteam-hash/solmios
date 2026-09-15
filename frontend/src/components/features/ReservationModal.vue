@@ -442,7 +442,8 @@ async function load(opts?: { silent?: boolean }) {
 function auditLabel(action: string): string {
   const m: Record<string, string> = {
     create: 'Reserva creada', update: 'Actualizada', delete: 'Eliminada',
-    checkin: 'Check-in', checkout: 'Check-out', no_show: 'No-show',
+    checkin: 'Check-in', checkout: 'Check-out', no_show: 'No se presentó',
+    cancel: 'Cancelada', refund: 'Dinero devuelto al huésped', reschedule: 'Reprogramada',
   }
   return m[action] || action
 }
@@ -720,7 +721,7 @@ function moneySecondary(n: number): string {
   return `${secondaryCurrency.value === 'DOP' ? 'RD$' : secondaryCurrency.value + ' '}${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 function stLabel(s?: string): string {
-  const m: Record<string, string> = { pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada', no_show: 'No-show' }
+  const m: Record<string, string> = { pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada', no_show: 'No se presentó' }
   return m[s || ''] || s || '—'
 }
 function srcLabel(s?: string): string {
@@ -782,6 +783,12 @@ async function copyProviderRef(ref: string) {
   } catch { toast.error('No se pudo copiar') }
 }
 
+/** Estado de una línea del historial de cobros. Un monto negativo `completed` es una devolución
+ *  (plata que SALIÓ): mostrarlo como "Cobrado" hacía leer la devolución como un ingreso más. */
+function historyStatusLabel(p: { status?: string | null; amount: number }): { label: string; cls: string } {
+  if (p.amount < 0 && p.status === 'completed') return paymentStatusLabel('refunded')
+  return paymentStatusLabel(p.status)
+}
 function paymentStatusLabel(status?: string | null): { label: string; cls: string } {
   const m: Record<string, { label: string; cls: string }> = {
     completed: { label: 'Cobrado', cls: 'bg-teal/10 text-teal' },
@@ -832,6 +839,40 @@ function refundStateBadge(status?: string | null): { label: string; cls: string 
   return m[status || ''] ?? null
 }
 const refundBadge = computed(() => d.value?.status === 'cancelled' ? refundStateBadge(d.value?.refundStatus) : null)
+
+// ── Devolución de una cancelación hecha desde el panel ──
+// La de la web tiene su propio circuito (refundStatus pending/done/failed + "Reintentar"); ésta
+// sólo aparece mientras nadie devolvió nada todavía (`none`/vacío). El monto final lo decide el
+// servidor: si ya se devolvió algo desde Finanzas, lo descuenta.
+const refundOwed = computed(() => Number(d.value?.refundAmount) || 0)
+const canRefundCancellation = computed(() => d.value?.status === 'cancelled'
+  && refundOwed.value > 0
+  && ['', 'none'].includes(String(d.value?.refundStatus ?? ''))
+  && can('billing', 'create'))
+const refundConfirming = ref(false)
+const cancelledAtLabel = computed(() => {
+  const at = d.value?.cancelledAt ? new Date(d.value.cancelledAt) : null
+  return at && !isNaN(at.getTime()) ? at.toLocaleString('es', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+})
+
+async function refundCancellation() {
+  if (!d.value || !canRefundCancellation.value) return
+  saving.value = true
+  try {
+    const res = await ReservationService.refundCancellation(d.value.id)
+    const via = res.target === 'card' ? 'a la tarjeta' : 'por caja'
+    toast.success(`Devueltos ${money(res.amount)} ${via}`, res.message || undefined)
+    refundConfirming.value = false
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo devolver el dinero')
+    refundConfirming.value = false
+    await load({ silent: true })
+  } finally {
+    saving.value = false
+  }
+}
 
 async function retryRefund() {
   if (!d.value) return
@@ -1579,6 +1620,30 @@ function facturar() {
                   </span>
                 </div>
                 <div v-if="credit > 0" data-testid="reservation-credit" class="flex justify-between"><span class="font-bold text-teal">A favor del huésped</span><span class="font-black text-teal">{{ money(credit) }}</span></div>
+                <!-- Cancelación: qué pasó con la plata. Antes una reserva cancelada seguía viéndose
+                     "Pagada" sin decir cuánto retuvo el hotel ni cuánto hay que devolver. -->
+                <div v-if="d.status === 'cancelled'" data-testid="cancellation-summary" class="mt-1 space-y-1 rounded-lg border border-coral/30 bg-coral/5 px-2.5 py-2">
+                  <div class="flex justify-between gap-2"><span class="font-bold text-coral">Cancelada</span><span class="text-text-muted">{{ cancelledAtLabel }}</span></div>
+                  <div v-if="d.cancellationReason" class="flex justify-between gap-2"><span class="text-text-muted">Motivo</span><span class="font-bold text-navy text-right">{{ d.cancellationReason }}</span></div>
+                  <div class="flex justify-between gap-2"><span class="text-text-muted">Penalidad retenida</span><span data-testid="cancellation-fee" class="font-bold text-navy">{{ money(Number(d.cancellationFee) || 0) }}</span></div>
+                  <div class="flex justify-between gap-2">
+                    <span class="text-text-muted">{{ d.refundStatus === 'done' ? 'Devuelto al huésped' : 'A devolver al huésped' }}</span>
+                    <span data-testid="cancellation-refund-amount" class="font-black" :class="refundOwed > 0 && d.refundStatus !== 'done' ? 'text-coral' : 'text-navy'">{{ money(refundOwed) }}</span>
+                  </div>
+                  <template v-if="canRefundCancellation">
+                    <button v-if="!refundConfirming" data-testid="cancellation-refund-button" @click="refundConfirming = true" :disabled="saving"
+                      class="w-full mt-1 flex items-center justify-center gap-1.5 py-2 bg-coral text-white rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                      Devolver {{ money(refundOwed) }}
+                    </button>
+                    <div v-else data-testid="cancellation-refund-confirm" class="mt-1 space-y-1.5">
+                      <p class="text-[11px] leading-snug text-navy">Si el cobro entró con tarjeta por Stripe se devuelve a esa tarjeta; si no, se registra como salida de la caja del turno y hay que entregarle el dinero al huésped. No se puede deshacer.</p>
+                      <div class="flex gap-2">
+                        <button @click="refundConfirming = false" :disabled="saving" class="flex-1 py-1.5 rounded-lg border border-border text-xs font-bold text-navy cursor-pointer">Volver</button>
+                        <button data-testid="cancellation-refund-confirm-button" @click="refundCancellation" :disabled="saving" class="flex-1 py-1.5 rounded-lg bg-coral text-white text-xs font-black cursor-pointer disabled:opacity-50">{{ saving ? 'Devolviendo…' : 'Sí, devolver' }}</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
                 <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link
                      emitido por menos que el saldo pasaba desapercibido. -->
@@ -1615,7 +1680,7 @@ function facturar() {
                       <span class="text-xs font-black tabular-nums" :class="p.amount < 0 ? 'text-purple' : 'text-teal'">
                         {{ p.amount < 0 ? '−' : '+' }}{{ money(Math.abs(p.amount)) }}
                       </span>
-                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" :class="paymentStatusLabel(p.status).cls">{{ paymentStatusLabel(p.status).label }}</span>
+                      <span data-testid="payment-history-status" class="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" :class="historyStatusLabel(p).cls">{{ historyStatusLabel(p).label }}</span>
                     </div>
                     <div class="flex items-center justify-between gap-2 mt-0.5">
                       <span class="text-[11px] text-text-secondary font-bold">{{ payMethodLabel(p.method) }}</span>

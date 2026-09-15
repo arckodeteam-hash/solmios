@@ -42,6 +42,12 @@ export interface RescheduleCreditParams {
   amount: number
   action: RescheduleCreditAction
   reason?: string
+  /**
+   * Texto del asiento de devolución. Default: "Devolución por cambio de reserva". La devolución de
+   * una CANCELACIÓN (`reservas/usecases/cancellation-refund.ts`) reusa esta misma vía y pasa el suyo:
+   * en el arqueo de caja no puede figurar como un cambio de fechas.
+   */
+  description?: string
 }
 
 export interface RescheduleCreditResult {
@@ -104,7 +110,7 @@ export async function settleRescheduleCredit(
     }
   }
 
-  const desc = `Devolución por cambio de reserva${params.reason ? ` — ${params.reason}` : ''}`
+  const desc = `${params.description ?? 'Devolución por cambio de reserva'}${params.reason ? ` — ${params.reason}` : ''}`
   const rows = await ports.paymentsOf(params.hotelId, params.reservationId).catch(() => [] as CreditPaymentRow[])
   const card = refundableCard(rows)
 

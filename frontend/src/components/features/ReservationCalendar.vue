@@ -1458,7 +1458,7 @@ function gRes(rid: any, ds: string) {
   const ch = (r.channel || 'direct').toLowerCase(); const cc = CH[ch] || { l: r.channel || 'Directa', bg: 'bg-gray-400' }
   const status = r.status || 'pending'
   return {
-    id: r.id, name: r.guestName || 'Guest', ch: cc.l, chKey: ch,
+    id: r.id, name: r.guestName || 'Sin nombre', ch: cc.l, chKey: ch,
     bg: colorMode.value === 'status' ? (ST_COLOR[status] || 'bg-gray-400') : cc.bg,
     amt: r.totalAmount || 0,
     pax: (Number(r.adults) || 0) + (Number(r.children) || 0),

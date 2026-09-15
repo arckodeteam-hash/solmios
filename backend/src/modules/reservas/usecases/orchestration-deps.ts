@@ -38,6 +38,8 @@ export interface ReservasOrchestrationDeps {
   paymentRequestsCeiling?: PaymentRequestsCeilingPort
   /** REQ-RWP-06 (#249) — connectors/reservas-payments.ts: asienta en `payments` un cobro manual. */
   manualPayment?: ManualPaymentPort
+  /** Correo "reserva cancelada" al huésped cuando cancela el personal y marca avisar. Lo inyecta `infrastructure/email-bootstrap.ts` (el EmailService nace después de `system.start()`). */
+  cancellationEmail?: (reservationId: string, hotelId: string) => Promise<unknown>
   /** #271 MR-06 — connectors/reservas-payments.ts: devuelve por Stripe el cobro web de una reserva rechazada. */
   approvalRefund?: ApprovalRefundPort
   /** #271 MR-06 — connectors/reservas-notificaciones.ts: al aprobar, marca leídas las campanitas de la reserva. */

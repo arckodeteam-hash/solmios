@@ -3,7 +3,7 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, TypeAvailabilityQuerySchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, CheckinSchema, RetryRefundSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, TypeAvailabilityQuerySchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, CheckinSchema, RetryRefundSchema, CancellationRefundSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -128,12 +128,18 @@ export class ReservasController {
   // ── CANCEL (F2 plan #627): aplica política de cancelación ──
   async cancel(req: HttpRequest) {
     try {
-      // reason es opcional: si no hay body o está vacío, no se valida ({}).
-      const body = req.body as Record<string, any> | undefined
-      const dto = body && Object.keys(body).length > 0 ? validateSchema(CancelReservationSchema, body) : {}
-      const item = await this.service.cancel(req.params.id, dto as any, req.user as any)
+      // El motivo es OBLIGATORIO (2026-09-15): queda en el historial y explica por qué se retuvo o
+      // devolvió plata. Antes sólo lo exigía el modal y la API cancelaba con motivo vacío. El único
+      // cliente de esta ruta es el panel (la app móvil no cancela reservas; OTA/IA/vencimiento van
+      // por `cancelBySystem`, que no pasa por acá).
+      const dto = validateSchema(CancelReservationSchema, (req.body ?? {}) as Record<string, any>) as { reason?: string; notifyGuest?: boolean }
+      const reason = String(dto.reason ?? '').trim()
+      if (!reason) return { status: 400, body: { error: 'El motivo de la cancelación es obligatorio' } }
+      const item = await this.service.cancel(req.params.id, { ...dto, reason }, req.user as any)
       return { status: 200, body: item }
     } catch (e: any) {
+      // Motivo de más de 500 caracteres: es un error del que llama, no del servidor (antes caía al 500).
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message, fields: e.fields } }
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
       if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
       if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
@@ -192,6 +198,22 @@ export class ReservasController {
     try {
       validateSchema(RetryRefundSchema, req.body ?? {})
       const result = await this.service.retryRefund(req.params.id, req.user as any)
+      return { status: 200, body: result }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
+  // ── CANCELLATION REFUND: devuelve lo que la política de cancelación dejó a favor del huésped ──
+  // Sin campos: el monto sale de la reserva (`refundAmount` menos lo ya devuelto), nunca del cliente.
+  async cancellationRefund(req: HttpRequest) {
+    try {
+      validateSchema(CancellationRefundSchema, req.body ?? {})
+      const result = await this.service.cancellationRefund(req.params.id, req.user as any)
       return { status: 200, body: result }
     } catch (e: any) {
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }

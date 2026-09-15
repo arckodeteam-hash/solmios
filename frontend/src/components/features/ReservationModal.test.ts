@@ -27,6 +27,7 @@ vi.mock('@/services/Reservation.service', () => ({
     issueInvoice: vi.fn(),
     // #272 (MR-07) — POST /reservas/:id/retry-refund cuando el reembolso web quedó `failed`.
     retryRefund: vi.fn(),
+    refundCancellation: vi.fn(),
   },
 }))
 // REQ-FDR-03 (#254) — Imprimir / PDF / Email de la tarjeta "Facturas" (vía useInvoiceActions).
@@ -610,6 +611,61 @@ describe('ReservationModal', () => {
   })
 
   // ── 2. Permisos ────────────────────────────────────────────────────────────────────────────
+  // ── Cancelación desde el panel: resumen de la plata y devolución ─────────────────────────────
+  describe('cancelación del panel: resumen y devolución', () => {
+    const summary = () => document.body.querySelector('[data-testid="cancellation-summary"]')
+    const refundBtn = () => document.body.querySelector<HTMLButtonElement>('[data-testid="cancellation-refund-button"]')
+    const panelCancelled = (over: Partial<ReservationDetail> = {}) => detailFixture({
+      status: 'cancelled', cancelledAt: '2026-09-15T19:34:53Z', cancellationReason: 'Solicitud del huésped',
+      refundAmount: 200, cancellationFee: 200, refundStatus: 'none', ...over,
+    })
+
+    it('muestra motivo, penalidad retenida y monto a devolver', async () => {
+      await open(panelCancelled())
+      const text = summary()?.textContent ?? ''
+      expect(text).toContain('Cancelada')
+      expect(text).toContain('Solicitud del huésped')
+      expect(document.body.querySelector('[data-testid="cancellation-fee"]')?.textContent).toContain('200')
+      expect(document.body.querySelector('[data-testid="cancellation-refund-amount"]')?.textContent).toContain('200')
+    })
+
+    it('devolver pide confirmación, llama al servicio y recarga', async () => {
+      vi.mocked(ReservationService.refundCancellation).mockResolvedValue({ reservationId: 'res-1', amount: 200, target: 'cash', refundPaymentId: 'pay-r', refundStatus: 'done', message: 'Entregale el dinero al huésped: sale de la caja del turno.', needsCreditNote: false })
+      await open(panelCancelled())
+      refundBtn()!.click()
+      await flushPromises()
+      expect(vi.mocked(ReservationService.refundCancellation)).not.toHaveBeenCalled()
+
+      vi.mocked(ReservationService.getById).mockResolvedValue(panelCancelled({ refundStatus: 'done', refundPaymentId: 'pay-r' }))
+      document.body.querySelector<HTMLButtonElement>('[data-testid="cancellation-refund-confirm-button"]')!.click()
+      await flushPromises()
+      await flushPromises()
+
+      expect(vi.mocked(ReservationService.refundCancellation)).toHaveBeenCalledWith('res-1')
+      expect(toastSuccess).toHaveBeenCalled()
+      expect(String(toastSuccess.mock.calls.at(-1)?.[0])).toContain('por caja')
+      expect(refundBtn()).toBeNull()
+    })
+
+    it('ya devuelta: no ofrece el botón y dice "Devuelto al huésped"', async () => {
+      await open(panelCancelled({ refundStatus: 'done' }))
+      expect(refundBtn()).toBeNull()
+      expect(summary()?.textContent).toContain('Devuelto al huésped')
+      expect(summary()?.textContent).not.toContain('A devolver')
+    })
+
+    it('sin dinero a devolver no hay botón', async () => {
+      await open(panelCancelled({ refundAmount: 0 }))
+      expect(summary()).not.toBeNull()
+      expect(refundBtn()).toBeNull()
+    })
+
+    it('sin billing:create no hay botón', async () => {
+      await open(panelCancelled(), ['reservations:view', 'reservations:edit'])
+      expect(refundBtn()).toBeNull()
+    })
+  })
+
   // ── #272 (MR-07) — reembolso web: estado real y reintento ────────────────────────────────
   // Al cancelar desde la web el backend reembolsa en Stripe y persiste `refundStatus`. Si la
   // pasarela falló, el hotel lo reintenta desde el modal; con 'done' no hay nada que reintentar.

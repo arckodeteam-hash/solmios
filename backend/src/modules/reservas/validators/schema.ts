@@ -200,6 +200,9 @@ export const ManualMessageLogSchema: Record<string, ValidationRule> = {
 // ── Cancel (F2 plan #627): aplica política de cancelación. reason opcional ──
 export const CancelReservationSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 500 },
+  // Avisar al huésped por correo. Ausente = no se avisa: un cliente viejo (app móvil) no empieza
+  // a mandar correos que antes no salían.
+  notifyGuest: { type: 'boolean' as const },
 }
 
 // ── Assign room (REQ-HAC-03, #258): POST /api/reservas/:id/assign-room ──
@@ -282,6 +285,10 @@ export const IssueInvoiceSchema: Record<string, ValidationRule> = {
 // existe para que la ruta pase por `validateSchema` como todo POST (regla del módulo); no cambia
 // el comportamiento (un body con claves de más no falla — igual que el resto de los schemas).
 export const RetryRefundSchema: Record<string, ValidationRule> = {}
+
+// ── Devolución de una cancelación del panel: POST /api/reservas/:id/cancellation-refund ──
+// Sin campos, mismo criterio que RetryRefundSchema: el monto lo decide el servidor.
+export const CancellationRefundSchema: Record<string, ValidationRule> = {}
 
 // ── Pre-Checkin (público) ──
 // Nombres de campo alineados con lo que MANDA el form público (pre-checkin/index.vue: `name`,

@@ -464,6 +464,8 @@ export interface CancelPreview {
   canCancel: boolean
   blockedReason: string
   guestName: string
+  /** '' = el huésped no tiene correo: no se ofrece avisarle. */
+  guestEmail?: string
   checkIn: string
   checkOut: string
   /** Horas que faltan para la entrada. Es lo que decide qué tramo de la política aplica. */
@@ -484,6 +486,8 @@ export interface CancelPreview {
 /** Motivo de la cancelación. Obligatorio en la UI (el backend lo acepta vacío por compatibilidad). */
 export interface CancelReservationInput {
   reason?: string
+  /** Mandar el correo "reserva cancelada" al huésped. Ausente = no se avisa. */
+  notifyGuest?: boolean
 }
 
 /**

@@ -21,6 +21,7 @@
 // cancelación del mundo real. Ver tests para los casos cubiertos.
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { Tier, CancellationPolicyDTO } from '../../modules/cancellation/types'
+import { effectiveCheckInTime, hotelTimezone, zonedTimeToUtc } from '../utils/hotel-schedule'
 
 /** Política ya resuelta (lista para computar penalidad). */
 export interface ResolvedPolicy {
@@ -60,6 +61,23 @@ export const PRESET_TIERS: Record<string, Tier[]> = {
   non_refundable: [{ deadlineHours: 0, penaltyPercent: 100, refundable: false }],
 }
 
+/**
+ * Nombre visible (español) de cada preset. `policyId` sigue guardando la clave en inglés
+ * (`strict`, …) para auditoría; lo que ve el recepcionista en el modal de cancelación y en el
+ * snapshot `policyApplied.label` es este texto — antes aparecía "Política aplicada: strict".
+ */
+export const PRESET_LABELS: Record<string, string> = {
+  flexible: 'Flexible',
+  moderate: 'Moderada',
+  strict: 'Estricta',
+  non_refundable: 'No reembolsable',
+}
+
+/** Nombre visible de un preset; una clave desconocida se muestra tal cual (nunca vacío). */
+export function presetLabel(type: string): string {
+  return PRESET_LABELS[type] ?? type
+}
+
 /** Devuelve los tiers del preset pedido (copia profunda). Unknown → flexible. */
 export function presetFromEnum(type: string | undefined | null): Tier[] {
   const tiers = type != null ? PRESET_TIERS[type] : undefined
@@ -96,10 +114,10 @@ export async function resolvePolicy(
   }
   // 3. Preset desde hotels.cancellationType (legacy, antes de tener filas custom).
   if (hotelCancellationType) {
-    return { tiers: presetFromEnum(hotelCancellationType), policyId: hotelCancellationType, source: 'preset', label: hotelCancellationType }
+    return { tiers: presetFromEnum(hotelCancellationType), policyId: hotelCancellationType, source: 'preset', label: presetLabel(hotelCancellationType) }
   }
   // 4. Default flexible (seguro: nunca bloquea una cancelación legítima).
-  return { tiers: presetFromEnum('flexible'), policyId: 'default', source: 'default', label: 'flexible' }
+  return { tiers: presetFromEnum('flexible'), policyId: 'default', source: 'default', label: presetLabel('flexible') }
 }
 
 /**
@@ -122,6 +140,43 @@ export async function hotelCancellationTypeOf(
     const rows = (await hotelRepo.findMany({ id: hotelId } as any)) as any[]
     const type = rows?.[0]?.cancellationType
     return typeof type === 'string' && type !== '' ? type : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Instante REAL de la entrada (ISO UTC): la fecha de llegada a la hora de check-in, en la zona del
+ * hotel. Es contra esto que se miden las "horas antes" de cada tier.
+ *
+ * Hasta el 2026-09-15 los tres llamadores pasaban `reservation.checkIn` ('YYYY-MM-DD') tal cual y
+ * `Date.parse` lo leía como medianoche UTC. En America/Santo_Domingo (UTC-4) con entrada a las 15:00
+ * el corte de cada tier quedaba 19 h antes de lo que dice la política: un huésped que cancelaba 80 h
+ * antes de su entrada caía en el tramo "menos de 72 h" y pagaba la penalidad. Mismo bug que tuvo la
+ * cerradura (`shared/utils/hotel-schedule.ts`), misma solución.
+ *
+ * La hora sale del override de la reserva (early check-in) o del horario del hotel. Fail-soft: si el
+ * hotel no se puede leer se usan los defaults del modelo (15:00, America/Santo_Domingo), nunca
+ * medianoche UTC.
+ */
+export function checkInInstant(
+  reservation: { checkIn?: unknown; checkInTime?: unknown },
+  hotel: { checkIn?: unknown; timezone?: unknown } | null | undefined,
+): string {
+  const date = String(reservation.checkIn ?? '').slice(0, 10)
+  const instant = zonedTimeToUtc(date, effectiveCheckInTime(reservation, hotel), hotelTimezone(hotel))
+  return Number.isFinite(instant.getTime()) ? instant.toISOString() : String(reservation.checkIn ?? '')
+}
+
+/** Fila del hotel para `checkInInstant`. Fail-soft → null (mismo criterio que `hotelCancellationTypeOf`). */
+export async function hotelScheduleOf(
+  hotelRepo: RepositoryAdapter<any> | undefined | null,
+  hotelId: string,
+): Promise<{ checkIn?: unknown; timezone?: unknown } | null> {
+  if (!hotelRepo || !hotelId) return null
+  try {
+    const rows = (await hotelRepo.findMany({ id: hotelId } as any)) as any[]
+    return rows?.[0] ?? null
   } catch {
     return null
   }

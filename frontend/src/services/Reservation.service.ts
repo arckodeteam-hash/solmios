@@ -150,6 +150,18 @@ export interface RetryRefundResult {
   refundedAt?: string
 }
 
+/** Resultado de `POST /api/reservas/:id/cancellation-refund` (espejo de `reservas/usecases/cancellation-refund.ts`). */
+export interface CancellationRefundResult {
+  reservationId: string
+  amount: number
+  /** `card` = devuelto a la tarjeta por Stripe · `cash` = sale de la caja del turno. */
+  target: 'none' | 'card' | 'cash'
+  refundPaymentId: string | null
+  refundStatus: 'done'
+  message: string
+  needsCreditNote: boolean
+}
+
 interface ReservationsResponse {
   data: RawReservation[]
   total: number
@@ -372,6 +384,15 @@ export const ReservationService = {
    */
   async retryRefund(id: string): Promise<RetryRefundResult> {
     return http.post<RetryRefundResult>(`/reservas/${id}/retry-refund`, {})
+  },
+
+  /**
+   * Devuelve lo que una cancelación del panel dejó a favor del huésped. El servidor decide el monto
+   * (lo ya devuelto se descuenta) y la vía: tarjeta por Stripe si el cobro entró así, si no caja.
+   * Permiso `billing:create`.
+   */
+  async refundCancellation(id: string): Promise<CancellationRefundResult> {
+    return http.post<CancellationRefundResult>(`/reservas/${id}/cancellation-refund`, {})
   },
 
   /**

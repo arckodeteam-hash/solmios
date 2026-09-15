@@ -13,7 +13,27 @@ import { NotFoundError } from 'arckode-framework'
 import type { Auth } from 'arckode-framework'
 import { applyCancellation, type CancelCoreDeps } from './cancel-core'
 
-export type CancelDeps = CancelCoreDeps
+/** Entrada del historial de la reserva (`audit_log`, entity `Reservations`, action `cancel`). */
+export interface CancelAuditEntry {
+  hotelId: string
+  userId: string
+  detail: string
+}
+
+export type CancelDeps = CancelCoreDeps & {
+  /**
+   * Deja la cancelación en el historial de la reserva: quién, por qué y con qué montos. Sin esto el
+   * historial mostraba "Reserva creada" / "Actualizada" y nada decía que la reserva se había
+   * cancelado (verificado en el panel el 2026-09-15). Best-effort: si falla, la cancelación ya
+   * persistida no se deshace.
+   */
+  audit?: (entry: CancelAuditEntry) => Promise<unknown> | unknown
+  /**
+   * Correo "reserva cancelada" al huésped (plantilla `reservation_cancelled_guest`). Sólo si el
+   * operador lo pidió (`dto.notifyGuest`). Best-effort: un fallo del correo no deshace nada.
+   */
+  notifyGuest?: (reservationId: string, hotelId: string) => Promise<unknown>
+}
 
 /**
  * Cancela una reserva aplicando la política de cancelación del hotel.
@@ -27,7 +47,7 @@ export type CancelDeps = CancelCoreDeps
 export async function cancelReservation(
   deps: CancelDeps,
   id: string,
-  dto: { reason?: string },
+  dto: { reason?: string; notifyGuest?: boolean },
   currentUser: { id: string; role: string; hotelId?: string },
   auth: Auth,
 ): Promise<any> {
@@ -38,8 +58,37 @@ export async function cancelReservation(
   // obligatorio (regla CLAUDE.md + analyzer textual).
   auth.assertOwnership(item.hotelId, currentUser.hotelId ?? '', currentUser.role, 'super_admin')
 
-  const { reservation, idempotent } = await applyCancellation(deps, item, { reason: dto.reason })
+  const { reservation, penalty, idempotent } = await applyCancellation(deps, item, { reason: dto.reason })
   if (idempotent) return item
   if (!reservation) throw new NotFoundError('Reserva no encontrada')
+
+  try {
+    await deps.audit?.({
+      hotelId: String(item.hotelId),
+      userId: currentUser.id,
+      detail: JSON.stringify({
+        previousStatus: item.status,
+        reason: dto.reason ?? '',
+        cancellationFee: penalty.cancellationFee,
+        refundAmount: penalty.refundAmount,
+        policy: penalty.policyApplied?.label ?? '',
+      }),
+    })
+  } catch (e) {
+    deps.logger.warn('[cancel] no se pudo registrar la cancelación en el historial', {
+      reservationId: id,
+      error: e instanceof Error ? e.message : String(e),
+    })
+  }
+  if (dto.notifyGuest === true && deps.notifyGuest) {
+    try {
+      await deps.notifyGuest(String(item.id), String(item.hotelId))
+    } catch (e) {
+      deps.logger.warn('[cancel] no se pudo avisar al huésped por correo', {
+        reservationId: id,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
   return reservation
 }

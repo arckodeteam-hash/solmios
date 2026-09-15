@@ -854,7 +854,7 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
   const mealPlanLabel = hasMealPlan(mealPlanCode) ? mealPlanLabelOf(mealPlanCode) : null
   return {
     id: r.id as string,
-    guestName: (r.guestName as string) || 'Guest',
+    guestName: (r.guestName as string) || 'Sin nombre',
     guestEmail: (r.guestEmail as string) || '',
     initials: ((r.guestName as string) || 'G').split(' ').map((p: string) => p[0]).slice(0, 2).join(''),
     roomNumber: (r.roomNumber as string) || '—',

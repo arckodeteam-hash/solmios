@@ -24,6 +24,9 @@ describe('historial de cobros en la reserva', () => {
     // Signo y color propio: un reembolso no puede leerse como un ingreso más.
     expect(src).toContain("p.amount < 0 ? '−' : '+'")
     expect(src).toContain("p.amount < 0 ? 'text-purple' : 'text-teal'")
+    // Y el estado dice "Devuelto", no "Cobrado": la línea de una devolución es una salida.
+    expect(src).toContain("if (p.amount < 0 && p.status === 'completed') return paymentStatusLabel('refunded')")
+    expect(src).toContain('historyStatusLabel(p).label')
   })
 
   it('sin movimientos lo dice, no deja el bloque vacío', () => {

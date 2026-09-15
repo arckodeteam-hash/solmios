@@ -28,7 +28,8 @@ import crypto from 'node:crypto'
 import type { Logger, RepositoryAdapter } from 'arckode-framework'
 import type { CancellationPolicyDTO } from '../../cancellation/types'
 import type { BookingCancelledEvent } from '../sockets'
-import { resolvePolicy, computePenalty, hotelCancellationTypeOf } from '../../../shared/usecases/cancellation-math'
+import { resolvePolicy, computePenalty, hotelCancellationTypeOf, checkInInstant, hotelScheduleOf } from '../../../shared/usecases/cancellation-math'
+import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
 
@@ -73,6 +74,13 @@ export interface CancelPublicDeps {
   pushAvailability?: (hotelId: string, roomId: string) => void
   /** Hook de sockets: onBookingCancelled. Opcional (resilient: no rompe si falla o no hay). */
   onCancelled?: (data: BookingCancelledEvent) => Promise<void>
+  /**
+   * Lo COBRADO de una reserva (`shared/usecases/reservation-paid`): base de la penalidad, igual que
+   * la cancelación del panel (`reservas/usecases/cancel-base.ts`). Sin él se usa la regla vieja
+   * (`legacyPenaltyBase`), que en un grupo con seña parcial tomaba el TOTAL del grupo como pagado:
+   * seña de 300 sobre 1000 con política flexible → "reembolso" de 1000 que Stripe rechaza.
+   */
+  paidOf?: (reservation: any) => Promise<number>
 }
 
 const isCheckedIn = (r: any): boolean => r?.status === 'checked_in' || r?.status === 'checked_out'
@@ -111,10 +119,38 @@ const leaderOf = (rows: any[], id: string): any =>
  *  Grupo → la política se aplica sobre lo que el huésped PAGÓ: el total del grupo, que vive en
  *  la líder (el webhook deja `deposit` = pagado en la líder y 0 en las hermanas). Sin pago no
  *  hay nada que retener ni devolver. */
-function penaltyBaseOf(rows: any[], leader: any, item: any): number {
+function legacyPenaltyBase(rows: any[], leader: any, item: any): number {
   if (!item.groupId) return Number(item.deposit) || 0
   if (!(Number(leader.deposit) > 0)) return 0
   return Number(leader.priceBreakdown?.total) || rows.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0)
+}
+
+/** `paidOf` sobre el ORM, mismo armado que `public-reservation.ts`. 'Payment' en SINGULAR (#312). */
+export function paidOfFromOrm(orm: { findMany(model: string, where: any): Promise<any[]> }): (reservation: any) => Promise<number> {
+  return (r: any) => paidForReservation({
+    folioRepo: { findMany: (f: any) => orm.findMany('Folios', f) },
+    invoiceRepo: { findMany: (f: any) => orm.findMany('Invoices', f) },
+    paymentRepo: { findMany: (f: any) => orm.findMany('Payment', f) },
+  }, String(r.hotelId), String(r.id), r)
+}
+
+/**
+ * Base real: la suma de lo cobrado en cada reserva afectada (la líder carga el pago del grupo; las
+ * hermanas suman 0 salvo cobros propios). Fail-soft a la regla vieja si no hay puerto o la lectura
+ * de pagos falla: la cancelación del huésped no se puede trabar por eso.
+ */
+async function penaltyBaseOf(deps: CancelPublicDeps, rows: any[], leader: any, item: any): Promise<number> {
+  const legacy = legacyPenaltyBase(rows, leader, item)
+  if (!deps.paidOf) return legacy
+  try {
+    const targets = item.groupId ? rows : [item]
+    const amounts = await Promise.all(targets.map((r) => deps.paidOf!(r)))
+    const total = amounts.reduce((acc, n) => acc + (Number(n) || 0), 0)
+    return Math.round(total * 100) / 100
+  } catch (e) {
+    deps.logger.warn('public-cancel: no se pudo leer lo cobrado; se usa la base anterior', { id: item.id, error: String(e) })
+    return legacy
+  }
 }
 
 /**
@@ -196,8 +232,9 @@ export async function cancelPublicBooking(
   const policy = await resolvePolicy(policyRepo, item.hotelId, item.channel, hotelType)
   const penalty = computePenalty(policy, {
     now: new Date().toISOString(),
-    checkIn: item.checkIn,
-    depositAmount: penaltyBaseOf(rows, leader, item),
+    // Instante real de entrada (hora de check-in en la zona del hotel), igual que el panel.
+    checkIn: checkInInstant(item, await hotelScheduleOf(hotelsRepo, item.hotelId)),
+    depositAmount: await penaltyBaseOf(deps, rows, leader, item),
   })
 
   const cancelledAt = new Date().toISOString()

@@ -12,7 +12,9 @@
 import { NotFoundError } from 'arckode-framework'
 import type { Auth, RepositoryAdapter } from 'arckode-framework'
 import { assertValidTransition } from './state-machine'
-import { resolvePolicy, computePenalty, hotelCancellationTypeOf } from '../../../shared/usecases/cancellation-math'
+import { resolvePolicy, computePenalty, hotelCancellationTypeOf, checkInInstant, hotelScheduleOf } from '../../../shared/usecases/cancellation-math'
+import type { PaidSource } from '../../../shared/usecases/reservation-paid'
+import { cancellationBaseOf } from './cancel-base'
 
 const MS_PER_HOUR = 3_600_000
 const DEFAULT_CURRENCY = 'USD'
@@ -24,6 +26,8 @@ export interface CancelPreviewDeps {
   hotelRepo?: RepositoryAdapter<any>
   /** Guests — solo para el nombre a mostrar. Opcional: fail-soft → ''. */
   guestRepo?: RepositoryAdapter<any>
+  /** Lo cobrado de la reserva — MISMA base que `cancel-core.ts` (ver `cancel-base.ts`). */
+  paidOf?: PaidSource
 }
 
 /** Contrato EXACTO consumido por el panel (frontend/pages/reservations). No renombrar campos. */
@@ -33,6 +37,8 @@ export interface CancelPreview {
   canCancel: boolean
   blockedReason: string
   guestName: string
+  /** Correo del huésped: el modal lo muestra junto a "Avisar al huésped" ('' = no hay a quién avisar). */
+  guestEmail: string
   checkIn: string
   checkOut: string
   hoursUntilCheckIn: number
@@ -59,15 +65,18 @@ function blockedReasonFor(status: string): string {
   return BLOCKED_REASONS[status] ?? `No se puede cancelar una reserva en estado "${status}".`
 }
 
-/** Nombre del huésped para mostrar. Fail-soft: sin guestId / error / sin fila → ''. */
-async function guestNameOf(guestRepo: RepositoryAdapter<any> | undefined, guestId: string | null | undefined): Promise<string> {
-  if (!guestRepo || !guestId) return ''
+/** Nombre y correo del huésped para mostrar. Fail-soft: sin guestId / error / sin fila → ''. */
+async function guestOf(guestRepo: RepositoryAdapter<any> | undefined, guestId: string | null | undefined): Promise<{ name: string; email: string }> {
+  if (!guestRepo || !guestId) return { name: '', email: '' }
   try {
     const rows = (await guestRepo.findMany({ id: guestId } as any)) as any[]
-    const name = rows?.[0]?.name
-    return typeof name === 'string' ? name : ''
+    const row = rows?.[0]
+    return {
+      name: typeof row?.name === 'string' ? row.name : '',
+      email: typeof row?.email === 'string' ? row.email.trim() : '',
+    }
   } catch {
-    return ''
+    return { name: '', email: '' }
   }
 }
 
@@ -128,17 +137,21 @@ export async function previewCancellation(
   const nowIso = new Date().toISOString()
   const hotelType = await hotelCancellationTypeOf(hotelRepo, item.hotelId)
   const policy = await resolvePolicy(policyRepo, item.hotelId, item.channel, hotelType)
-  const deposit = Number(item.deposit ?? 0)
-  const penalty = computePenalty(policy, { now: nowIso, checkIn: item.checkIn, depositAmount: deposit })
+  const deposit = await cancellationBaseOf(deps.paidOf, item)
+  // Mismo instante que la cancelación real: fecha de llegada a la hora de check-in, en la zona del hotel.
+  const checkIn = checkInInstant(item, await hotelScheduleOf(hotelRepo, item.hotelId))
+  const penalty = computePenalty(policy, { now: nowIso, checkIn, depositAmount: deposit })
 
-  const hoursUntilCheckIn = (Date.parse(item.checkIn) - Date.parse(nowIso)) / MS_PER_HOUR
+  const hoursUntilCheckIn = (Date.parse(checkIn) - Date.parse(nowIso)) / MS_PER_HOUR
+  const guest = await guestOf(guestRepo, item.guestId)
 
   return {
     reservationId: id,
     status,
     canCancel,
     blockedReason,
-    guestName: await guestNameOf(guestRepo, item.guestId),
+    guestName: guest.name,
+    guestEmail: guest.email,
     checkIn: String(item.checkIn ?? ''),
     checkOut: String(item.checkOut ?? ''),
     // Redondeo a 1 decimal: el frontend lo muestra tal cual y no necesita 14 decimales.

@@ -549,7 +549,7 @@ async function load() {
       const room = rm.get(r.roomId)
       const guest = gm.get(r.guestId)
       return {
-        id: r.id, guestName: guest?.name || 'Guest', email: guest?.email || '',
+        id: r.id, guestName: guest?.name || 'Sin nombre', email: guest?.email || '',
         roomNumber: room?.number || r.roomNumber || '—', roomId: r.roomId, guestId: r.guestId,
         // REQ-HAC-06 (#261) — tipo vendido (puede no haber unidad todavía); si hay unidad, su tipo.
         roomType: r.roomType || room?.type || '',
