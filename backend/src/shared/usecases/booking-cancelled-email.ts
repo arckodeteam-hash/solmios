@@ -31,6 +31,11 @@ export interface BookingCancelledEmailEvent {
   hotelId: string
   /** Todas las reservas del grupo (líder incluida). Sin grupo: una sola. */
   reservationIds?: string[]
+  /**
+   * Aviso al buzón del hotel. Default `true` (cancelación web). La cancelación hecha desde el PANEL
+   * pasa `false`: la hizo el propio personal y la plantilla de staff dice "canceló desde la web".
+   */
+  notifyStaff?: boolean
 }
 
 function money(amount: unknown, currency: string): string {
@@ -146,7 +151,7 @@ export async function sendBookingCancelledEmails(
 
     // 2) Buzón del hotel, siempre en español (idioma del panel). Si el reembolso falló, el staff
     //    tiene que saber que hay un botón para reintentarlo desde la reserva.
-    const staffTo = String(hotel?.email ?? '').trim()
+    const staffTo = event.notifyStaff === false ? '' : String(hotel?.email ?? '').trim()
     if (staffTo) {
       const staffLine = refundLine(refundAmount, refundStatus, currency, 'es')
         + (refundAmount > 0 && refundStatus === 'failed' ? ' Reintentar desde la reserva.' : '')

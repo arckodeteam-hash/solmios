@@ -337,7 +337,7 @@ async function retry(log: MessageLog) {
 }
 
 function exportCsv() {
-  const headers = ['Fecha', 'Tipo', 'Estado', 'Destinatario', 'Guest', 'Reserva', 'Respuesta']
+  const headers = ['Fecha', 'Tipo', 'Estado', 'Destinatario', 'Huésped', 'Reserva', 'Respuesta']
   const rows = filtered.value.map(l => [
     l.sentAt || l.createdAt || '',
     l.messageType,

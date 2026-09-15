@@ -32,8 +32,12 @@ import {
   resolvePolicy,
   computePenalty,
   hotelCancellationTypeOf,
+  checkInInstant,
+  hotelScheduleOf,
   type PenaltyResult,
 } from '../../../shared/usecases/cancellation-math'
+import type { PaidSource } from '../../../shared/usecases/reservation-paid'
+import { cancellationBaseOf } from './cancel-base'
 
 /**
  * Quién define la penalidad comercial de esta cancelación.
@@ -91,6 +95,22 @@ export interface CancelCoreDeps {
    * Lo arma el service desde `orchestrationDeps.paymentRequestsCeiling` (fail-closed).
    */
   releaseChargeSessions: (reservationId: string, hotelId: string) => Promise<void>
+  /**
+   * Lo cobrado de la reserva: base de la penalidad y del reembolso (ver `cancel-base.ts`).
+   * Opcional sólo por compatibilidad: sin él se usa la columna `deposit`, que ignora cobros en
+   * efectivo/folio/factura.
+   */
+  paidOf?: PaidSource
+  /**
+   * Publica en el channel manager la disponibilidad de la habitación que la cancelación liberó.
+   *
+   * Hasta el 2026-09-15 ninguna cancelación de `reservas` (panel, OTA, IA) la publicaba: el push lo
+   * hace `connectors/reservas-canales.ts` sólo ante `onReservasCreated/Updated/Deleted`, y este
+   * núcleo emite `onReservationCancelled`. Las noches quedaban libres en el PMS y cerradas en
+   * Booking/Airbnb hasta el próximo sync. El rechazo (`reject.ts`) lo empujaba a mano; ahora lo hace
+   * este núcleo para todos los caminos. Fire-and-forget: nunca frena ni rompe la cancelación.
+   */
+  pushAvailability?: (hotelId: string, roomId: string) => void
 }
 
 export interface CancelCoreResult {
@@ -202,7 +222,7 @@ export async function applyCancellation(
   await deps.releaseChargeSessions(String(item.id), String(item.hotelId))
 
   const nowIso = new Date().toISOString()
-  const depositAmount = Number(item.deposit ?? 0)
+  const depositAmount = await cancellationBaseOf(deps.paidOf, item, logger)
 
   let penalty: PenaltyResult
   if (opts.penaltyMode === 'channel-managed') {
@@ -222,7 +242,8 @@ export async function applyCancellation(
     // Plata que el hotel perdía. Fail-soft: si no se puede leer el hotel → null → default.
     const hotelType = await hotelCancellationTypeOf(hotelRepo, item.hotelId)
     const policy = await resolvePolicy(policyRepo, item.hotelId, item.channel, hotelType)
-    penalty = computePenalty(policy, { now: nowIso, checkIn: item.checkIn, depositAmount })
+    const checkIn = checkInInstant(item, await hotelScheduleOf(hotelRepo, item.hotelId))
+    penalty = computePenalty(policy, { now: nowIso, checkIn, depositAmount })
   }
 
   const updated = await repo.update(item.id, {
@@ -249,6 +270,18 @@ export async function applyCancellation(
     promoCode: item.promoCode ?? null,
   })
   await invalidateReservasCaches(cache, item.hotelId)
+
+  if (item.roomId && deps.pushAvailability) {
+    try {
+      deps.pushAvailability(String(item.hotelId), String(item.roomId))
+    } catch (e) {
+      logger.warn('[cancel] no se pudo publicar la disponibilidad en el channel manager', {
+        reservationId: item.id,
+        roomId: item.roomId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
 
   return { reservation: updated ?? null, penalty, idempotent: false }
 }

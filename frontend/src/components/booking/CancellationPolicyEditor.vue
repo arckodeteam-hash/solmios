@@ -186,6 +186,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { CancellationPoliciesService } from '@/services/cancellationPolicies.service'
 import { ChannelService } from '@/services/Channel.service'
 import { useToast } from '@/composables/useToast'
+import { tierSummary } from '@/utils/cancellation-tier-summary'
 import { PRESET_TIERS, PRESET_OPTIONS, type Tier, type CancellationPolicy } from '@/types/cancellation'
 
 const props = defineProps<{ hotelId?: string }>()
@@ -236,16 +237,6 @@ function addTier(arr: Tier[]) {
   arr.push({ deadlineHours: 24, penaltyPercent: 0, refundable: true, label: '' })
 }
 
-/** Resumen humano de cada tier para que el merchant entienda qué firma. */
-function tierSummary(tiers: Tier[]): string[] {
-  const sorted = [...tiers].sort((a, b) => b.deadlineHours - a.deadlineHours)
-  return sorted.map((t) => {
-    const h = t.deadlineHours
-    const when = h >= 99_999 ? 'hasta el check-in' : h >= 168 ? `+${Math.round(h / 24)} días antes` : h >= 24 ? `+${Math.round(h / 24)} día(s) antes` : h > 0 ? `+${h} h antes` : 'pasado el check-in / siempre'
-    const money = t.refundable ? (t.penaltyPercent === 0 ? '100% reembolso' : `retiene ${t.penaltyPercent}%`) : 'no reembolsable'
-    return `${when}: ${money}`
-  })
-}
 
 function addOverride() {
   // Precarga con la plantilla flexible para que tenga al menos un tier editable.

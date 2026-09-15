@@ -178,7 +178,7 @@ describe('previewCancellation — contrato de respuesta', () => {
     )
     expect(Object.keys(out).sort()).toEqual([
       'blockedReason', 'canCancel', 'cancellationFee', 'checkIn', 'checkOut', 'currency',
-      'deposit', 'guestName', 'hoursUntilCheckIn', 'penaltyPercent', 'policyLabel',
+      'deposit', 'guestEmail', 'guestName', 'hoursUntilCheckIn', 'penaltyPercent', 'policyLabel',
       'policySource', 'refundAmount', 'refundable', 'reservationId', 'status',
       'tierLabel', 'totalAmount',
     ])

@@ -60,7 +60,6 @@ export interface RejectReservationDeps extends CancelCoreDeps {
   paymentsOf: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
   /** Sin cablear → no se puede rechazar una reserva con cobro (fail-closed). */
   refund?: ApprovalRefundPort
-  pushAvailability?: (hotelId: string, roomId: string) => void
   /** Tabla `groups`: se marca `cancelled` cuando cae el grupo entero. */
   groupRepo?: RepositoryAdapter<any>
   /** Email al huésped, fire-and-forget. Hasta que approval-email.ts exista, el service pasa `undefined`. */
@@ -170,10 +169,8 @@ export async function rejectReservation(
     refundedAmount += sum
   }
 
-  // 2. Efectos blandos: nada de esto deshace el rechazo.
-  for (const r of affected) {
-    if (r.roomId) deps.pushAvailability?.(String(r.hotelId), String(r.roomId))
-  }
+  // 2. Efectos blandos: nada de esto deshace el rechazo. La disponibilidad de cada habitación
+  //    liberada ya la publicó `applyCancellation` (cancel-core.ts) con el `pushAvailability` de deps.
   if (item.groupId && deps.groupRepo) {
     try {
       await deps.groupRepo.update(String(item.groupId), { status: 'cancelled' })

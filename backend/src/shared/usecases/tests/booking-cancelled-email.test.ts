@@ -27,7 +27,7 @@ function harness(over: { reserva?: any; guest?: any; hotel?: any; enqueue?: (i: 
   }
   return {
     sent,
-    run: (ev: Partial<{ reservationId: string; hotelId: string; reservationIds: string[] }> = {}) =>
+    run: (ev: Partial<{ reservationId: string; hotelId: string; reservationIds: string[]; notifyStaff: boolean }> = {}) =>
       sendBookingCancelledEmails(deps, { reservationId: RESERVA.id, hotelId: 'h1', ...ev }),
   }
 }
@@ -172,5 +172,17 @@ describe('plantillas reservation_cancelled_*', () => {
         expect({ event, lang, missing }).toEqual({ event, lang, missing: [] })
       }
     }
+  })
+})
+
+describe('correo de cancelación hecha desde el panel', () => {
+  it('notifyStaff:false → sólo el correo al huésped, nada al buzón del hotel', async () => {
+    const h = harness({ reserva: { ...RESERVA, refundStatus: 'none', refundAmount: 100 } })
+    const r = await h.run({ notifyStaff: false })
+    expect(r).toEqual({ guest: true, staff: false })
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].event).toBe('reservation_cancelled_guest')
+    // Devolución todavía no hecha: no promete plata en la tarjeta.
+    expect(h.sent[0].variables.refund_line).toContain('pendiente')
   })
 })

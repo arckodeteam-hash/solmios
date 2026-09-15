@@ -46,7 +46,7 @@ import { getPublicReceiptPdf } from './usecases/public-receipt'
 import { htmlToPdf, checkPdfRateLimit } from '../../infrastructure/pdf'
 import { getClientIp } from '../../shared/middlewares/rate-limit'
 import { resolvePlatformIdentity } from '../../shared/utils/platform-identity'
-import { cancelPublicBooking } from './usecases/public-cancel'
+import { cancelPublicBooking, paidOfFromOrm } from './usecases/public-cancel'
 import { listActiveHotelSlugs, buildSitemapXml, resolveBaseUrl } from './usecases/sitemap'
 // F2 2.4 / 2.6 — Handlers públicos para /rates y /upsells (rates usa availability + config +
 // conversion; upsells lista los activos del hotel para el step de extras del widget).
@@ -374,6 +374,8 @@ export class BookingengineController {
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el
         // usecase ya envuelve el callback en try/catch (no bloquea la cancelación).
         onCancelled: (data) => (this.service as any).sockets?.onBookingCancelled?.(data),
+        // Base de la penalidad = lo cobrado (payments), igual que la cancelación del panel.
+        paidOf: this.orm ? paidOfFromOrm(this.orm) : undefined,
       },
       String(req.params?.id || ''),
       token,

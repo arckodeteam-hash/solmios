@@ -889,7 +889,7 @@ function isActiveNow(r: any): boolean {
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'En curso',
-  checked_out: 'Completada', cancelled: 'Cancelada', no_show: 'No-show',
+  checked_out: 'Completada', cancelled: 'Cancelada', no_show: 'No se presentó',
 }
 const STATUS_BADGES: Record<string, string> = {
   checked_out: 'bg-teal/10 text-teal',

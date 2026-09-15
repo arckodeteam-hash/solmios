@@ -249,6 +249,22 @@ export function bootstrapEmail(
     })
   }
 
+  // Cancelación hecha desde el PANEL con "Avisar al huésped" marcado: mismo correo que la web
+  // (`reservation_cancelled_guest`, en su idioma) pero SIN el aviso al buzón del hotel — la hizo el
+  // propio personal. Acá por lo mismo que los bloques de arriba: el EmailService nace después.
+  const reservasForCancelEmail = resolveModule<{ setOrchestrationDeps(d: any): void }>('reservas')
+  if (reservasForCancelEmail && typeof reservasForCancelEmail.setOrchestrationDeps === 'function') {
+    reservasForCancelEmail.setOrchestrationDeps({
+      cancellationEmail: (reservationId: string, hotelId: string) => sendBookingCancelledEmails({
+        emailSender: emailService,
+        reservationsRepo: new OrmRepository<any>(orm, 'Reservations'),
+        hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
+        guestRepo: new OrmRepository<any>(orm, 'Guests'),
+        logger,
+      }, { reservationId, hotelId, notifyStaff: false }),
+    })
+  }
+
   // #246 — Aviso de reserva/pago al buzón del hotel (`hotels.email`). Va acá y no en el connector
   // `bookingengine-notificaciones` por lo mismo que el bloque de arriba: el EmailService nace
   // DESPUÉS de `system.start()`. El connector lee `notificaciones.hotelEmailDeps()` en cada aviso;

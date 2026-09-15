@@ -50,7 +50,8 @@
             <span class="font-bold text-navy tabular-nums">{{ money(preview.totalAmount) }}</span>
           </div>
           <div class="flex items-baseline justify-between text-xs">
-            <span class="text-text-muted">Depósito recibido</span>
+            <!-- Todo lo cobrado (anticipo + efectivo/folio/factura − devoluciones), no sólo la columna `deposit`: es la base de la penalidad (backend `usecases/cancel-base.ts`). -->
+            <span class="text-text-muted">Cobrado al huésped</span>
             <span class="font-bold text-navy tabular-nums">{{ money(preview.deposit) }}</span>
           </div>
           <div class="flex items-baseline justify-between text-xs pt-1.5 border-t border-border/60">
@@ -94,6 +95,14 @@
             type="text" maxlength="300" placeholder="Escribí el motivo…"
             class="w-full px-3 py-2 rounded-xl border border-border text-sm" />
         </div>
+
+        <!-- Aviso al huésped: marcado por defecto, salvo "Error de carga" (la reserva nunca debió
+             existir y un correo de "cancelada" confundiría). Sin correo no hay a quién avisar. -->
+        <label v-if="preview.guestEmail" data-testid="cancel-notify-guest" class="flex items-start gap-2 text-xs text-navy cursor-pointer">
+          <input v-model="notifyGuest" type="checkbox" class="mt-0.5 cursor-pointer" />
+          <span>Avisar al huésped por correo <span class="text-text-muted">({{ preview.guestEmail }})</span></span>
+        </label>
+        <p v-else data-testid="cancel-no-guest-email" class="text-[11px] text-text-muted">El huésped no tiene correo cargado: no se le puede avisar por email.</p>
       </template>
     </div>
 
@@ -158,14 +167,19 @@ const error = ref('')
  */
 const reasonKey = ref('')
 const reasonOther = ref('')
+/** Avisar al huésped por correo. Se reajusta al elegir el motivo (ver watch de `reasonKey`). */
+const notifyGuest = ref(true)
 
 const REASONS: { key: string; label: string }[] = [
   { key: 'guest_request', label: 'Solicitud del huésped' },
-  { key: 'no_show', label: 'No-show' },
+  { key: 'no_show', label: 'El huésped no se presentó' },
   { key: 'overbooking', label: 'Sobreventa' },
   { key: 'data_entry_error', label: 'Error de carga' },
   { key: 'other', label: 'Otro' },
 ]
+
+// "Error de carga" no se le comunica al huésped; cualquier otro motivo sí. El operador puede cambiarlo.
+watch(reasonKey, (key) => { notifyGuest.value = key !== 'data_entry_error' })
 
 /** Texto que viaja al backend como `reason`. Vacío = todavía no se eligió nada. */
 const reason = computed(() => {
@@ -216,6 +230,7 @@ watch(() => [props.open, props.reservation?.id] as const, ([isOpen]) => {
   submitting.value = false
   reasonKey.value = ''   // cada apertura obliga a elegir de nuevo
   reasonOther.value = ''
+  notifyGuest.value = true
   void loadPreview()
 }, { immediate: true })
 
@@ -242,7 +257,7 @@ async function confirm() {
   if (!reservation || !p || !p.canCancel || !reason.value || submitting.value) return
   submitting.value = true
   try {
-    const result = await ReservationService.cancel(reservation.id, { reason: reason.value })
+    const result = await ReservationService.cancel(reservation.id, { reason: reason.value, notifyGuest: !!p.guestEmail && notifyGuest.value })
     // El monto que se anuncia es el que el servidor APLICÓ, no el que se cotizó al abrir: entre
     // una cosa y la otra puede cruzarse un borde de tier (p. ej. las 72h de `moderate`) y el
     // reembolso real cambia. Prometer el viejo mandaría a devolver plata de más en el mostrador.

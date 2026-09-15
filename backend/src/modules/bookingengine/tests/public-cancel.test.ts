@@ -484,3 +484,43 @@ describe('cancelPublicBooking — grupo con token compartido (#272)', () => {
     })
   })
 })
+
+describe('cancelPublicBooking — base = lo cobrado (paidOf), igual que el panel', () => {
+  const prevSecret = process.env.BOOKING_TOKEN_SECRET
+  beforeEach(() => { process.env.BOOKING_TOKEN_SECRET = 'test-secret-fixed' })
+  afterEach(() => {
+    if (prevSecret === undefined) delete process.env.BOOKING_TOKEN_SECRET
+    else process.env.BOOKING_TOKEN_SECRET = prevSecret
+  })
+  const soon = () => new Date(Date.now() + 24 * 3600_000).toISOString().slice(0, 10)
+  const moderate = [{ id: 'pol-1', hotelId: 'h1', scope: 'base', scopeId: '', name: 'Moderada', active: true,
+    tiers: [{ deadlineHours: 72, penaltyPercent: 0, refundable: true }, { deadlineHours: 0, penaltyPercent: 50, refundable: true }] }]
+
+  it('grupo con seña parcial (90 de 300): 50% sobre 90 → devuelve 45, no 150', async () => {
+    const base = { hotelId: 'h1', groupId: 'g1', accessToken: VALID_TOKEN, channel: 'direct', checkIn: soon(), status: 'confirmed' }
+    const rows = [
+      { ...base, id: 'lead', roomId: 'r1', totalAmount: 100, deposit: 90, priceBreakdown: { total: 300 } },
+      { ...base, id: 'sib-1', roomId: 'r2', totalAmount: 100, deposit: 0 },
+      { ...base, id: 'sib-2', roomId: 'r3', totalAmount: 100, deposit: 0 },
+    ]
+    const h = makeDeps({ reservations: rows, policies: moderate })
+    const paid: Record<string, number> = { lead: 90, 'sib-1': 0, 'sib-2': 0 }
+    const res = await cancelPublicBooking({ ...h.deps, paidOf: async (r: any) => paid[r.id] }, 'lead', VALID_TOKEN, 'x')
+    expect(res.status).toBe(200)
+    expect(res.body.refundAmount).toBe(45)
+    expect(res.body.cancellationFee).toBe(45)
+  })
+
+  it('reserva simple con un cobro en recepción que no tocó deposit: cuenta', async () => {
+    const h = makeDeps({ reservations: [{ id: 'res-1', hotelId: 'h1', roomId: 'r1', accessToken: VALID_TOKEN, status: 'confirmed', channel: 'direct', checkIn: soon(), totalAmount: 400, deposit: 100 }], policies: moderate })
+    const res = await cancelPublicBooking({ ...h.deps, paidOf: async () => 400 }, 'res-1', VALID_TOKEN, 'x')
+    expect(res.body.refundAmount).toBe(200)
+  })
+
+  it('si leer los pagos falla, cae a la base anterior y cancela igual', async () => {
+    const h = makeDeps({ reservations: [{ id: 'res-1', hotelId: 'h1', roomId: 'r1', accessToken: VALID_TOKEN, status: 'confirmed', channel: 'direct', checkIn: soon(), totalAmount: 400, deposit: 100 }], policies: moderate })
+    const res = await cancelPublicBooking({ ...h.deps, paidOf: async () => { throw new Error('payments caído') } }, 'res-1', VALID_TOKEN, 'x')
+    expect(res.status).toBe(200)
+    expect(res.body.refundAmount).toBe(50)
+  })
+})

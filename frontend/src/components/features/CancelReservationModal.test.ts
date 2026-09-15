@@ -96,8 +96,8 @@ async function pickReason(key: string) {
 }
 
 /** Body con el que se llamó al commit. */
-function cancelBody(): { reason?: string } {
-  return vi.mocked(ReservationService.cancel).mock.calls[0][1] as { reason?: string }
+function cancelBody(): { reason?: string; notifyGuest?: boolean } {
+  return vi.mocked(ReservationService.cancel).mock.calls[0][1] as { reason?: string; notifyGuest?: boolean }
 }
 
 describe('CancelReservationModal — cancelar con política a la vista', () => {
@@ -213,7 +213,7 @@ describe('CancelReservationModal — cancelar con política a la vista', () => {
 
     // Va por el endpoint de cancelación (el único que aplica la política), con el motivo elegido.
     expect(vi.mocked(ReservationService.cancel).mock.calls[0][0]).toBe('res-1')
-    expect(cancelBody().reason).toBe('No-show')
+    expect(cancelBody().reason).toBe('El huésped no se presentó')
     expect(wrapper!.emitted('cancelled')?.[0]?.[0]).toMatchObject({ id: 'res-1' })
     expect(wrapper!.emitted('close')).toBeTruthy()
   })
@@ -285,5 +285,47 @@ describe('CancelReservationModal — cancelar con política a la vista', () => {
     await flushPromises()
 
     expect(String(toastSuccess.mock.calls.at(-1)?.[0] ?? '')).toContain('120')
+  })
+
+  // ── Aviso al huésped por correo ─────────────────────────────────────────────────────────────
+  describe('aviso al huésped', () => {
+    async function cancelWith(preview: CancelPreview, reasonKey: string) {
+      vi.mocked(ReservationService.cancel).mockResolvedValue(cancelledFixture())
+      await open(preview)
+      await pickReason(reasonKey)
+      buttonByText('Cancelar reserva').click()
+      await flushPromises()
+    }
+
+    it('con correo: casilla visible y marcada, manda notifyGuest:true', async () => {
+      await cancelWith(previewFixture({ guestEmail: 'ana@example.com' }), 'guest_request')
+      expect(byTestId('cancel-notify-guest')?.textContent).toContain('ana@example.com')
+      expect(cancelBody().notifyGuest).toBe(true)
+    })
+
+    it('"Error de carga" la desmarca: no se le avisa al huésped', async () => {
+      await cancelWith(previewFixture({ guestEmail: 'ana@example.com' }), 'data_entry_error')
+      expect(cancelBody().notifyGuest).toBe(false)
+    })
+
+    it('el operador puede desmarcarla', async () => {
+      vi.mocked(ReservationService.cancel).mockResolvedValue(cancelledFixture())
+      await open(previewFixture({ guestEmail: 'ana@example.com' }))
+      await pickReason('overbooking')
+      const box = byTestId('cancel-notify-guest')!.querySelector('input') as HTMLInputElement
+      box.checked = false
+      box.dispatchEvent(new Event('change'))
+      await flushPromises()
+      buttonByText('Cancelar reserva').click()
+      await flushPromises()
+      expect(cancelBody().notifyGuest).toBe(false)
+    })
+
+    it('sin correo: no hay casilla, lo dice y manda notifyGuest:false', async () => {
+      await cancelWith(previewFixture({ guestEmail: '' }), 'guest_request')
+      expect(byTestId('cancel-notify-guest')).toBeNull()
+      expect(byTestId('cancel-no-guest-email')).not.toBeNull()
+      expect(cancelBody().notifyGuest).toBe(false)
+    })
   })
 })

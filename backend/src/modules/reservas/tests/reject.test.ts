@@ -306,8 +306,10 @@ describe('rejectReservation — orden refund → cancelar por reserva (fix revis
     expect(r2.status).toBe('confirmed')
     expect(r2.approvalStatus).toBe('pending')
     expect(r2.refundAmount).toBeUndefined()
-    // Efectos blandos no corrieron: el rechazo no terminó.
-    expect(h.pushed).toHaveLength(0)
+    // La #1 SÍ quedó cancelada: su habitación se publica libre (lo hace applyCancellation, 2026-09-15).
+    // La #2 sigue ocupando la suya, así que no se publica.
+    expect(h.pushed).toEqual([[HOTEL, r1.roomId]])
+    // Efectos blandos del rechazo completo no corrieron: el rechazo no terminó.
     expect(h.groupUpdates).toHaveLength(0)
     expect(h.notified).toHaveLength(0)
   })

@@ -230,3 +230,34 @@ describe('presetFromEnum', () => {
     expect(PRESET_TIERS.non_refundable).toBeDefined()
   })
 })
+
+describe('checkInInstant — las horas se cuentan desde la entrada real, no desde medianoche UTC', () => {
+  const { checkInInstant, computePenalty: penaltyOf, presetFromEnum: preset } = require('../../../shared/usecases/cancellation-math')
+  const HOTEL_RD = { checkIn: '15:00', timezone: 'America/Santo_Domingo' }
+  const moderate = { tiers: preset('moderate'), policyId: 'moderate', source: 'preset' as const }
+
+  it('RD 15:00 → 19:00 UTC del día de llegada', () => {
+    expect(checkInInstant({ checkIn: '2026-10-10' }, HOTEL_RD)).toBe('2026-10-10T19:00:00.000Z')
+  })
+
+  it('el early check-in de la reserva pisa el horario del hotel', () => {
+    expect(checkInInstant({ checkIn: '2026-10-10', checkInTime: '10:00' }, HOTEL_RD)).toBe('2026-10-10T14:00:00.000Z')
+  })
+
+  it('sin hotel: defaults del modelo (15:00 Santo Domingo), nunca medianoche UTC', () => {
+    expect(checkInInstant({ checkIn: '2026-10-10' }, null)).toBe('2026-10-10T19:00:00.000Z')
+  })
+
+  it('moderada: cancelar 80 h antes de la entrada real es GRATIS (medido desde medianoche UTC daba 61 h → 50%)', () => {
+    const now = new Date(Date.parse('2026-10-10T19:00:00.000Z') - 80 * 3_600_000).toISOString()
+    const real = penaltyOf(moderate, { now, checkIn: checkInInstant({ checkIn: '2026-10-10' }, HOTEL_RD), depositAmount: 100 })
+    expect(real.penaltyPercent).toBe(0)
+    const viejo = penaltyOf(moderate, { now, checkIn: '2026-10-10', depositAmount: 100 })
+    expect(viejo.penaltyPercent).toBe(50)
+  })
+
+  it('moderada: 70 h antes de la entrada real sí cobra 50%', () => {
+    const now = new Date(Date.parse('2026-10-10T19:00:00.000Z') - 70 * 3_600_000).toISOString()
+    expect(penaltyOf(moderate, { now, checkIn: checkInInstant({ checkIn: '2026-10-10' }, HOTEL_RD), depositAmount: 100 }).penaltyPercent).toBe(50)
+  })
+})

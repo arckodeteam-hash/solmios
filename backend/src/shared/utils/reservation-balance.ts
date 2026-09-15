@@ -42,6 +42,9 @@ export interface ReservationAmountsLike {
   totalAmount?: number | null
   otherCharges?: number | null
   deposit?: number | null
+  /** Con `cancelled`, lo cobrable pasa a ser la penalidad (ver `chargeableTotal`). */
+  status?: string | null
+  cancellationFee?: number | null
 }
 
 // STR-1: `round2` NO se re-exporta desde acá. Tres rutas de import para el mismo símbolo hacían
@@ -64,11 +67,22 @@ export function addonsTotal(addons: readonly ReservationAddonLike[] | null | und
   )
 }
 
-/** Total cobrable: alojamiento + otros cobros + extras. Es lo que debe pagar el huésped. */
+/**
+ * Total cobrable: alojamiento + otros cobros + extras. Es lo que debe pagar el huésped.
+ *
+ * Reserva CANCELADA: lo único que debe es la penalidad (`cancellationFee`); la estadía y sus extras
+ * ya no se van a consumir. Hasta el 2026-09-15 se seguía usando el total de la estadía, y una
+ * reserva de 400 cancelada con 50% y ya devuelta (cobrado neto 200) mostraba "Pendiente de cobro
+ * 200", estado "Parcial" y los botones "Registrar pago" / "Crear link de pago" habilitados —
+ * recepción podía cobrarle de nuevo a un huésped que canceló. Con esto, antes de devolver queda
+ * "A favor del huésped 200" y después, saldo 0. Lo usan saldo, estado de pago, techo de links de
+ * pago, factura desde la reserva y recibo público: todos ven lo mismo.
+ */
 export function chargeableTotal(
   reservation: ReservationAmountsLike | null | undefined,
   addons?: readonly ReservationAddonLike[] | null,
 ): number {
+  if (reservation?.status === 'cancelled') return round2(Number(reservation.cancellationFee) || 0)
   const base = Number(reservation?.totalAmount) || 0
   const other = Number(reservation?.otherCharges) || 0
   return round2(base + other + addonsTotal(addons))
