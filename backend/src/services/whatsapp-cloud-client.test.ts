@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'bun:test'
 import {
   createMetaTemplate, getMetaTemplateStatus, deleteMetaTemplate, WhatsappCloudError,
   exchangeCode, subscribeApp, unsubscribeApp, registerPhoneNumber, getPhoneNumber, getWabaInfo,
-  appCredentialsFromEnv, explicarErrorDeConexion, explicarErrorDeEnvio,
+  appCredentialsFromEnv, explicarErrorDeConexion, explicarErrorDeEnvio, esTokenVencido,
 } from './whatsapp-cloud-client'
 
 const CREDS = { wabaId: 'waba1', accessToken: 'tok1' }
@@ -199,6 +199,14 @@ describe('explicarErrorDeEnvio', () => {
   it('un token vencido (código 190) explica que hay que reconectar', async () => {
     const msg = explicarErrorDeEnvio(new WhatsappCloudError('Authentication Error', 401, 190))
     expect(msg).toContain('reconectar')
+  })
+})
+
+describe('esTokenVencido', () => {
+  it('solo el código 190 de Meta cuenta como token vencido', () => {
+    expect(esTokenVencido(new WhatsappCloudError('Authentication Error', 401, 190))).toBe(true)
+    expect(esTokenVencido(new WhatsappCloudError('Recipient not in allowed list', 400, 131030))).toBe(false)
+    expect(esTokenVencido(new Error('red caída'))).toBe(false)
   })
 })
 

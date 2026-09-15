@@ -5,10 +5,11 @@
 // bandeja muestra las conversaciones pero el botón de responder no tiene por dónde salir.
 
 import type { ConnectorContext } from 'arckode-framework'
-import { sendTextMessage, explicarErrorDeEnvio } from '../services/whatsapp-cloud-client'
+import { sendTextMessage, explicarErrorDeEnvio, esTokenVencido } from '../services/whatsapp-cloud-client'
 
 interface AiModuleWithInbox {
   getWhatsappCredentials(hotelId: string): Promise<{ wabaId: string; accessToken: string; phoneNumberId: string } | null>
+  markWhatsappExpired(hotelId: string, motivo: string): Promise<void>
   setInboxDeps(p: { whatsapp: any; registrarEnvio?: (dto: Record<string, unknown>) => Promise<void> }): void
 }
 
@@ -31,6 +32,8 @@ export function aiRecepcionistaWhatsappConnector(ctx: ConnectorContext): void {
       },
       sendText: sendTextMessage,
       explicarError: explicarErrorDeEnvio,
+      esCredencialVencida: esTokenVencido,
+      marcarConexionVencida: (hotelId: string, motivo: string) => ai.markWhatsappExpired(hotelId, motivo),
     },
     registrarEnvio: async (dto) => { await marketing.createMessageLog(dto as any) },
   })

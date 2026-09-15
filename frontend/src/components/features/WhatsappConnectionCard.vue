@@ -89,7 +89,7 @@
       </p>
       <button @click="abrirAdvertencia" :disabled="ocupado"
         class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:bg-navy-light disabled:opacity-50 disabled:cursor-wait">
-        {{ ocupado ? 'Conectando…' : conexion?.estado === 'error' ? 'Reintentar conexión' : 'Conectar WhatsApp' }}
+        {{ ocupado ? 'Conectando…' : conexion?.estado === 'expired' ? 'Reconectar WhatsApp' : conexion?.estado === 'error' ? 'Reintentar conexión' : 'Conectar WhatsApp' }}
       </button>
     </div>
   </SectionCard>
@@ -158,7 +158,7 @@ const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
 })
 
 const ESTADO_LABEL: Record<string, string> = {
-  connected: 'Conectado', disconnected: 'Sin conectar', error: 'Con error', legacy_baileys: 'Conexión anterior',
+  connected: 'Conectado', expired: 'Vencida', disconnected: 'Sin conectar', error: 'Con error', legacy_baileys: 'Conexión anterior',
 }
 const badgeLabel = computed(() => ESTADO_LABEL[conexion.value?.estado || 'disconnected'])
 
@@ -170,12 +170,13 @@ const hayDatosDeMeta = computed(() => {
 })
 const badgeClass = computed(() => ({
   connected: 'bg-teal/10 text-teal',
+  expired: 'bg-coral/10 text-coral',
   error: 'bg-coral/10 text-coral',
   legacy_baileys: 'bg-gold/10 text-gold',
   disconnected: 'bg-surface text-text-muted',
 }[conexion.value?.estado || 'disconnected']))
 const puntoClass = computed(() => ({
-  connected: 'bg-teal', error: 'bg-coral', legacy_baileys: 'bg-gold', disconnected: 'bg-text-muted',
+  connected: 'bg-teal', expired: 'bg-coral', error: 'bg-coral', legacy_baileys: 'bg-gold', disconnected: 'bg-text-muted',
 }[conexion.value?.estado || 'disconnected']))
 
 const subtitulo = computed(() => conexion.value?.estado === 'connected'

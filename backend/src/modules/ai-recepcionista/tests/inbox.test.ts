@@ -155,6 +155,24 @@ describe('responderConversacion', () => {
     const { deps } = makeDeps({ enviar: async () => { throw new Error('Ese número no tiene WhatsApp') } })
     expect(responderConversacion(deps, 'c1', HOTEL, 'Hola', 'u1')).rejects.toThrow(/no tiene WhatsApp/)
   })
+
+  it('un token vencido marca la conexión como vencida y el error llega igual', async () => {
+    const marcadas: any[] = []
+    const { deps } = makeDeps({ enviar: async () => { throw Object.assign(new Error('hay que reconectar'), { vencido: true }) } })
+    deps.whatsapp.esCredencialVencida = (e: any) => e?.vencido === true
+    deps.whatsapp.marcarConexionVencida = async (hotelId: string, motivo: string) => { marcadas.push({ hotelId, motivo }) }
+    await expect(responderConversacion(deps, 'c1', HOTEL, 'Hola', 'u1')).rejects.toThrow(/reconectar/)
+    expect(marcadas).toEqual([{ hotelId: HOTEL, motivo: 'hay que reconectar' }])
+  })
+
+  it('cualquier otro rechazo de Meta NO toca la conexión', async () => {
+    const marcadas: any[] = []
+    const { deps } = makeDeps({ enviar: async () => { throw new Error('Ese número no tiene WhatsApp') } })
+    deps.whatsapp.esCredencialVencida = () => false
+    deps.whatsapp.marcarConexionVencida = async () => { marcadas.push(1) }
+    await expect(responderConversacion(deps, 'c1', HOTEL, 'Hola', 'u1')).rejects.toThrow(/no tiene WhatsApp/)
+    expect(marcadas).toHaveLength(0)
+  })
 })
 
 describe('registrarEntrante', () => {

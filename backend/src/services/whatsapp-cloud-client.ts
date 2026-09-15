@@ -68,6 +68,11 @@ export class WhatsappCloudError extends Error {
   }
 }
 
+/** Meta rechazó el token (código 190: vencido o revocado). La salida es reconectar, no reintentar. */
+export function esTokenVencido(err: unknown): boolean {
+  return err instanceof WhatsappCloudError && err.metaCode === 190
+}
+
 function baseUrl(creds: WhatsappCloudCredentials): string {
   return `${GRAPH_BASE}/${creds.graphVersion || DEFAULT_GRAPH_VERSION}`
 }

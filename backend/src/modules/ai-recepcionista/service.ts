@@ -25,7 +25,7 @@ import { conversationChannel } from './usecases/conversation-channel'
 import type { ReservationCancelPort, InvoiceIssuePort } from './usecases/llm-pipeline'
 import { getWhatsappConfig, updateWhatsappConfig, getWhatsappCredentials } from './usecases/whatsapp-config'
 import type { WhatsappCredentials } from './usecases/whatsapp-config'
-import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones } from './usecases/whatsapp-connection'
+import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones, marcarConexionVencida } from './usecases/whatsapp-connection'
 import { connectionDepsFor } from './usecases/whatsapp-connection-deps'
 import type { ConnectInput } from './usecases/whatsapp-connection'
 import { getMetrics, getDashboardMetrics } from './usecases/metrics'
@@ -171,6 +171,7 @@ export class AiRecepcionistaService {
 
   /** Credenciales en claro para uso INTERNO del servidor (connector `marketing-whatsapp-meta`). */
   async getWhatsappCredentials(hotelId: string): Promise<WhatsappCredentials | null> { return getWhatsappCredentials(this.whatsappConfigRepo, hotelId) }
+  async markWhatsappExpired(hotelId: string, motivo: string): Promise<void> { return marcarConexionVencida(this.whatsappConfigRepo, hotelId, motivo) }
 
   async getMetrics(hotelId: string, _period: string, u: any): Promise<AiMetricsDTO[]> { return getMetrics(this.metricsRepo, await this.resolveHotelId(u, hotelId)) }
   async getDashboardMetrics(hotelId: string, u: any): Promise<Record<string, unknown>> { return getDashboardMetrics(this.conversationRepo, this.metricsRepo, await this.resolveHotelId(u, hotelId)) }
