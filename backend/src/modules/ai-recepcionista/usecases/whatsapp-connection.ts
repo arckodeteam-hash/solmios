@@ -182,8 +182,23 @@ export async function disconnectWhatsapp(deps: ConnectionDeps, hotelId: string):
   deps.logger.info('WhatsApp desconectado', { hotelId })
 }
 
-/** Estados que muestra la tarjeta. `legacy_baileys` es la vinculación vieja por código QR. */
-export type EstadoConexion = 'disconnected' | 'connected' | 'error' | 'legacy_baileys'
+/**
+ * Marca la conexión Meta del hotel como vencida: Meta rechazó un envío con el token guardado.
+ *
+ * No borra el token ni los datos del número: la reconexión los pisa, y mientras tanto la tarjeta
+ * sigue mostrando a qué número estaba conectado. `connectWhatsapp` vuelve a `connected`.
+ */
+export async function marcarConexionVencida(configRepo: any, hotelId: string, motivo: string): Promise<void> {
+  const existente = (await configRepo.findMany({ hotelId }))[0]
+  if (!existente || existente.connectionMode !== 'meta') return
+  await configRepo.update(existente.id, { connectionStatus: 'expired', connectionError: motivo })
+}
+
+/**
+ * Estados que muestra la tarjeta. `legacy_baileys` es la vinculación vieja por código QR.
+ * `expired` = conectado por Meta, pero el token ya no sirve: hay que reconectar.
+ */
+export type EstadoConexion = 'disconnected' | 'connected' | 'expired' | 'error' | 'legacy_baileys'
 
 /**
  * Proyección para la tarjeta del panel. NUNCA incluye el token: es la misma regla que
@@ -195,7 +210,7 @@ export function proyectarConexion(config: any): Record<string, unknown> {
   const tieneMeta = config.connectionMode === 'meta' && !!config.accessToken
   const tieneBaileys = config.connectionMode === 'baileys' && !!config.baileysCredentials
   const estado: EstadoConexion = tieneMeta
-    ? 'connected'
+    ? (config.connectionStatus === 'expired' ? 'expired' : 'connected')
     : tieneBaileys
       ? 'legacy_baileys'
       : config.connectionError

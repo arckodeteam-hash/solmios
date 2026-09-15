@@ -15,6 +15,10 @@ export interface WhatsappSendPort {
     input: { to: string; text: string },
   ): Promise<{ messageId: string }>
   explicarError(err: unknown): string
+  /** `true` si Meta rechazó el envío porque el token del hotel venció o fue revocado (código 190). */
+  esCredencialVencida?(err: unknown): boolean
+  /** Deja la conexión del hotel marcada como vencida, para que la tarjeta deje de verse verde. */
+  marcarConexionVencida?(hotelId: string, motivo: string): Promise<void>
 }
 
 export interface InboxDeps {
@@ -145,7 +149,14 @@ export async function responderConversacion(
     const envio = await deps.whatsapp.sendText(creds, { to: String(conv.guestPhone), text: texto })
     messageId = envio.messageId
   } catch (err) {
-    throw new ConflictError(deps.whatsapp.explicarError(err))
+    const motivo = deps.whatsapp.explicarError(err)
+    // Un token vencido no se arregla reintentando: si la conexión sigue diciendo "Conectado", el
+    // hotel no tiene cómo saber que tiene que reconectar (pasó en prod el 2026-09-15).
+    if (deps.whatsapp.esCredencialVencida?.(err) && deps.whatsapp.marcarConexionVencida) {
+      await deps.whatsapp.marcarConexionVencida(hotelId, motivo)
+        .catch((e: unknown) => deps.logger.warn('No se pudo marcar la conexión como vencida', { hotelId, error: String(e) }))
+    }
+    throw new ConflictError(motivo)
   }
 
   const ahora = new Date().toISOString()

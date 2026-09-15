@@ -79,7 +79,7 @@ export interface AiWhatsappConfig {
 }
 
 /** Estados que puede mostrar la tarjeta de conexión. */
-export type EstadoConexionWhatsapp = 'disconnected' | 'connected' | 'error' | 'legacy_baileys'
+export type EstadoConexionWhatsapp = 'disconnected' | 'connected' | 'expired' | 'error' | 'legacy_baileys'
 
 /**
  * Proyección segura de la conexión: lo que el hotel necesita ver para reconocer su cuenta.

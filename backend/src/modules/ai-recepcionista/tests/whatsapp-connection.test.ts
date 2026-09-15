@@ -1,7 +1,7 @@
 // ai-recepcionista/tests/whatsapp-connection.test.ts — Conexión y baja del WhatsApp de un hotel.
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones } from '../usecases/whatsapp-connection'
+import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones, marcarConexionVencida } from '../usecases/whatsapp-connection'
 import type { ConnectionDeps } from '../usecases/whatsapp-connection'
 import { WhatsappCloudError } from '../../../services/whatsapp-cloud-client'
 
@@ -175,6 +175,35 @@ describe('proyectarConexion', () => {
 
   it('un intento fallido queda como error, no como "sin conectar"', () => {
     expect(proyectarConexion({ connectionMode: 'none', connectionError: 'El permiso venció' }).estado).toBe('error')
+  })
+
+  it('conexión Meta con el token vencido deja de verse como conectada', () => {
+    const p = proyectarConexion({ connectionMode: 'meta', accessToken: 'T', connectionStatus: 'expired', connectionError: 'venció' })
+    expect(p.estado).toBe('expired')
+    expect(p.connectionError).toBe('venció')
+  })
+})
+
+describe('marcarConexionVencida', () => {
+  const repo = (fila: any) => {
+    const updates: any[] = []
+    return { updates, findMany: async () => (fila ? [fila] : []), update: async (id: string, p: any) => { updates.push({ id, p }) } }
+  }
+
+  it('marca expired con el motivo, sin borrar el token ni el número', async () => {
+    const r = repo({ id: 'cfg1', connectionMode: 'meta', accessToken: 'T', displayPhoneNumber: '+1 555' })
+    await marcarConexionVencida(r, 'h1', 'hay que reconectar')
+    expect(r.updates).toEqual([{ id: 'cfg1', p: { connectionStatus: 'expired', connectionError: 'hay que reconectar' } }])
+  })
+
+  it('no toca una conexión que no es de Meta', async () => {
+    const r = repo({ id: 'cfg1', connectionMode: 'baileys' })
+    await marcarConexionVencida(r, 'h1', 'x')
+    expect(r.updates).toHaveLength(0)
+  })
+
+  it('reconectar vuelve a connected', async () => {
+    expect(proyectarConexion({ connectionMode: 'meta', accessToken: 'NUEVO', connectionStatus: 'connected', connectionError: '' }).estado).toBe('connected')
   })
 })
 

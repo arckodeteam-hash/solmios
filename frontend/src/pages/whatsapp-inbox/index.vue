@@ -11,6 +11,22 @@
       </button>
     </div>
 
+    <!-- Token de Meta vencido: ningún mensaje sale hasta reconectar. Se avisa arriba y no solo en el
+         toast del envío, porque el que atiende tiene que saberlo ANTES de escribirle al huésped. -->
+    <div v-if="conexionVencida" role="alert"
+      class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-coral/10 px-4 py-3">
+      <div>
+        <div class="text-sm font-bold text-coral">La conexión de WhatsApp del hotel venció</div>
+        <p class="mt-0.5 text-[11px] text-text-secondary">
+          Los mensajes no se van a enviar hasta que alguien con acceso a la cuenta de Meta del hotel la vuelva a conectar.
+        </p>
+      </div>
+      <router-link to="/panel/ia/recepcionista/config"
+        class="rounded-full bg-navy px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-navy-light">
+        Reconectar WhatsApp
+      </router-link>
+    </div>
+
     <div class="grid grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">
       <!-- Lista -->
       <SectionCard title="Bandeja" :subtitle="`${conversaciones.length} conversación(es) · ${sinLeer} sin leer`" body-class="p-0">
@@ -24,15 +40,17 @@
 
         <ul v-else class="divide-y divide-border">
           <li v-for="c in conversaciones" :key="c.id">
-            <button @click="abrir(c.id)"
-              class="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface/60"
-              :class="c.id === abiertaId ? 'bg-surface' : ''">
+            <!-- cursor-pointer explícito: Tailwind 4 deja los <button> con cursor default, y la fila
+                 abierta ya tiene el fondo del hover, así que sin esto nada indicaba que se clickea. -->
+            <button @click="abrir(c.id)" :aria-current="c.id === abiertaId ? 'true' : undefined"
+              class="group flex w-full cursor-pointer items-start gap-3 border-l-4 px-4 py-3 text-left transition-colors hover:bg-cyan/5 focus-visible:bg-cyan/5 focus-visible:outline-none"
+              :class="c.id === abiertaId ? 'border-cyan bg-surface' : 'border-transparent'">
               <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-navy/5 text-[11px] font-black text-navy">
                 {{ iniciales(c.guestName || c.guestPhone) }}
               </span>
               <span class="min-w-0 flex-1">
                 <span class="flex items-center gap-2">
-                  <span class="truncate text-sm font-bold text-navy">{{ c.guestName || telefonoLegible(c.guestPhone) || 'Huésped' }}</span>
+                  <span class="truncate text-sm font-bold text-navy underline-offset-2 group-hover:text-cyan group-hover:underline">{{ c.guestName || telefonoLegible(c.guestPhone) || 'Huésped' }}</span>
                   <span v-if="c.unreadCount" class="ml-auto shrink-0 rounded-full bg-cyan px-2 py-0.5 text-[10px] font-black tabular-nums text-navy">
                     {{ c.unreadCount }}
                   </span>
@@ -87,11 +105,12 @@
                   : m.sender === 'bot'
                     ? 'rounded-br-sm border border-cyan/25 bg-cyan/10 text-navy'
                     : 'rounded-br-sm border border-teal/20 bg-teal/10 text-navy'">
-                <p class="text-xs whitespace-pre-wrap">{{ m.content }}</p>
-                <div class="mt-1 text-[9px] font-bold uppercase tracking-wide"
+                <!-- Quién habla va ARRIBA del texto: se lee antes de leer el mensaje, como en WhatsApp. -->
+                <div class="mb-1 text-[9px] font-bold uppercase tracking-wide"
                   :class="m.sender === 'guest' ? 'text-text-muted' : m.sender === 'bot' ? 'text-cyan' : 'text-teal'">
                   {{ autor(m) }}
                 </div>
+                <p class="text-xs whitespace-pre-wrap">{{ m.content }}</p>
               </div>
             </div>
           </div>
@@ -151,6 +170,7 @@ const cargandoLista = ref(true)
 const cargandoHilo = ref(false)
 const ocupado = ref(false)
 const respuesta = ref('')
+const conexionVencida = ref(false)
 
 /**
  * Nombres del equipo resueltos contra /api/usuarios — NUNCA contra employee-profiles, que usa
@@ -255,6 +275,15 @@ async function recargarHiloSilencioso() {
   }
 }
 
+async function cargarConexion() {
+  try {
+    const c = await AiReceptionistService.getWhatsappConnection()
+    conexionVencida.value = c?.estado === 'expired'
+  } catch {
+    // Sin permiso para ver la conexión (o sin red): la bandeja funciona igual, el envío avisa con su toast.
+  }
+}
+
 async function cargarNombres() {
   try {
     const r = await TeamService.list()
@@ -321,6 +350,8 @@ async function responder() {
     await recargarListaSilenciosa()
   } catch (e: any) {
     toast.error('No se pudo enviar', e?.message || 'Revisá la conexión de WhatsApp')
+    // Si el rechazo fue por token vencido, el servidor ya marcó la conexión: el aviso aparece sin recargar.
+    await cargarConexion()
   } finally {
     ocupado.value = false
   }
@@ -366,6 +397,7 @@ function alCambiarVisibilidad() {
 onMounted(() => {
   cargarLista()
   cargarNombres()
+  cargarConexion()
   arrancarSondeo()
   document.addEventListener('visibilitychange', alCambiarVisibilidad)
 })
